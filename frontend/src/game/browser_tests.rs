@@ -191,6 +191,11 @@ async fn anneal_tightens_the_band_and_a_drag_cancels_it() {
         physics.side(),
     );
     force_button(&root, "Anneal");
+    assert_eq!(
+        physics.params().band_tension,
+        0.0,
+        "cancel releases the band"
+    );
     let frozen = physics.params().target_side;
     sleep(500).await;
     assert_eq!(
@@ -212,6 +217,11 @@ async fn pause_cancels_anneal() {
     sleep(50).await;
     assert!(physics.paused());
     force_button(&root, "Anneal");
+    assert_eq!(
+        physics.params().band_tension,
+        0.0,
+        "cancel releases the band"
+    );
     handle.destroy();
     root.remove();
 }

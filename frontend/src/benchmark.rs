@@ -116,8 +116,10 @@ pub fn benchmark(props: &BenchmarkProps) -> Html {
     let percent = a
         .percent
         .map_or_else(|| "—".to_string(), |p| format!("{p:.3}%"));
+    // A live scene changes every frame; only announce validated results.
+    let live = if props.validated { "polite" } else { "off" };
     html! {
-        <div class={classes!("pg-benchmark", a.tone.class())} role="status" aria-live="polite">
+        <div class={classes!("pg-benchmark", a.tone.class())} role="status" aria-live={live}>
             <span class="pg-benchmark-pct">{ percent }</span>
             <span class="pg-benchmark-text">
                 <strong>{ a.headline }</strong>
