@@ -132,3 +132,268 @@ svg.arrangement .square {
     stroke: var(--bg);
     stroke-width: 0.02;
 }
+
+/* Play screen */
+
+.packing-game {
+    --ink: #e9edf5;
+    --pg-muted: #a1adc2;
+    --pg-accent: #c7f36b;
+    color: var(--ink);
+    max-width: 1250px;
+    margin: auto;
+    padding: 24px 12px;
+}
+
+.packing-game * {
+    box-sizing: border-box;
+}
+
+.pg-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    flex-wrap: wrap;
+}
+
+.pg-eyebrow {
+    color: var(--pg-accent);
+    text-transform: uppercase;
+    letter-spacing: 0.17em;
+    font-size: 11px;
+    font-weight: 800;
+}
+
+.packing-game h1 {
+    color: var(--ink);
+    font-size: clamp(32px, 5vw, 58px);
+    letter-spacing: -0.055em;
+    margin: 8px 0;
+}
+
+.pg-sub {
+    color: var(--pg-muted);
+    font-size: 14px;
+}
+
+.pg-layout {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 280px;
+    gap: 22px;
+    margin-top: 24px;
+}
+
+.pg-board {
+    position: relative;
+    background: #121823;
+    border: 1px solid #303c50;
+    border-radius: 22px;
+    padding: 16px;
+    box-shadow: 0 18px 60px #0003;
+}
+
+.pg-board canvas {
+    width: 100%;
+    aspect-ratio: 1;
+    display: block;
+    touch-action: none;
+    outline: none;
+    border-radius: 12px;
+}
+
+.pg-board canvas:focus-visible {
+    outline: 2px solid var(--pg-accent);
+}
+
+.pg-board-footer {
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+    color: var(--pg-muted);
+    font-size: 11px;
+    padding: 12px 4px 0;
+}
+
+.pg-panel {
+    background: #1c2432;
+    border: 1px solid #303c50;
+    border-radius: 16px;
+    padding: 18px;
+    margin-bottom: 14px;
+}
+
+.pg-panel h2 {
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.13em;
+    color: var(--pg-muted);
+    margin: 0 0 18px;
+}
+
+.pg-stat {
+    font-size: 30px;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.04em;
+}
+
+.pg-stat small {
+    font-size: 12px;
+    color: var(--pg-muted);
+    letter-spacing: 0;
+}
+
+.pg-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    margin: 15px 0;
+    font-size: 13px;
+}
+
+.packing-game input[type="range"] {
+    width: 100%;
+    accent-color: var(--pg-accent);
+}
+
+.packing-game input[type="checkbox"] {
+    accent-color: var(--pg-accent);
+    width: 18px;
+    height: 18px;
+}
+
+.packing-game button,
+.packing-game input[type="text"],
+.packing-game input[type="number"] {
+    font: inherit;
+    border: 1px solid #445067;
+    border-radius: 9px;
+    background: #273348;
+    color: var(--ink);
+    padding: 10px 12px;
+}
+
+.packing-game button {
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 700;
+}
+
+.packing-game button:hover {
+    background: #35455e;
+}
+
+.packing-game button:disabled {
+    opacity: 0.45;
+    cursor: wait;
+}
+
+.packing-game .pg-primary {
+    background: var(--pg-accent);
+    color: #17200d;
+    border-color: var(--pg-accent);
+}
+
+.pg-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.pg-force-actions {
+    margin-top: 18px;
+}
+
+.pg-wide {
+    width: 100%;
+}
+
+.pg-help {
+    font-size: 12px;
+    line-height: 1.65;
+    color: var(--pg-muted);
+}
+
+.pg-status {
+    font-size: 12px;
+    line-height: 1.6;
+    min-height: 42px;
+    color: var(--pg-accent);
+}
+
+.pg-invalid {
+    color: #ff9c9c;
+}
+
+.pg-field {
+    width: 100%;
+    margin: 8px 0;
+}
+
+.packing-game a {
+    color: var(--pg-accent);
+}
+
+.pg-meter {
+    height: 5px;
+    background: #344159;
+    border-radius: 4px;
+    margin: 12px 0;
+    overflow: hidden;
+}
+
+.pg-meter span {
+    display: block;
+    height: 100%;
+    background: var(--pg-accent);
+}
+
+.pg-count {
+    width: 75px;
+}
+
+.pg-details {
+    margin-top: 16px;
+    font-size: 12px;
+    line-height: 1.6;
+    color: var(--pg-muted);
+}
+
+@media (max-width: 800px) {
+    .pg-layout {
+        grid-template-columns: 1fr;
+    }
+
+    .pg-sidebar {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 12px;
+    }
+
+    .pg-panel {
+        margin: 0;
+    }
+
+    .pg-submit {
+        grid-column: 1 / -1;
+    }
+}
+
+@media (max-width: 480px) {
+    .pg-sidebar {
+        display: block;
+    }
+
+    .pg-panel {
+        margin-bottom: 12px;
+    }
+
+    .pg-board {
+        padding: 7px;
+    }
+
+    .packing-game {
+        padding: 12px 4px;
+    }
+}

@@ -29,7 +29,8 @@ fn switch(route: Route) -> Html {
     match route {
         Route::Home => html! { <Home /> },
         Route::Play { n } if (1..=MAX_N).contains(&n) => {
-            html! { <game::Game n={n} /> }
+            // Keyed so changing n remounts with fresh physics.
+            html! { <game::Game key={n} n={n} /> }
         }
         Route::Leaderboard => html! { <Leaderboard /> },
         Route::LeaderboardN { n } => html! { <LeaderboardN {n} /> },
