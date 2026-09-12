@@ -77,7 +77,7 @@ above for the canonical versions.
 ## Typeset transcriptions
 
 The six papers in [`markdown/`](markdown/) started as PDF extractions with
-[pymupdf4llm](https://pypi.org/project/pymupdf4llm/). Their mathematics is being
+[pymupdf4llm](https://pypi.org/project/pymupdf4llm/). Their mathematics has been
 restored against the committed PDFs, using GitHub inline math and fenced
 `math` displays. Each file keeps its source and license header. Historical
 claims remain as printed; separate transcription notes identify apparent
@@ -99,7 +99,9 @@ on `refs/**/*.md` and pull-request text. It is pinned to a reviewed commit and
 uploads the full report. This detects GitHub Markdown/math rendering hazards;
 it does not verify a theorem or catch every incorrectly transcribed symbol.
 Changes still need comparison with the source PDF and inspection of GitHub's
-rendered Markdown, including fractions, radicals, subscripts and equation tags.
+rendered Markdown, including fractions, radicals, subscripts and equation labels. Numbered
+equations use adjacent prose labels: `\tag{...}` currently produces labeled
+MathML rows that render incorrectly in GitHub viewed with Chrome.
 
 ## Solver interpretation
 

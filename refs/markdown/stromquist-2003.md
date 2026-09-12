@@ -52,14 +52,18 @@ We use Lemma 3 mainly in the case of $a=2\sqrt2-2\approx.828$, $b=1$, as shown i
 
 We need some preparation for Lemma 4. When $2\sqrt2-2<a<1$, define $f(a)$ by
 
+**Equation (1).**
+
 ```math
-f(a)=\frac{\cos\theta^*}{1+\cos\theta^*}+\frac{1-a\cos\theta^*}{\sin\theta^*}. \tag{1}
+f(a)=\frac{\cos\theta^*}{1+\cos\theta^*}+\frac{1-a\cos\theta^*}{\sin\theta^*}.
 ```
 
 where $\theta^*$ is the smallest positive value of $\theta$ that satisfies
 
+**Equation (2).**
+
 ```math
-2\cos^3\theta-(2a+2)\cos^2\theta+(a^2-2a+3)\cos\theta-(1-a^2)=0. \tag{2}
+2\cos^3\theta-(2a+2)\cos^2\theta+(a^2-2a+3)\cos\theta-(1-a^2)=0.
 ```
 
 For values of $a$ in the domain of $f$ we always have $0<\theta^*<45^\circ$ and $0<f(a)<1$.
@@ -78,8 +82,10 @@ We rely on these cases of Lemma 4:
 
 **Proof.** If a box avoids both the $x$-axis and the point $(0,1)$, then its edge might as well touch both as shown in Figure 5. Let $(a,b^*)$ be the point at which the box’s top edge meets the line $x=a$. The two triangles marked * are congruent. Since $z+z/\cos\theta=1$, we have $z=\frac{\cos\theta}{1+\cos\theta}$ and
 
+**Equation (3).**
+
 ```math
-b^*=\frac{\cos\theta}{1+\cos\theta}+\frac{1-a\cos\theta}{\sin\theta}. \tag{3}
+b^*=\frac{\cos\theta}{1+\cos\theta}+\frac{1-a\cos\theta}{\sin\theta}.
 ```
 
 If we fix $a$ in the range $2\sqrt2-2<a<1$ and limit $\theta$ to the first quadrant, then the right side of (3) has a unique minimum, which occurs when $\theta<45^\circ$ and $b^*<1$. (To verify this, note that $b^*$ is large when $\theta\approx0$, below 1 when $\theta=45^\circ$, and decreasing to 1 when $\theta=90^\circ$, and that the derivative doesn’t have enough roots for there to be multiple minima below $45^\circ$.) Setting $db^*/d\theta=0$ leads to equation (2) above. Therefore $f(a)$ is the minimum value of $b^*$.
@@ -92,8 +98,10 @@ If $(a,b)$ is within 1 of $(0,1)$ but below $(a,f(a))$—and hence below $(a,b^*
 
 If $\theta\le\tan^{-1}(1.2)\approx50.2^\circ$, then the box must contain the point $(2,1)$. To see this, we calculate the $x$-coordinate of the point $(x,1)$ at which the box’s upper-right boundary crosses the line $y=1$:
 
+**Equation (4).**
+
 ```math
-x=1+\frac{.212}{\tan\theta}+\frac{\sin\theta+\cos\theta-1}{\sin\theta\cos\theta}. \tag{4}
+x=1+\frac{.212}{\tan\theta}+\frac{\sin\theta+\cos\theta-1}{\sin\theta\cos\theta}.
 ```
 
 [Figure 6: Proof of Lemma 5](../downloads/stromquist-2003.pdf#page=5).
@@ -108,8 +116,10 @@ forcing the point $(2,1)$ to be inside the box.
 
 If $\tan^{-1}(1.2)<\theta\le\sin^{-1}(.9)\approx64.2^\circ$, then the box contains the point $(2.12,.9)$. To see this, we compute the $x$-coordinate of the point at which the box’s upper-right boundary intersects the line $y=.9$. We obtain
 
+**Equation (5).**
+
 ```math
-x=1+\frac{.112}{\tan\theta}+\frac{\sin\theta+\cos\theta-.9}{\sin\theta\cos\theta}. \tag{5}
+x=1+\frac{.112}{\tan\theta}+\frac{\sin\theta+\cos\theta-.9}{\sin\theta\cos\theta}.
 ```
 
 This function reaches its minimum at $\theta\approx52.6^\circ$, when $x=2.1256$, so the box’s right boundary always passes to the right of $(2.12,.9)$.
