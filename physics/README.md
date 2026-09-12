@@ -20,20 +20,21 @@ bottom/left edges stay anchored. `target_side` sets its rest length; contact
 pressure can expand it. Zero tension fixes the current side. The scalar band
 coordinate runs on CPU after each CPU substep or GPU readback batch. Body
 integration remains GPU computed. Gameplay uses f32 coordinates; submissions
-must use the separately refined and validated f64 solver arrangement.
-
-The JavaScript implementation is temporarily retained as the live frontend's
-reference; the companion Yew port removes it and uses `Physics` directly.
+must use the separately refined and validated f64 solver arrangement. The Yew
+play screen (`frontend/src/game/`) drives `Physics` directly.
 
 ## Tests
 
 Run host physics tests with `cargo test -p physics`. Browser tests are also Rust,
 using `wasm-bindgen-test`; CI runs them in headless Chrome with a software GPU.
-They exercise GPU/CPU parity, readback edits, drag resistance, band contraction,
-cancellation, missing WebGPU, and device-loss fallback. They write no scores.
+The physics tests exercise GPU/CPU parity, readback edits, drag resistance, band
+contraction, cancellation, missing WebGPU, and device-loss fallback. The frontend
+tests mount the play screen and drive it with real DOM events (first-render
+readout, pause, drag pushing a neighbor). None write scores.
 
-For local browser tests, install Chrome and a matching ChromeDriver, then run
-from the repository root (adjust paths in `physics/webdriver.json` if needed):
+For local browser tests, install Chrome and a ChromeDriver with the same major
+version (wasm-pack caches drivers under `~/.cache/.wasm-pack/`), then run from the
+repository root (adjust paths in `physics/webdriver.json` if needed):
 
 ```sh
 cargo install wasm-bindgen-cli --version 0.2.128 --locked
@@ -41,7 +42,7 @@ CHROMEDRIVER=/path/to/chromedriver \
 WASM_BINDGEN_TEST_WEBDRIVER_JSON="$PWD/physics/webdriver.json" \
 WASM_BINDGEN_USE_BROWSER=1 WASM_BINDGEN_TEST_TIMEOUT=60 \
 CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER=wasm-bindgen-test-runner \
-  cargo test -p physics --target wasm32-unknown-unknown --lib --locked
+  cargo test -p physics -p frontend --target wasm32-unknown-unknown --locked
 ```
 
 The test runner version must match `wasm-bindgen` in `Cargo.lock`. These tests

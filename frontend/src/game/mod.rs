@@ -1,5 +1,7 @@
 //! The play screen: Rust physics on a canvas, plus the solver and leaderboard flow.
 
+#[cfg(all(test, target_arch = "wasm32"))]
+mod browser_tests;
 mod canvas;
 mod files;
 
@@ -19,6 +21,13 @@ use web_sys::{
 };
 use yew::prelude::*;
 use yew_router::prelude::*;
+
+#[cfg(all(test, target_arch = "wasm32"))]
+thread_local! {
+    /// Physics of the most recently created `Game`, so browser tests can
+    /// observe the simulation behind the mounted component.
+    static TEST_PHYSICS: std::cell::RefCell<Option<Physics>> = const { std::cell::RefCell::new(None) };
+}
 
 const STEP_HZ: f64 = 120.0;
 const MAX_SUBSTEPS: u32 = 6;
@@ -137,6 +146,8 @@ impl Component for Game {
         let n = ctx.props().n;
         let side = initial_side(n);
         let physics = Physics::new(n, side);
+        #[cfg(all(test, target_arch = "wasm32"))]
+        TEST_PHYSICS.with(|p| p.replace(Some(physics.clone())));
         let gpu = physics.clone();
         ctx.link().send_future(async move {
             gpu.init_gpu().await;
