@@ -557,6 +557,18 @@ async fn gentle_squeeze_tightens_and_hands_over_to_anneal() {
     let params = physics.params();
     assert_eq!(params.band_tension, 15.0, "soft band");
     assert!(params.target_side < start_side, "{}", params.target_side);
+    // Stopping the squeeze directly releases the band and restores its label.
+    force_button(&root, "Stop").click();
+    sleep(50).await;
+    assert_eq!(
+        physics.params().band_tension,
+        0.0,
+        "stopping releases the band"
+    );
+    assert!(text(&root, ".pg-status").starts_with("Gentle squeeze stopped"));
+    force_button(&root, "Gentle squeeze").click();
+    sleep(200).await;
+    assert_eq!(physics.params().band_tension, 15.0);
     force_button(&root, "Stop");
     force_button(&root, "Anneal");
 

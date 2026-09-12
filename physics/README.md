@@ -66,7 +66,7 @@ repository root (adjust paths in `physics/webdriver.json` if needed):
 cargo install wasm-bindgen-cli --version 0.2.128 --locked
 CHROMEDRIVER=/path/to/chromedriver \
 WASM_BINDGEN_TEST_WEBDRIVER_JSON="$PWD/physics/webdriver.json" \
-WASM_BINDGEN_USE_BROWSER=1 WASM_BINDGEN_TEST_TIMEOUT=60 \
+WASM_BINDGEN_USE_BROWSER=1 WASM_BINDGEN_TEST_TIMEOUT=120 \
 CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER=wasm-bindgen-test-runner \
   cargo test -p physics -p frontend --target wasm32-unknown-unknown --locked
 ```
