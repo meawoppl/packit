@@ -1,3 +1,4 @@
+mod anneal;
 mod api;
 mod benchmark;
 mod game;
