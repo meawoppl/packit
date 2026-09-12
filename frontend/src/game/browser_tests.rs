@@ -864,6 +864,48 @@ async fn finished_gentle_squeeze_measures_and_releases_the_band() {
     root.remove();
 }
 
+#[wasm_bindgen_test]
+async fn squeeze_down_relaxes_between_squeezes_and_stop_keeps_glue() {
+    let _gpu = NoWebGpu::install();
+    let (handle, root, physics) = mount().await;
+    let canvas = canvas_of(&root);
+    let extent = physics.side();
+    double_tap(&canvas, top_midpoint(&physics, 0), extent).await;
+    tap_at(&canvas, top_midpoint(&physics, 1), extent).await;
+    let glued = physics.glues();
+    assert_eq!(glued.len(), 1);
+
+    force_button(&root, "Squeeze down").click();
+    // About a cycle and a half: the band opens up and squeezes back down.
+    let mut targets = Vec::new();
+    for _ in 0..40 {
+        sleep(100).await;
+        targets.push(physics.params().target_side);
+    }
+    assert_eq!(physics.params().band_tension, 40.0);
+    assert!(
+        targets.windows(2).any(|w| w[1] > w[0] + 1e-3),
+        "the band relaxes: {targets:?}"
+    );
+    assert!(
+        targets.windows(2).any(|w| w[1] < w[0] - 1e-3),
+        "and squeezes again: {targets:?}"
+    );
+
+    force_button(&root, "Stop").click();
+    sleep(50).await;
+    assert_eq!(
+        physics.params().band_tension,
+        0.0,
+        "stopping releases the band"
+    );
+    assert!(text(&root, ".pg-status").starts_with("Squeeze down stopped"));
+    assert_eq!(physics.glues(), glued, "the run leaves glue alone");
+    force_button(&root, "Squeeze down");
+    handle.destroy();
+    root.remove();
+}
+
 fn history_length() -> u32 {
     web_sys::window()
         .unwrap()

@@ -19,6 +19,11 @@ pub struct Schedule {
     pub min_strength: f32,
     /// Band tension held for the whole run.
     pub band_tension: f32,
+    /// Seconds per squeeze-then-relax cycle of the band; zero never relaxes.
+    pub relax_period: f64,
+    /// Least the band opens past its squeeze at the start of the run, in
+    /// side-length units; it fades out over the heating phase.
+    pub relax_depth: f64,
 }
 
 impl Default for Schedule {
@@ -30,6 +35,8 @@ impl Default for Schedule {
             initial_strength: 1.0,
             min_strength: 0.02,
             band_tension: 30.0,
+            relax_period: 0.0,
+            relax_depth: 0.0,
         }
     }
 }
@@ -43,6 +50,21 @@ impl Schedule {
             heat_fraction: 0.85,
             initial_strength: 0.0,
             band_tension: 15.0,
+            ..Self::default()
+        }
+    }
+
+    /// Squeeze down: no shakes. The band squeezes, then relaxes so squares
+    /// can slide and turn into better spots, then squeezes lower again.
+    /// The relaxing fades out, so the run ends fully squeezed and measures.
+    pub fn squeeze_down() -> Self {
+        Self {
+            duration: 18.0,
+            heat_fraction: 0.85,
+            initial_strength: 0.0,
+            band_tension: 40.0,
+            relax_period: 2.4,
+            relax_depth: 0.3,
             ..Self::default()
         }
     }
@@ -93,20 +115,38 @@ impl Anneal {
         self.finished
     }
 
+    /// Progress through the heating phase, in `[0, 1]`.
+    fn heat(&self) -> f64 {
+        let heat_end = self.schedule.duration * self.schedule.heat_fraction;
+        (self.elapsed / heat_end).clamp(0.0, 1.0)
+    }
+
     /// Temperature in `[0, 1]`: quadratic cooling over the heating phase.
     fn temperature(&self) -> f64 {
-        let heat_end = self.schedule.duration * self.schedule.heat_fraction;
-        let t = (self.elapsed / heat_end).clamp(0.0, 1.0);
+        let t = self.heat();
         (1.0 - t) * (1.0 - t)
     }
 
     /// Band target: eases from the start side to the floor over the heating
-    /// phase, then holds.
+    /// phase, then holds. With relaxing on, each cycle squeezes and then
+    /// opens the band again, by less each time, so it ends at the floor.
     fn target_side(&self) -> f64 {
-        let heat_end = self.schedule.duration * self.schedule.heat_fraction;
-        let t = (self.elapsed / heat_end).clamp(0.0, 1.0);
+        let t = self.heat();
         let eased = t * t * (3.0 - 2.0 * t);
-        self.start_side + (self.floor_side - self.start_side) * eased
+        let squeeze = self.start_side + (self.floor_side - self.start_side) * eased;
+        let period = self.schedule.relax_period;
+        if period <= 0.0 {
+            return squeeze;
+        }
+        // Zero at the start of each cycle (squeezed), one halfway (relaxed).
+        let wave = 0.5 * (1.0 - (std::f64::consts::TAU * self.elapsed / period).cos());
+        // Open by at least 0.4 of the squeeze span, so every relax outpaces
+        // the squeeze: the eased squeeze falls at most 6 * span / heat time
+        // per unit of fade, and 0.4 keeps each cycle's opening ahead of it.
+        let span = self.start_side - self.floor_side;
+        let depth = self.schedule.relax_depth.max(0.4 * span);
+        // Relaxing never opens the band past where the run started.
+        (squeeze + depth * (1.0 - t) * wave).min(self.start_side)
     }
 
     /// Advance by `dt` seconds and return what to apply this frame. A long
@@ -253,6 +293,64 @@ mod tests {
         let measures = commands.iter().filter(|c| **c == Command::Measure).count();
         assert_eq!(measures, 1);
         assert!((t - 12.0).abs() < 2.0 * FRAME);
+    }
+
+    #[test]
+    fn squeeze_down_relaxes_between_squeezes_and_ends_squeezed() {
+        let mut a = Anneal::new(Schedule::squeeze_down(), 4.5, 3.0, 7);
+        let mut commands = Vec::new();
+        let mut t = 0.0;
+        while !a.is_finished() {
+            t += FRAME;
+            commands.extend(a.advance(FRAME));
+            assert!(t < 25.0, "squeeze down must terminate");
+        }
+        assert!(!commands.iter().any(|c| matches!(c, Command::Shake { .. })));
+        let targets: Vec<f64> = commands
+            .iter()
+            .filter_map(|c| match c {
+                Command::Band {
+                    target_side,
+                    tension,
+                } => {
+                    assert_eq!(*tension, 40.0);
+                    Some(*target_side)
+                }
+                _ => None,
+            })
+            .collect();
+        // Relaxed peaks: the band opens again several times, each time
+        // from a lower squeeze. Early relaxes can reach the start side,
+        // where the clamp flattens them; count only the free peaks.
+        let peaks: Vec<f64> = targets
+            .windows(3)
+            .filter(|w| w[1] > w[0] && w[1] >= w[2] && w[1] < 4.5)
+            .map(|w| w[1])
+            .collect();
+        assert!(peaks.len() >= 4, "{} relax cycles", peaks.len());
+        assert!(peaks.windows(2).all(|w| w[1] < w[0]), "{peaks:?}");
+        // A real relax: the band opens by a visible amount, then squeezes.
+        let rise = targets.windows(2).map(|w| w[1] - w[0]).fold(0.0, f64::max);
+        assert!(rise > 1e-3, "largest per-frame opening {rise}");
+        assert!(targets.iter().all(|s| (3.0 - 1e-12..=4.5).contains(s)));
+        assert!((targets[0] - 4.5).abs() < 0.01, "starts at the start side");
+        assert!((targets.last().unwrap() - 3.0).abs() < 1e-12);
+        let measures = commands.iter().filter(|c| **c == Command::Measure).count();
+        assert_eq!(measures, 1);
+    }
+
+    #[test]
+    fn squeeze_down_at_the_floor_holds_still() {
+        for start in [3.0, 2.0] {
+            let mut a = Anneal::new(Schedule::squeeze_down(), start, 3.0, 1);
+            while !a.is_finished() {
+                for c in a.advance(FRAME) {
+                    if let Command::Band { target_side, .. } = c {
+                        assert_eq!(target_side, 3.0, "start {start}");
+                    }
+                }
+            }
+        }
     }
 
     #[test]
