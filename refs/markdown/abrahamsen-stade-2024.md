@@ -864,7 +864,7 @@ We give a name to each stack in the construction that can grow. The row for the 
 
 **Figure 59:** If the lowest literal row is the one that is aligned, then some slack can propagate. [View the diagram (PDF, p. 50).](../downloads/abrahamsen-stade-2024.pdf#page=50)
 
-Recall that when two stacks cross each other, combined they grow by a total of at least 2 squares (Lemma 25). For the crossing between a horizontal stack $a$ and a vertical stack $b$, we designate a variable $x(a,b)\in\lbrace 0,1,2\rbrace$ that records how many times $a$ grows when passing through this crossing. The vertical stack $b$ then grows $2-x(a,b)$ times. The stacks created by unaligned literal columns can’t grow, so any row that crosses an unaligned literal column grows by 2 and we don’t need an $x$ variable to keep track of this. The full set of constraints can now be written. For $0\le i<n$ and $0\le j<1+2t_i$ there is a tester row $r_{i,j}$. This is allowed to grow at each tester column and at one of the literal columns for each of the clauses above it, up to a total width of $2(i+1+t_i)$ (recall that $t_i=3(i+1)+\frac{1}{2}i(i+1)$ is the number of tester columns in clauses $c_0,\ldots,c_i$). The constraint created by a tester row can then be expressed as follows: 
+Recall that when two stacks cross each other, combined they grow by a total of at least 2 squares (Lemma 25). For the crossing between a horizontal stack $a$ and a vertical stack $b$, we designate a variable $x(a,b)\in\lbrace 0,1,2\rbrace$ that records how many times $a$ grows when passing through this crossing. The vertical stack $b$ then grows $2-x(a,b)$ times. The stacks created by unaligned literal columns can’t grow, so any row that crosses an unaligned literal column grows by 2 and we don’t need an $x$ variable to keep track of this. The full set of constraints can now be written. For $0\le i\lt n$ and $0\le j<1+2t_i$ there is a tester row $r_{i,j}$. This is allowed to grow at each tester column and at one of the literal columns for each of the clauses above it, up to a total width of $2(i+1+t_i)$ (recall that $t_i=3(i+1)+\frac{1}{2}i(i+1)$ is the number of tester columns in clauses $c_0,\ldots,c_i$). The constraint created by a tester row can then be expressed as follows: 
 
 Equation (3):
 
@@ -872,7 +872,7 @@ Equation (3):
 2\sum_{p=0}^{3i+2}y_p+\sum_{p=0}^{i}\sum_{q=0}^{3+p-1}x(r_{i,j},c_{p,q})\le 2(i+1+t_i)
 ```
 
-For $0\le i<n$, the uppermost literal row in the $i$th clause is $\ell_{3i}$. The literal row $\ell_{3i}$ is allowed to grow once at each of the tester columns for _previous_ clauses, and at one of the literal columns for each of the clauses above it, for a total of $2(i+t_{i-1})$ times. This leads to the following inequality. 
+For $0\le i\lt n$, the uppermost literal row in the $i$th clause is $\ell_{3i}$. The literal row $\ell_{3i}$ is allowed to grow once at each of the tester columns for _previous_ clauses, and at one of the literal columns for each of the clauses above it, for a total of $2(i+t_{i-1})$ times. This leads to the following inequality. 
 
 Equation (4):
 
@@ -880,7 +880,7 @@ Equation (4):
 (1-y_{3i})\left(2\sum_{p=0}^{3i-1}y_p+\sum_{p=0}^{i}\sum_{q=0}^{3+p-1}x(\ell_{3i},c_{p,q})\right)\le 2(i+t_{i-1})
 ```
 
-The next two literal rows in the $i$th clause are each allowed to grow by an additional two squares. So for $0\le i<n$ and $m\in\lbrace 1,2\rbrace$, we have the following: 
+The next two literal rows in the $i$th clause are each allowed to grow by an additional two squares. So for $0\le i\lt n$ and $m\in\lbrace 1,2\rbrace$, we have the following: 
 
 Equation (5):
 
@@ -888,7 +888,7 @@ Equation (5):
 (1-y_{3i+m})\left(2\sum_{p=0}^{3i+m-1}y_p+\sum_{p=0}^{i}\sum_{q=0}^{3+p-1}x(\ell_{3i+m},c_{p,q})\right)\le 2(1+i+t_{i-1})
 ```
 
-Finally, for $0\le p<n$ and $0\le q<3+i$, we have a tester column $c_{p,q}$, which is allowed to grow 4 times. Recall that $c_{p,q}$ crosses all literal and tester rows in clauses $c_{p+1}$ through $c_{n-1}$. This leads to the constraint: 
+Finally, for $0\le p\lt n$ and $0\le q<3+i$, we have a tester column $c_{p,q}$, which is allowed to grow 4 times. Recall that $c_{p,q}$ crosses all literal and tester rows in clauses $c_{p+1}$ through $c_{n-1}$. This leads to the constraint: 
 
 Equation (6):
 
@@ -908,7 +908,7 @@ Here we are assuming that a literal row is always aligned when the corresponding
 
 **Lemma 40.** *Inequalities (3)–(6) imply that, for each $i$, $y_{3i}+y_{3i+1}+y_{3i+2}=1$.* 
 
-_Proof._ By induction on $k$, we show that for $i<k$, we have 
+_Proof._ By induction on $k$, we show that for $i\lt k$, we have 
 
 Equation (7):
 
@@ -976,7 +976,7 @@ Equation (10):
 y_{3k}=y_{3k+1}=y_{3k+2}=0
 ```
 
-By subtracting the inductive hypothesis (8) from the sum of (6) over $0\le p<k$ and $0\le q<3+p$, we see that: 
+By subtracting the inductive hypothesis (8) from the sum of (6) over $0\le p\lt k$ and $0\le q<3+p$, we see that: 
 
 Equation (11):
 
@@ -993,7 +993,7 @@ Adding up (4) and versions of (5) for both values $m\in\lbrace 1,2\rbrace$ (and 
 6k+\sum_{m=0}^{2}\sum_{p=0}^{k}\sum_{q=0}^{3+p-1}x(\ell_{3k+m},c_{p,q})\le 4+6(k+t_{k-1})
 ```
 
-Splitting the sum into the cases $p=k$ and $p<k$, we get: 
+Splitting the sum into the cases $p=k$ and $p\lt k$, we get: 
 
 ```math
 6k+\sum_{m=0}^{2}\sum_{q=0}^{3+k-1}x(\ell_{3k+m},c_{k,q})+\sum_{m=0}^{2}\sum_{p=0}^{k-1}\sum_{q=0}^{3+p-1}x(\ell_{3k+m},c_{p,q})\le 4+6(k+t_{k-1})
