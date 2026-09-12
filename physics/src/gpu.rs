@@ -101,15 +101,8 @@ impl Gpu {
                 ],
             })
         });
-        // Pop all scopes even if the first reports an error.
-        let invalid = validation.pop().await.is_some();
-        let invalid = internal.pop().await.is_some() || invalid;
-        let invalid = oom.pop().await.is_some() || invalid;
-        if invalid || lost.load(Ordering::Relaxed) {
-            device.destroy();
-            return None;
-        }
-        Some(Self {
+        // Own the device before awaiting scopes, so cancellation destroys it too.
+        let gpu = Self {
             device,
             queue,
             pipeline,
@@ -118,8 +111,17 @@ impl Gpu {
             readback,
             groups,
             lost,
-        })
+        };
+        // Pop all scopes even if the first reports an error.
+        let invalid = validation.pop().await.is_some();
+        let invalid = internal.pop().await.is_some() || invalid;
+        let invalid = oom.pop().await.is_some() || invalid;
+        if invalid || !gpu.alive() {
+            return None;
+        }
+        Some(gpu)
     }
+
     pub(super) fn alive(&self) -> bool {
         !self.lost.load(Ordering::Relaxed)
     }
