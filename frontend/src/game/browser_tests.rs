@@ -176,12 +176,16 @@ async fn double_tap(canvas: &HtmlCanvasElement, p: (f64, f64), extent: f64) {
     tap_at(canvas, p, extent).await;
 }
 
-fn top_midpoint(physics: &Physics, square: usize) -> (f64, f64) {
-    let feature = Feature::Midpoint { square, edge: 1 };
+fn midpoint(physics: &Physics, square: usize, edge: u8) -> (f64, f64) {
+    let feature = Feature::Midpoint { square, edge };
     match glue::anchor(&physics.bodies(), physics.side(), feature) {
         Some(glue::Anchor::Point(p)) => p,
         other => panic!("{other:?}"),
     }
+}
+
+fn top_midpoint(physics: &Physics, square: usize) -> (f64, f64) {
+    midpoint(physics, square, 1)
 }
 
 /// A spot on the board with no square and no glue target nearby.
@@ -306,6 +310,116 @@ async fn glue_survives_settle_and_measure() {
         glued,
         "measuring reloads but keeps the glue"
     );
+    handle.destroy();
+    root.remove();
+}
+
+/// Controls that move the scene close the glue tool, so the next tap is an
+/// ordinary tap rather than a second pick.
+#[wasm_bindgen_test]
+async fn scene_controls_close_the_glue_tool() {
+    let _gpu = NoWebGpu::install();
+    for control in ["Shake", "Anneal", "Resume", "size"] {
+        let (handle, root, physics) = mount().await;
+        let canvas = canvas_of(&root);
+        let extent = physics.side();
+        double_tap(&canvas, top_midpoint(&physics, 0), extent).await;
+        let status = text(&root, ".pg-status");
+        assert!(status.contains("now tap a target"), "{control}: {status}");
+        if control == "size" {
+            slide(&root, "#pg-size", "2.2");
+        } else {
+            force_button(&root, control).click();
+        }
+        sleep(30).await;
+        tap_at(&canvas, top_midpoint(&physics, 1), extent).await;
+        assert!(physics.glues().is_empty(), "{control} closes the glue tool");
+        handle.destroy();
+        root.remove();
+    }
+}
+
+/// Choose a file holding `text` in the import picker, as a user would.
+fn choose_import(root: &Element, text: &str) {
+    let input: HtmlInputElement = root
+        .query_selector("input[type=file]")
+        .unwrap()
+        .expect("import input rendered")
+        .dyn_into()
+        .unwrap();
+    let window = web_sys::window().unwrap();
+    let construct = |name: &str, args: &js_sys::Array| {
+        let class: js_sys::Function = js_sys::Reflect::get(&window, &name.into())
+            .unwrap()
+            .dyn_into()
+            .unwrap();
+        js_sys::Reflect::construct(&class, args).unwrap()
+    };
+    let file = construct(
+        "File",
+        &js_sys::Array::of2(&js_sys::Array::of1(&text.into()), &"packing.json".into()),
+    );
+    let transfer = construct("DataTransfer", &js_sys::Array::new());
+    let items = js_sys::Reflect::get(&transfer, &"items".into()).unwrap();
+    let add: js_sys::Function = js_sys::Reflect::get(&items, &"add".into())
+        .unwrap()
+        .dyn_into()
+        .unwrap();
+    add.call1(&items, &file).unwrap();
+    let files = js_sys::Reflect::get(&transfer, &"files".into()).unwrap();
+    js_sys::Reflect::set(&input, &"files".into(), &files).unwrap();
+    input
+        .dispatch_event(&Event::new("change").unwrap())
+        .unwrap();
+}
+
+#[wasm_bindgen_test]
+async fn import_closes_the_glue_tool() {
+    let _gpu = NoWebGpu::install();
+    let (handle, root, physics) = mount().await;
+    let canvas = canvas_of(&root);
+    double_tap(&canvas, top_midpoint(&physics, 0), physics.side()).await;
+    choose_import(&root, &serde_json::to_string(&two_squares()).unwrap());
+    for _ in 0..60 {
+        if text(&root, ".pg-status").starts_with("Imported") {
+            break;
+        }
+        sleep(30).await;
+    }
+    let status = text(&root, ".pg-status");
+    assert!(status.starts_with("Imported"), "{status}");
+
+    // The imported scene is framed to its own side.
+    tap_at(&canvas, top_midpoint(&physics, 1), physics.side()).await;
+    assert!(physics.glues().is_empty(), "no pick survives the import");
+    handle.destroy();
+    root.remove();
+}
+
+#[wasm_bindgen_test]
+async fn tapping_a_link_removes_just_that_link() {
+    let _gpu = NoWebGpu::install();
+    let (handle, root, physics) = mount().await;
+    let canvas = canvas_of(&root);
+    let extent = physics.side();
+    double_tap(&canvas, top_midpoint(&physics, 0), extent).await;
+    tap_at(&canvas, top_midpoint(&physics, 1), extent).await;
+    double_tap(&canvas, midpoint(&physics, 0, 3), extent).await;
+    tap_at(&canvas, midpoint(&physics, 1, 3), extent).await;
+    let [top, bottom] = physics.glues()[..] else {
+        panic!("two links: {:?}", physics.glues());
+    };
+    assert_eq!(bottom.a, Feature::Midpoint { square: 0, edge: 3 });
+
+    force_button(&root, "Pause").click();
+    sleep(30).await;
+    let (a, b) = glue::link(&physics.bodies(), physics.side(), top).unwrap();
+    let on_link = ((a.0 + b.0) / 2.0, (a.1 + b.1) / 2.0);
+    double_tap(&canvas, on_link, extent).await;
+    let status = text(&root, ".pg-status");
+    assert!(status.contains("Tap a link to remove it"), "{status}");
+    tap_at(&canvas, on_link, extent).await;
+    assert_eq!(physics.glues(), vec![bottom]);
     handle.destroy();
     root.remove();
 }

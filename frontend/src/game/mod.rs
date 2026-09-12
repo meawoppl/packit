@@ -330,6 +330,29 @@ impl Component for Game {
 
     fn update(&mut self, ctx: &Context<Self>, msg: Self::Message) -> bool {
         let n = ctx.props().n;
+        // Anything that moves or reloads the scene closes the glue tool,
+        // leaving the pause state to that control, so a pick never outlives
+        // the targets it named. Keys decide below.
+        if !matches!(
+            msg,
+            Msg::Frame(_)
+                | Msg::Stepped
+                | Msg::GpuReady
+                | Msg::Records(_)
+                | Msg::PointerDown(_)
+                | Msg::PointerMove(_)
+                | Msg::PointerUp
+                | Msg::Key(_)
+                | Msg::ClearGlue
+                | Msg::Player(_)
+                | Msg::Submitted(_)
+                | Msg::Export
+                | Msg::Share
+                | Msg::Shared(_)
+                | Msg::ImportPick
+        ) {
+            self.drop_glue_tool();
+        }
         match msg {
             Msg::Frame(time) => {
                 self.frame = None;
@@ -479,6 +502,7 @@ impl Component for Game {
                 }
                 if e.code() == "Space" {
                     e.prevent_default();
+                    self.drop_glue_tool();
                     self.stop_anneal();
                     self.set_pause(!self.physics.paused());
                     return self.refresh_readout();
@@ -496,6 +520,7 @@ impl Component for Game {
                     _ => return false,
                 }
                 e.prevent_default();
+                self.drop_glue_tool();
                 self.stop_anneal();
                 self.set_pause(false);
                 false
@@ -586,8 +611,6 @@ impl Component for Game {
             }
             Msg::Reset => {
                 self.stop_anneal();
-                self.glue_tool = None;
-                self.glue_resume = false;
                 self.desired_side = None;
                 let side = initial_side(n);
                 self.physics.set_side(side);
@@ -1210,7 +1233,15 @@ impl Game {
         self.glue_resume = !self.physics.paused();
         self.set_pause(true);
         let bodies = self.physics.bodies();
-        self.glue_tool = Some(glue::pick(&bodies, self.physics.side(), p, reach, |_| true));
+        let side = self.physics.side();
+        // On an existing link, open with nothing picked so the next tap
+        // removes it rather than starting a new glue at the same spot.
+        let on_link = glue::glue_at(&bodies, side, &self.physics.glues(), p, reach).is_some();
+        self.glue_tool = Some(if on_link {
+            None
+        } else {
+            glue::pick(&bodies, side, p, reach, |_| true)
+        });
         self.glue_prompt();
     }
 
@@ -1263,10 +1294,17 @@ impl Game {
 
     /// Close the glue tool, resuming the simulation if opening it paused it.
     fn close_glue(&mut self) {
-        self.glue_tool = None;
-        if std::mem::take(&mut self.glue_resume) {
+        let resume = self.glue_resume;
+        self.drop_glue_tool();
+        if resume {
             self.set_pause(false);
         }
+    }
+
+    /// Close the glue tool without touching the pause state.
+    fn drop_glue_tool(&mut self) {
+        self.glue_tool = None;
+        self.glue_resume = false;
     }
 
     /// Let the band's target catch up with the requested size as far as the
