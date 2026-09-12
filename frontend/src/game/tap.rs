@@ -24,6 +24,18 @@ impl DoubleTap {
         self.last = if double { None } else { Some((time_ms, at)) };
         double
     }
+
+    /// Pointer travel to client position `at`. Moving past the slop cancels
+    /// the pending first tap, so a quick drag, release, and regrab is not a
+    /// double tap.
+    pub fn moved(&mut self, at: (f64, f64)) {
+        if self
+            .last
+            .is_some_and(|(_, p)| (at.0 - p.0).hypot(at.1 - p.1) > MAX_TRAVEL_PX)
+        {
+            self.last = None;
+        }
+    }
 }
 
 #[cfg(test)]
@@ -44,6 +56,17 @@ mod tests {
         assert!(!tap.down(400.0, (0.0, 0.0)), "too slow");
         assert!(!tap.down(500.0, (40.0, 0.0)), "too far");
         assert!(!tap.down(400.0, (40.0, 0.0)), "clock went backwards");
+    }
+
+    #[test]
+    fn dragging_away_cancels_the_pending_tap() {
+        let mut tap = DoubleTap::default();
+        assert!(!tap.down(0.0, (0.0, 0.0)));
+        tap.moved((5.0, 5.0));
+        tap.moved((60.0, 0.0));
+        assert!(!tap.down(200.0, (0.0, 0.0)), "drag, release, regrab");
+        tap.moved((4.0, 3.0));
+        assert!(tap.down(300.0, (0.0, 0.0)), "jitter within the slop");
     }
 
     #[test]

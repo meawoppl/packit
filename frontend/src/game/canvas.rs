@@ -1,6 +1,7 @@
 //! Canvas rendering, pointer mapping, and hit testing for the play screen.
 
-use physics::Body;
+use super::glue::{self, Anchor};
+use physics::{Body, Feature, Glue};
 use wasm_bindgen::{JsCast, JsValue};
 use web_sys::{CanvasRenderingContext2d, HtmlCanvasElement};
 
@@ -23,6 +24,10 @@ pub struct Scene<'a> {
     pub selected: Option<usize>,
     /// Mouse-spring target while a square is being dragged.
     pub tether: Option<(f64, f64)>,
+    /// Glued feature pairs, drawn as links.
+    pub glues: &'a [Glue],
+    /// While the glue tool is open: the first pick, if chosen yet.
+    pub glue_tool: Option<Option<Feature>>,
 }
 
 /// Map a client-space pointer position to world coordinates (origin
@@ -35,6 +40,12 @@ pub fn to_world(canvas: &HtmlCanvasElement, client: (f64, f64), extent: f64) -> 
         (client.0 - r.left() - pad) / scale,
         (r.bottom() - client.1 - pad) / scale,
     )
+}
+
+/// World length of `px` client pixels for a viewport showing `[0, extent]^2`.
+pub fn px_to_world(canvas: &HtmlCanvasElement, px: f64, extent: f64) -> f64 {
+    let width = canvas.get_bounding_client_rect().width();
+    px * extent / (width * (1.0 - 2.0 * PAD_FRACTION))
 }
 
 /// Topmost square containing `p`.
@@ -145,6 +156,52 @@ pub fn draw(canvas: &HtmlCanvasElement, scene: &Scene) {
         let _ = ctx.fill_text(&(i + 1).to_string(), sx(b.x as f64), sy(b.y as f64));
     }
 
+    ctx.save();
+    ctx.set_stroke_style_str("#ffcf4d");
+    ctx.set_fill_style_str("#ffcf4d");
+    ctx.set_line_width(3.0 * dpr);
+    for g in scene.glues {
+        if let Some((a, b)) = glue::link(scene.bodies, side, *g) {
+            line(&ctx, (sx(a.0), sy(a.1)), (sx(b.0), sy(b.1)));
+            dot(
+                &ctx,
+                (sx((a.0 + b.0) / 2.0), sy((a.1 + b.1) / 2.0)),
+                5.0 * dpr,
+            );
+        }
+    }
+    ctx.restore();
+
+    // With the glue tool open, show every target the next tap can take,
+    // and the first pick in gold.
+    if let Some(first) = scene.glue_tool {
+        ctx.save();
+        ctx.set_stroke_style_str("#ffffff");
+        ctx.set_fill_style_str("#ffffff");
+        ctx.set_global_alpha(0.6);
+        ctx.set_line_width(2.0 * dpr);
+        let targets = glue::features(scene.bodies.len())
+            .filter(|f| first.is_none_or(|a| glue::compatible(a, *f)));
+        for f in targets {
+            match glue::anchor(scene.bodies, side, f) {
+                Some(Anchor::Point(p)) => dot(&ctx, (sx(p.0), sy(p.1)), 3.5 * dpr),
+                Some(Anchor::Segment(p, q)) => line(&ctx, (sx(p.0), sy(p.1)), (sx(q.0), sy(q.1))),
+                None => {}
+            }
+        }
+        if let Some(anchor) = first.and_then(|a| glue::anchor(scene.bodies, side, a)) {
+            ctx.set_global_alpha(1.0);
+            ctx.set_stroke_style_str("#ffcf4d");
+            ctx.set_fill_style_str("#ffcf4d");
+            ctx.set_line_width(5.0 * dpr);
+            match anchor {
+                Anchor::Point(p) => dot(&ctx, (sx(p.0), sy(p.1)), 7.0 * dpr),
+                Anchor::Segment(p, q) => line(&ctx, (sx(p.0), sy(p.1)), (sx(q.0), sy(q.1))),
+            }
+        }
+        ctx.restore();
+    }
+
     if let Some(forces) = scene.forces {
         ctx.save();
         ctx.set_stroke_style_str("#7dcfff");
@@ -223,6 +280,12 @@ fn line(ctx: &CanvasRenderingContext2d, from: (f64, f64), to: (f64, f64)) {
     ctx.move_to(from.0, from.1);
     ctx.line_to(to.0, to.1);
     ctx.stroke();
+}
+
+fn dot(ctx: &CanvasRenderingContext2d, at: (f64, f64), radius: f64) {
+    ctx.begin_path();
+    let _ = ctx.arc(at.0, at.1, radius, 0.0, std::f64::consts::TAU);
+    ctx.fill();
 }
 
 #[cfg(test)]

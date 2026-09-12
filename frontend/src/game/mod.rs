@@ -13,7 +13,7 @@ use crate::{api, Route};
 use canvas::Scene;
 use gloo_events::{EventListener, EventListenerOptions};
 use gloo_render::{request_animation_frame, AnimationFrame};
-use physics::{Backend, Physics};
+use physics::{Backend, Feature, Glue, Physics};
 use shared::{share, Arrangement, KnownRecord, ScoreEntry, SubmitScore, MAX_N};
 use solver::SolveReport;
 use std::cell::Cell;
@@ -95,6 +95,8 @@ pub enum Msg {
     ImportPick,
     ImportFile(Event),
     Imported(Result<String, String>),
+    /// Remove every glue link.
+    ClearGlue,
 }
 
 /// The scheduled runs that share one slot: shaking anneal or gentle squeeze.
@@ -155,6 +157,13 @@ pub struct Game {
     /// follows it only as far as the band pressure reaches.
     desired_side: Option<f64>,
     readout: Readout,
+    /// Detects the double tap that opens the glue tool.
+    taps: tap::DoubleTap,
+    /// The glue tool: `None` when closed, `Some(None)` waiting for a first
+    /// target, `Some(Some(a))` holding it.
+    glue_tool: Option<Option<Feature>>,
+    /// Whether closing the glue tool resumes the simulation it paused.
+    glue_resume: bool,
 }
 
 fn initial_side(n: u32) -> f64 {
@@ -253,6 +262,9 @@ impl Component for Game {
             run_kind: RunKind::Anneal,
             desired_side: None,
             readout: Readout::default(),
+            taps: tap::DoubleTap::default(),
+            glue_tool: None,
+            glue_resume: false,
         };
         // A shared packing opens paused and unvalidated, even if it was
         // validated when shared; it has to be measured again here.
@@ -374,6 +386,18 @@ impl Component for Game {
                 };
                 focus_without_scroll(&canvas);
                 let p = self.world(&canvas, &e);
+                let reach = self.reach(&canvas, &e);
+                if self.glue_tool.is_some() {
+                    self.glue_tap(p, reach);
+                    return true;
+                }
+                if self
+                    .taps
+                    .down(e.time_stamp(), (e.client_x() as f64, e.client_y() as f64))
+                {
+                    self.open_glue(p, reach);
+                    return true;
+                }
                 let bodies = self.physics.bodies();
                 self.selected = canvas::hit(&bodies, p);
                 self.rotating = e.shift_key();
@@ -393,6 +417,7 @@ impl Component for Game {
                 true
             }
             Msg::PointerMove(e) => {
+                self.taps.moved((e.client_x() as f64, e.client_y() as f64));
                 let Some(canvas) = self.canvas.cast::<HtmlCanvasElement>() else {
                     return false;
                 };
@@ -445,6 +470,12 @@ impl Component for Game {
             Msg::Key(e) => {
                 if self.busy {
                     return false;
+                }
+                if self.glue_tool.is_some() && e.key() == "Escape" {
+                    e.prevent_default();
+                    self.set_status("Glue cancelled.", false);
+                    self.close_glue();
+                    return true;
                 }
                 if e.code() == "Space" {
                     e.prevent_default();
@@ -549,8 +580,14 @@ impl Component for Game {
                 self.set_pause(false);
                 true
             }
+            Msg::ClearGlue => {
+                self.apply_glues(&[], "Glue cleared.");
+                true
+            }
             Msg::Reset => {
                 self.stop_anneal();
+                self.glue_tool = None;
+                self.glue_resume = false;
                 self.desired_side = None;
                 let side = initial_side(n);
                 self.physics.set_side(side);
@@ -745,7 +782,7 @@ impl Component for Game {
                     <div>
                         <div class="pg-board">
                             <canvas ref={self.canvas.clone()} tabindex="0"
-                                aria-label="Square packing playfield. Drag to move. Select a square, then use arrow keys to move and Q or E to rotate."
+                                aria-label="Square packing playfield. Drag to move. Select a square, then use arrow keys to move and Q or E to rotate. Double-click to glue two features; Escape cancels."
                                 onpointerdown={link.callback(Msg::PointerDown)}
                                 onpointermove={link.callback(Msg::PointerMove)}
                                 onpointerup={link.callback(|_| Msg::PointerUp)}
@@ -758,8 +795,11 @@ impl Component for Game {
                                     <button aria-label="Turn left" onclick={link.callback(|_| Msg::Turn(TOUCH_TURN))}>{ "⟲" }</button>
                                     <button aria-label="Turn right" onclick={link.callback(|_| Msg::Turn(-TOUCH_TURN))}>{ "⟳" }</button>
                                 </span>
-                                <span class="pg-hint-mouse">{ "drag · wheel to rotate · shift-drag to spin" }</span>
-                                <span class="pg-hint-touch">{ "drag to move · tap a square, then ⟲ ⟳ to turn" }</span>
+                                { (!self.physics.glues().is_empty()).then(|| html! {
+                                    <button class="pg-clear-glue" onclick={link.callback(|_| Msg::ClearGlue)}>{ "Clear glue" }</button>
+                                }) }
+                                <span class="pg-hint-mouse">{ "drag · wheel to rotate · shift-drag to spin · double-click to glue" }</span>
+                                <span class="pg-hint-touch">{ "drag to move · tap a square, then ⟲ ⟳ to turn · double-tap to glue" }</span>
                             </div>
                         </div>
                         <p class="pg-help">{ "Force arrows: blue = net contact and edge pull · gold = mouse spring. Dashed band = target size." }</p>
@@ -1026,9 +1066,12 @@ impl Game {
         let show_forces = self.dragging
             || self.rotating
             || (self.selected.is_some() && self.physics.motion() > 0.002 * bodies.len() as f32);
+        let glues = self.physics.glues();
         canvas::draw(
             &canvas,
             &Scene {
+                glues: &glues,
+                glue_tool: self.glue_tool,
                 bodies: &bodies,
                 side: self.physics.side(),
                 view_side: self.view_side.get(),
@@ -1145,6 +1188,87 @@ impl Game {
         self.status_error = error;
     }
 
+    /// Picking radius in world units; a fingertip is wider than a cursor.
+    fn reach(&self, canvas: &HtmlCanvasElement, e: &PointerEvent) -> f64 {
+        let px = if e.pointer_type() == "touch" {
+            22.0
+        } else {
+            12.0
+        };
+        canvas::px_to_world(canvas, px, self.view_side.get().max(self.physics.side()))
+    }
+
+    /// Open the glue tool on a double tap: end any drag, pause the scene,
+    /// and take the target under the tap as the first pick.
+    fn open_glue(&mut self, p: (f64, f64), reach: f64) {
+        self.stop_anneal();
+        self.selected = None;
+        self.dragging = false;
+        self.rotating = false;
+        self.last_pointer = None;
+        self.push_mouse();
+        self.glue_resume = !self.physics.paused();
+        self.set_pause(true);
+        let bodies = self.physics.bodies();
+        self.glue_tool = Some(glue::pick(&bodies, self.physics.side(), p, reach, |_| true));
+        self.glue_prompt();
+    }
+
+    fn glue_prompt(&mut self) {
+        let prompt = if matches!(self.glue_tool, Some(Some(_))) {
+            "Glue: now tap a target on another square, or a wall. Escape cancels."
+        } else {
+            "Glue: tap a corner, midpoint, edge, or wall. Tap a link to remove it."
+        };
+        self.set_status(prompt, false);
+    }
+
+    /// A tap with the glue tool open. With no first pick, tapping a link
+    /// removes it; otherwise the first pick is glued to a target on another
+    /// square or a wall. Another target becomes the first pick instead, and
+    /// tapping empty space closes the tool.
+    fn glue_tap(&mut self, p: (f64, f64), reach: f64) {
+        let bodies = self.physics.bodies();
+        let side = self.physics.side();
+        let mut glues = self.physics.glues();
+        let first = self.glue_tool.flatten();
+        let second =
+            first.and_then(|a| glue::pick(&bodies, side, p, reach, |f| glue::compatible(a, f)));
+        let removed = first
+            .is_none()
+            .then(|| glue::glue_at(&bodies, side, &glues, p, reach))
+            .flatten();
+        if let (Some(a), Some(b)) = (first, second) {
+            glues.push(Glue { a, b });
+            self.apply_glues(&glues, "Glued. Double-tap to add another.");
+        } else if let Some(i) = removed {
+            glues.remove(i);
+            self.apply_glues(&glues, "Glue removed.");
+        } else if let Some(f) = glue::pick(&bodies, side, p, reach, |_| true) {
+            self.glue_tool = Some(Some(f));
+            self.glue_prompt();
+            return;
+        } else {
+            self.set_status("Glue cancelled.", false);
+        }
+        self.close_glue();
+    }
+
+    fn apply_glues(&mut self, glues: &[Glue], done: &str) {
+        match self.physics.set_glues(glues) {
+            Ok(()) => self.set_status(done, false),
+            Err(e) => self.set_status(&format!("Can't glue that: {e}"), true),
+        }
+    }
+
+    /// Close the glue tool, resuming the simulation if opening it paused it.
+    fn close_glue(&mut self) {
+        self.glue_tool = None;
+        if std::mem::take(&mut self.glue_resume) {
+            self.set_pause(false);
+        }
+    }
+
     /// Let the band's target catch up with the requested size as far as the
     /// band pressure reaches, as the squares yield or push back.
     fn apply_scrub(&mut self) {
@@ -1186,7 +1310,11 @@ impl Game {
                     TEST_REPORT.with(|r| r.replace(Some(report.arrangement.clone())));
                     // Settle at the measured packing; don't resume squeezing.
                     self.desired_side = None;
+                    // Loading clears glue; the measured packing has the same
+                    // squares, so every link still applies.
+                    let glues = self.physics.glues();
                     self.physics.load(&report.arrangement);
+                    let _ = self.physics.set_glues(&glues);
                     self.view_side.set(self.physics.side());
                     let exact = report
                         .algebraic

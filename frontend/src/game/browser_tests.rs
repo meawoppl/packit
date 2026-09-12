@@ -154,6 +154,162 @@ async fn drag_wakes_a_paused_scene_and_pushes_the_neighbor() {
     root.remove();
 }
 
+fn canvas_of(root: &Element) -> HtmlCanvasElement {
+    root.query_selector("canvas")
+        .unwrap()
+        .unwrap()
+        .dyn_into()
+        .unwrap()
+}
+
+/// A tap (down then up) at world `p`.
+async fn tap_at(canvas: &HtmlCanvasElement, p: (f64, f64), extent: f64) {
+    pointer(canvas, "pointerdown", p, extent);
+    pointer(canvas, "pointerup", p, extent);
+    sleep(30).await;
+}
+
+/// Two quick taps at world `p`, which open the glue tool.
+async fn double_tap(canvas: &HtmlCanvasElement, p: (f64, f64), extent: f64) {
+    pointer(canvas, "pointerdown", p, extent);
+    pointer(canvas, "pointerup", p, extent);
+    tap_at(canvas, p, extent).await;
+}
+
+fn top_midpoint(physics: &Physics, square: usize) -> (f64, f64) {
+    let feature = Feature::Midpoint { square, edge: 1 };
+    match glue::anchor(&physics.bodies(), physics.side(), feature) {
+        Some(glue::Anchor::Point(p)) => p,
+        other => panic!("{other:?}"),
+    }
+}
+
+/// A spot on the board with no square and no glue target nearby.
+fn empty_spot(physics: &Physics) -> (f64, f64) {
+    let (bodies, side) = (physics.bodies(), physics.side());
+    (1..10)
+        .flat_map(|i| (1..10).map(move |j| (side * i as f64 / 10.0, side * j as f64 / 10.0)))
+        .find(|p| {
+            canvas::hit(&bodies, *p).is_none()
+                && glue::pick(&bodies, side, *p, 0.3, |_| true).is_none()
+        })
+        .expect("an empty spot on the board")
+}
+
+#[wasm_bindgen_test]
+async fn double_tap_glues_two_features_and_clear_removes_them() {
+    let _gpu = NoWebGpu::install();
+    let (handle, root, physics) = mount().await;
+    let canvas = canvas_of(&root);
+    let extent = physics.side();
+
+    double_tap(&canvas, top_midpoint(&physics, 0), extent).await;
+    assert!(physics.paused(), "the glue tool pauses the scene");
+    let status = text(&root, ".pg-status");
+    assert!(status.contains("now tap a target"), "{status}");
+
+    tap_at(&canvas, top_midpoint(&physics, 1), extent).await;
+    assert_eq!(
+        physics.glues(),
+        vec![Glue {
+            a: Feature::Midpoint { square: 0, edge: 1 },
+            b: Feature::Midpoint { square: 1, edge: 1 },
+        }]
+    );
+    assert!(!physics.paused(), "closing the tool resumes the scene");
+
+    let clear: HtmlElement = root
+        .query_selector(".pg-clear-glue")
+        .unwrap()
+        .expect("Clear glue is shown while glue exists")
+        .dyn_into()
+        .unwrap();
+    clear.click();
+    sleep(30).await;
+    assert!(physics.glues().is_empty());
+    assert!(root.query_selector(".pg-clear-glue").unwrap().is_none());
+    handle.destroy();
+    root.remove();
+}
+
+#[wasm_bindgen_test]
+async fn tapping_empty_space_cancels_the_glue_tool() {
+    let _gpu = NoWebGpu::install();
+    let (handle, root, physics) = mount().await;
+    let canvas = canvas_of(&root);
+    let extent = physics.side();
+    let was_paused = physics.paused();
+    let empty = empty_spot(&physics);
+
+    double_tap(&canvas, empty, extent).await;
+    assert!(physics.paused());
+    let status = text(&root, ".pg-status");
+    assert!(status.contains("tap a corner"), "{status}");
+
+    tap_at(&canvas, empty, extent).await;
+    let status = text(&root, ".pg-status");
+    assert!(status.contains("Glue cancelled"), "{status}");
+    assert_eq!(physics.paused(), was_paused, "pause state restored");
+    assert!(physics.glues().is_empty());
+    handle.destroy();
+    root.remove();
+}
+
+#[wasm_bindgen_test]
+async fn escape_closes_the_glue_tool() {
+    let _gpu = NoWebGpu::install();
+    let (handle, root, physics) = mount().await;
+    let canvas = canvas_of(&root);
+    let extent = physics.side();
+
+    double_tap(&canvas, top_midpoint(&physics, 0), extent).await;
+    assert!(physics.paused());
+    let key = web_sys::KeyboardEventInit::new();
+    key.set_bubbles(true);
+    key.set_key("Escape");
+    canvas
+        .dispatch_event(&KeyboardEvent::new_with_keyboard_event_init_dict("keydown", &key).unwrap())
+        .unwrap();
+    sleep(30).await;
+    let status = text(&root, ".pg-status");
+    assert!(status.contains("Glue cancelled"), "{status}");
+    assert!(!physics.paused(), "the scene the tap woke runs again");
+
+    // The next tap is an ordinary tap, not a second glue pick.
+    tap_at(&canvas, top_midpoint(&physics, 1), extent).await;
+    assert!(physics.glues().is_empty());
+    handle.destroy();
+    root.remove();
+}
+
+#[wasm_bindgen_test]
+async fn glue_survives_settle_and_measure() {
+    let _gpu = NoWebGpu::install();
+    let (handle, root, physics) = mount().await;
+    let canvas = canvas_of(&root);
+    let extent = physics.side();
+    double_tap(&canvas, top_midpoint(&physics, 0), extent).await;
+    tap_at(&canvas, top_midpoint(&physics, 1), extent).await;
+    let glued = physics.glues();
+    assert_eq!(glued.len(), 1);
+
+    let buttons = root.query_selector_all(".pg-submit button").unwrap();
+    let measure: HtmlElement = (0..buttons.length())
+        .filter_map(|i| buttons.item(i))
+        .filter_map(|b| b.dyn_into::<HtmlElement>().ok())
+        .find(|b| b.text_content().unwrap_or_default() == "Settle & measure")
+        .unwrap();
+    measure.click();
+    wait_for_share_code(3000).await;
+    assert_eq!(
+        physics.glues(),
+        glued,
+        "measuring reloads but keeps the glue"
+    );
+    handle.destroy();
+    root.remove();
+}
+
 /// A force-panel button whose label starts with `label`.
 fn force_button(root: &Element, label: &str) -> HtmlElement {
     let buttons = root.query_selector_all(".pg-force-actions button").unwrap();
