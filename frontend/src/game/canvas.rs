@@ -55,7 +55,7 @@ pub fn draw(canvas: &HtmlCanvasElement, scene: &Scene) {
     if size == 0 {
         return;
     }
-    if canvas.width() != size {
+    if canvas.width() != size || canvas.height() != size {
         canvas.set_width(size);
         canvas.set_height(size);
     }
