@@ -46,3 +46,4 @@ alloc-stdlib = "=0.2.2"
 
 # Workspace
 shared = { path = "../shared" }
+tiny-skia = "0.12.0"

@@ -1,13 +1,11 @@
 //! JSON export and import of arrangements.
 
-use shared::Arrangement;
+use shared::{share, Arrangement};
 use wasm_bindgen::{JsCast, JsValue};
 use web_sys::{Blob, BlobPropertyBag, HtmlAnchorElement, Url};
 
 /// Largest import accepted, in bytes.
 pub const MAX_IMPORT_BYTES: f64 = 1_000_000.0;
-/// Coordinate bound for imported arrangements.
-const MAX_COORD: f64 = 1000.0;
 
 /// Offer `value` as a pretty-printed JSON download named `name`.
 pub fn download_json(name: &str, value: &serde_json::Value) -> Result<(), String> {
@@ -43,27 +41,8 @@ pub fn parse_arrangement(text: &str, n: u32) -> Result<Arrangement, String> {
     let inner = value.get("arrangement").unwrap_or(&value).clone();
     let arr: Arrangement = serde_json::from_value(inner)
         .map_err(|_| format!("Expected {n} squares with finite coordinates"))?;
-    check_arrangement(&arr, n)?;
+    share::check_arrangement(&arr, n)?;
     Ok(arr)
-}
-
-/// Limits every loaded arrangement must meet (JSON import and share links):
-/// `n` squares, a finite side in `[1, 1000]`, and finite bounded coordinates.
-pub fn check_arrangement(arr: &Arrangement, n: u32) -> Result<(), String> {
-    let in_range = |v: f64| v.is_finite() && v.abs() <= MAX_COORD;
-    let ok = arr.n == n
-        && arr.squares.len() == n as usize
-        && arr.side.is_finite()
-        && (1.0..=MAX_COORD).contains(&arr.side)
-        && arr
-            .squares
-            .iter()
-            .all(|p| in_range(p.cx) && in_range(p.cy) && p.theta.is_finite());
-    if ok {
-        Ok(())
-    } else {
-        Err(format!("Expected {n} squares with finite coordinates"))
-    }
 }
 
 #[cfg(test)]

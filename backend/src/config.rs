@@ -8,6 +8,9 @@ use std::env;
 pub struct Config {
     pub host: String,
     pub port: u16,
+    /// Origin used for absolute URLs in link previews, without a trailing
+    /// slash. Configured rather than taken from request headers.
+    pub public_url: String,
 }
 
 impl Config {
@@ -19,11 +22,20 @@ impl Config {
             .ok()
             .and_then(|v| v.parse().ok())
             .unwrap_or(3000);
+        let public_url = env::var("PUBLIC_URL")
+            .unwrap_or_else(|_| "https://potatos.txcl.io".to_string())
+            .trim_end_matches('/')
+            .to_string();
 
         tracing::info!("Config: HOST={host}");
         tracing::info!("Config: PORT={port}");
+        tracing::info!("Config: PUBLIC_URL={public_url}");
 
-        Self { host, port }
+        Self {
+            host,
+            port,
+            public_url,
+        }
     }
 
     /// The `host:port` address to bind the server to.

@@ -39,9 +39,17 @@ at the bottom-left. Every crate uses `shared::Placement` and
 | GET | `/api/scores` | `?n=&limit=` | `Vec<ScoreEntry>` |
 | GET | `/api/scores/:id` | | `ScoreDetail` |
 | GET | `/api/records` | | `Vec<KnownRecord>` |
+| GET | `/api/preview.png` | `?n=&s=` | 1200×630 PNG of a share code |
+| GET | `/play/:n` | `?s=` | The app page with link-preview metadata |
 
 Submissions are validated server-side with `shared::geometry::validate`
 using `shared::VALIDATION_TOL`.
+
+Share links (`/play/:n?s=<hex>`, codec in `shared::share`) unfurl as the
+shared packing: the page carries Open Graph and Twitter tags whose absolute
+URLs use `PUBLIC_URL` (default `https://potatos.txcl.io`), never the request
+host. The preview image is only served for a code that fully decodes, and is
+cached as immutable.
 
 ## Quick start
 

@@ -3,12 +3,13 @@
 //! `f64`, then `cx`, `cy`, `theta` as `f64` for each square. Full `f64`
 //! precision keeps a validated packing exactly as it was measured.
 
-use super::files;
-use shared::{Arrangement, Placement, MAX_N};
+use crate::{Arrangement, Placement, MAX_N};
 
 const VERSION: u8 = 1;
 const HEADER_BYTES: usize = 1 + 2 + 8;
 const SQUARE_BYTES: usize = 3 * 8;
+/// Coordinate bound for loaded arrangements.
+const MAX_COORD: f64 = 1000.0;
 
 /// Hex length of a share code for `n` squares.
 fn hex_len(n: u32) -> usize {
@@ -75,8 +76,27 @@ pub fn decode(hex: &str, n: u32) -> Result<Arrangement, String> {
         side: f64_at(3),
         squares,
     };
-    files::check_arrangement(&arrangement, n)?;
+    check_arrangement(&arrangement, n)?;
     Ok(arrangement)
+}
+
+/// Limits every loaded arrangement must meet (JSON import and share links):
+/// `n` squares, a finite side in `[1, 1000]`, and finite bounded coordinates.
+pub fn check_arrangement(arr: &Arrangement, n: u32) -> Result<(), String> {
+    let in_range = |v: f64| v.is_finite() && v.abs() <= MAX_COORD;
+    let ok = arr.n == n
+        && arr.squares.len() == n as usize
+        && arr.side.is_finite()
+        && (1.0..=MAX_COORD).contains(&arr.side)
+        && arr
+            .squares
+            .iter()
+            .all(|p| in_range(p.cx) && in_range(p.cy) && p.theta.is_finite());
+    if ok {
+        Ok(())
+    } else {
+        Err(format!("Expected {n} squares with finite coordinates"))
+    }
 }
 
 #[cfg(test)]
