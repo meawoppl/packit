@@ -30,6 +30,8 @@ thread_local! {
     /// Physics of the most recently created `Game`, so browser tests can
     /// observe the simulation behind the mounted component.
     static TEST_PHYSICS: std::cell::RefCell<Option<Physics>> = const { std::cell::RefCell::new(None) };
+    /// The last validated arrangement, for exact comparisons in browser tests.
+    static TEST_REPORT: std::cell::RefCell<Option<Arrangement>> = const { std::cell::RefCell::new(None) };
 }
 
 const STEP_HZ: f64 = 120.0;
@@ -38,6 +40,8 @@ const MAX_SUBSTEPS: u32 = 6;
 const SETTLE_FRAMES: u32 = 150;
 const NUDGE: f32 = 0.025;
 const ROTATE_STEP: f32 = 0.04;
+/// Turn per tap of the on-screen turn buttons (touch has no wheel or keys).
+const TOUCH_TURN: f32 = 0.12;
 /// How far the effective size target may lead the actual container at full
 /// band tension (100); lower tension shortens the reach proportionally.
 const MAX_SCRUB: f64 = 1.0;
@@ -63,11 +67,12 @@ pub enum Msg {
     PointerMove(PointerEvent),
     PointerUp,
     Wheel(usize, f32),
+    /// On-screen turn buttons: turn the selected square by this many radians.
+    Turn(f32),
     Key(KeyboardEvent),
     SetCount(String),
     TargetSide(f64),
     BandTension(f32),
-    Gravity(bool),
     Attraction(bool),
     EdgeAttraction(f32),
     Damping(f32),
@@ -413,6 +418,19 @@ impl Component for Game {
                 self.push_mouse();
                 false
             }
+            Msg::Turn(delta) => {
+                let Some(i) = self.selected else {
+                    self.set_status("Tap a square first, then turn it.", false);
+                    return true;
+                };
+                if self.busy {
+                    return false;
+                }
+                self.stop_anneal();
+                self.physics.turn(i, delta);
+                self.set_pause(false);
+                true
+            }
             Msg::Wheel(i, sign) => {
                 if self.busy {
                     return false;
@@ -483,14 +501,6 @@ impl Component for Game {
                 self.physics.set_params(params);
                 self.invalidate();
                 self.set_pause(false);
-                true
-            }
-            Msg::Gravity(on) => {
-                self.stop_anneal();
-                let mut params = self.physics.params();
-                params.gravity = on;
-                self.physics.set_params(params);
-                self.invalidate();
                 true
             }
             Msg::Attraction(on) => {
@@ -623,22 +633,13 @@ impl Component for Game {
                 false
             }
             Msg::Share => {
-                let arrangement = match &self.last_report {
-                    Some(r) if r.valid => r.arrangement.clone(),
-                    _ => self.physics.arrangement(),
-                };
                 let Some(window) = web_sys::window() else {
                     return false;
                 };
-                let path = format!("/play/{n}?s={}", share::encode(&arrangement));
                 // Put the link in the address bar too, so it survives a failed copy.
-                if let Ok(history) = window.history() {
-                    let _ = history.replace_state_with_url(
-                        &wasm_bindgen::JsValue::NULL,
-                        "",
-                        Some(&path),
-                    );
-                }
+                let Some(path) = self.update_share_url(n) else {
+                    return false;
+                };
                 let url = format!("{}{path}", window.location().origin().unwrap_or_default());
                 let copy = write_clipboard(&window, &url);
                 ctx.link().send_future(async move {
@@ -752,7 +753,12 @@ impl Component for Game {
                                 onkeydown={link.callback(Msg::Key)} />
                             <div class="pg-board-footer">
                                 <span class="pg-mode">{ &r.mode }</span>
-                                <span>{ "drag · wheel to rotate · shift-drag to spin" }</span>
+                                <span class="pg-turn">
+                                    <button aria-label="Turn left" onclick={link.callback(|_| Msg::Turn(TOUCH_TURN))}>{ "⟲" }</button>
+                                    <button aria-label="Turn right" onclick={link.callback(|_| Msg::Turn(-TOUCH_TURN))}>{ "⟳" }</button>
+                                </span>
+                                <span class="pg-hint-mouse">{ "drag · wheel to rotate · shift-drag to spin" }</span>
+                                <span class="pg-hint-touch">{ "drag to move · tap a square, then ⟲ ⟳ to turn" }</span>
                             </div>
                         </div>
                         <p class="pg-help">{ "Force arrows: blue = net contact and edge pull · gold = mouse spring. Dashed band = target size." }</p>
@@ -790,11 +796,6 @@ impl Component for Game {
                             <input id="pg-band" type="range" min="0" max="100" step="1" value={params.band_tension.to_string()}
                                 oninput={link.callback(|e: InputEvent| Msg::BandTension(input_value(&e).parse().unwrap_or(0.0)))} />
                             <p class="pg-help">{ "Changing container size animates the band with live pressure. Squares push back, and higher pressure lets the size target run further ahead of the container. Zero holds the current size; moving the size slider re-engages pressure at 30." }</p>
-                            <label class="pg-row">
-                                { "Gravity " }
-                                <input type="checkbox" checked={params.gravity}
-                                    onchange={link.callback(|e: Event| Msg::Gravity(e.target_unchecked_into::<HtmlInputElement>().checked()))} />
-                            </label>
                             <label class="pg-row">
                                 { "Square attraction " }
                                 <input type="checkbox" checked={params.attraction}
@@ -935,6 +936,23 @@ impl Game {
         self.set_status(status, false);
         self.refresh_readout();
         true
+    }
+
+    /// Point the address bar at a share link for the current solution (the
+    /// validated arrangement if there is one, else the live scene) without
+    /// adding a history entry. Returns the path written.
+    fn update_share_url(&self, n: u32) -> Option<String> {
+        let arrangement = match &self.last_report {
+            Some(r) if r.valid => r.arrangement.clone(),
+            _ => self.physics.arrangement(),
+        };
+        let path = format!("/play/{n}?s={}", share::encode(&arrangement));
+        web_sys::window()?
+            .history()
+            .ok()?
+            .replace_state_with_url(&wasm_bindgen::JsValue::NULL, "", Some(&path))
+            .ok()?;
+        Some(path)
     }
 
     /// Manual input takes over from an annealing run.
@@ -1163,6 +1181,8 @@ impl Game {
                     100.0 * (side / report.lower_bound - 1.0)
                 );
                 if report.valid {
+                    #[cfg(all(test, target_arch = "wasm32"))]
+                    TEST_REPORT.with(|r| r.replace(Some(report.arrangement.clone())));
                     // Settle at the measured packing; don't resume squeezing.
                     self.desired_side = None;
                     self.physics.load(&report.arrangement);
@@ -1201,6 +1221,9 @@ impl Game {
             }
             Err(e) => self.set_status(&e, true),
         }
+        // Every settle (automatic or Settle & measure) updates the URL, so a
+        // reload or copied address reproduces the current solution.
+        self.update_share_url(ctx.props().n);
         self.busy = false;
     }
 

@@ -42,6 +42,13 @@ main {
     background: var(--panel);
 }
 
+.topbar a {
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
+    touch-action: manipulation;
+}
+
 .topbar .brand {
     font-weight: 800;
     font-size: 1.4rem;
@@ -74,19 +81,29 @@ main {
     border-radius: 6px;
     color: var(--text);
     font-weight: 700;
+    min-height: 44px;
+    line-height: 1.6;
+    touch-action: manipulation;
 }
 
-.n-button:hover,
-.button:hover {
-    background: var(--accent);
-    color: var(--bg);
-    text-decoration: none;
+@media (hover: hover) {
+    .n-button:hover,
+    .button:hover {
+        background: var(--accent);
+        color: var(--bg);
+        text-decoration: none;
+    }
 }
 
 table {
     border-collapse: collapse;
     margin-top: 1rem;
     width: 100%;
+}
+
+/* Wide leaderboard tables scroll sideways on narrow screens. */
+.leaderboard {
+    overflow-x: auto;
 }
 
 th,
@@ -208,10 +225,12 @@ svg.arrangement .square {
 
 .pg-board-footer {
     display: flex;
+    flex-wrap: wrap;
+    align-items: center;
     justify-content: space-between;
     gap: 8px;
     color: var(--pg-muted);
-    font-size: 11px;
+    font-size: 13px;
     padding: 12px 4px 0;
 }
 
@@ -254,13 +273,15 @@ svg.arrangement .square {
 
 .packing-game input[type="range"] {
     width: 100%;
+    height: 32px;
     accent-color: var(--pg-accent);
+    touch-action: manipulation;
 }
 
 .packing-game input[type="checkbox"] {
     accent-color: var(--pg-accent);
-    width: 18px;
-    height: 18px;
+    width: 24px;
+    height: 24px;
 }
 
 .packing-game button,
@@ -271,17 +292,47 @@ svg.arrangement .square {
     border-radius: 9px;
     background: #273348;
     color: var(--ink);
-    padding: 10px 12px;
+    padding: 10px 14px;
+    min-height: 44px;
+    touch-action: manipulation;
 }
 
 .packing-game button {
     cursor: pointer;
-    font-size: 12px;
+    font-size: 14px;
     font-weight: 700;
 }
 
-.packing-game button:hover {
-    background: #35455e;
+@media (hover: hover) {
+    .packing-game button:hover {
+        background: #35455e;
+    }
+}
+
+.pg-turn {
+    display: inline-flex;
+    gap: 8px;
+}
+
+.packing-game .pg-turn button {
+    min-width: 44px;
+    font-size: 20px;
+    line-height: 1;
+}
+
+/* Mouse hints by default; touch devices get touch instructions instead. */
+.pg-hint-touch {
+    display: none;
+}
+
+@media (pointer: coarse) {
+    .pg-hint-mouse {
+        display: none;
+    }
+
+    .pg-hint-touch {
+        display: inline;
+    }
 }
 
 .packing-game button:disabled {
@@ -430,7 +481,8 @@ svg.arrangement .square {
     color: var(--pg-muted);
 }
 
-@media (max-width: 800px) {
+/* Up to iPad portrait: full-width board, panels below in two columns. */
+@media (max-width: 900px) {
     .pg-layout {
         grid-template-columns: 1fr;
     }
