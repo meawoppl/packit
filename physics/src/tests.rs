@@ -269,3 +269,21 @@ fn gravity_grids_settle_with_and_without_edge_attraction() {
         );
     }
 }
+
+#[test]
+fn anneal_kicks_scale_deterministically() {
+    let full = Physics::new(4, 3.0);
+    let cool = Physics::new(4, 3.0);
+    full.shake(42);
+    cool.shake_scaled(42, 0.25);
+    for (a, b) in full.bodies().iter().zip(cool.bodies()) {
+        assert_eq!(a.vx * 0.25, b.vx);
+        assert_eq!(a.vy * 0.25, b.vy);
+        assert_eq!(a.omega * 0.25, b.omega);
+        assert_eq!((a.x, a.y, a.theta), (b.x, b.y, b.theta));
+    }
+    cool.shake_scaled(42, 0.0);
+    assert_eq!(cool.motion(), 0.0);
+    cool.shake_scaled(42, f32::NAN);
+    assert_eq!(cool.motion(), 0.0);
+}
