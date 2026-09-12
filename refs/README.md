@@ -54,6 +54,35 @@ paper. The arXiv page actually identifies the separate **22/33** paper. Keep
 these records distinct. Wikipedia's table also should not be used alone to
 assign proven-optimal status to every integer-grid case.
 
+## Licenses of included papers
+
+The papers in `downloads/` (PDF) and `markdown/` (text conversions) are **not**
+covered by this repository's Apache-2.0 license. Each keeps its own copyright
+and terms, and they differ:
+
+| File | Copyright / license |
+| --- | --- |
+| `stromquist-2003` | © the author. Published by the Electronic Journal of Combinatorics under a non-exclusive publication agreement; no open license attached. |
+| `nagamochi-2005` | © the author. EJC publication agreement; no open license attached. |
+| `bentz-13-46-2010` | © the author. EJC publication agreement; no open license attached. |
+| `bentz-22-33-2016` | © the author. [arXiv non-exclusive distribution license 1.0](http://arxiv.org/licenses/nonexclusive-distrib/1.0/), which grants rights to arXiv only. |
+| `wang-dong-li-2016` | © the authors. arXiv non-exclusive distribution license 1.0. |
+| `abrahamsen-stade-2024` | © the authors. [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/); reuse with attribution. |
+
+EJC terms: https://www.combinatorics.org/ojs/index.php/eljc/about/submissions
+(papers before March 2018 generally carry no explicit license). They are kept
+here as research references with full attribution; follow the original links
+above for the canonical versions.
+
+`markdown/*.md` were machine-converted from the PDFs with
+[pymupdf4llm](https://pypi.org/project/pymupdf4llm/) for searching and quoting.
+Each starts with its source and license. Formulas, figures, and tables are
+often garbled, so check the PDF before relying on any statement. To regenerate:
+
+```sh
+uv run --with pymupdf4llm python -c "import pymupdf4llm,sys; print(pymupdf4llm.to_markdown(sys.argv[1]))" downloads/<id>.pdf
+```
+
 ## Solver interpretation
 
 The runtime solver uses center coordinates and c=cos(theta), s=sin(theta).
