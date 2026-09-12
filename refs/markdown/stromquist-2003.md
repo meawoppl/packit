@@ -279,3 +279,9 @@ Again these 12 points form an unavoidable set in the context of $45^\circ$ packi
 5. ——, “Packing unit squares inside squares, II (ten unit squares),” DHWA Memorandum, October 15, 1984.
 6. ——, “Packing unit squares inside squares, III (Cases with $n\le65$ and Martin Gardner’s conjecture for $n=11$),” DHWA Memorandum, November 15, 1984.
 7. Martin Gardner, “Mathematical Games” in *Scientific American*, October 1979. (See also November 1979, March 1980, and November 1980.)
+
+## Transcription notes (not part of the paper)
+
+The text retains the original statements, historical bounds and minor prose errors, including “possible pack” in the abstract and “segment form” in Lemma 5. The first/second/third-case column headings in the numerical table are editorial labels for the three columns printed without headings on PDF page 3; every numerical entry is unchanged. Equation numbers appear above their displays to avoid unsupported labeled MathML rows in GitHub's Chrome rendering.
+
+The definition preceding Lemma 4 retains the paper's choice of the “smallest positive” root. Bentz's later 13/46 paper explicitly questions that root choice in its original footnote 1. No replacement root or corrected proof is substituted here.
