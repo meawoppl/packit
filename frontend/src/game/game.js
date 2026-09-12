@@ -18,8 +18,8 @@ export function mountGame(root,engine,shader,refine,submit){
     const size=Math.round(canvas.clientWidth*Math.min(devicePixelRatio||1,2));if(canvas.width!==size){canvas.width=size;canvas.height=size;}
     const w=canvas.width,pad=w*.045,scale=(w-pad*2)/Math.max(viewSide,engine.side);
     ctx.clearRect(0,0,w,w);ctx.fillStyle='#101722';ctx.fillRect(0,0,w,w);
-    ctx.strokeStyle='#263247';ctx.lineWidth=1;for(let x=0;x<=engine.side;x+=.5){ctx.beginPath();ctx.moveTo(pad+x*scale,pad);ctx.lineTo(pad+x*scale,w-pad);ctx.stroke();ctx.beginPath();ctx.moveTo(pad,w-pad-x*scale);ctx.lineTo(w-pad,w-pad-x*scale);ctx.stroke();}
-    ctx.strokeStyle='#819376';ctx.lineWidth=2;ctx.strokeStyle=engine.bandTension?'#c7f36b':'#819376';ctx.lineWidth=engine.bandTension?3:2;ctx.strokeRect(pad,w-pad-engine.side*scale,engine.side*scale,engine.side*scale);
+    ctx.strokeStyle='#263247';ctx.lineWidth=1;for(let x=0;x<=engine.side;x+=.5){ctx.beginPath();ctx.moveTo(pad+x*scale,w-pad-engine.side*scale);ctx.lineTo(pad+x*scale,w-pad);ctx.stroke();ctx.beginPath();ctx.moveTo(pad,w-pad-x*scale);ctx.lineTo(pad+engine.side*scale,w-pad-x*scale);ctx.stroke();}
+    ctx.strokeStyle=engine.bandTension?'#c7f36b':'#819376';ctx.lineWidth=engine.bandTension?3:2;ctx.strokeRect(pad,w-pad-engine.side*scale,engine.side*scale,engine.side*scale);
     const palette=['#c7f36b','#7dd5ce','#b2a0ef','#f0b578','#8dabf2'];
     for(let i=0;i<engine.n;i++){
       const k=i*8;ctx.save();ctx.translate(pad+engine.data[k]*scale,w-pad-engine.data[k+1]*scale);ctx.rotate(-engine.data[k+2]);
@@ -33,7 +33,7 @@ export function mountGame(root,engine,shader,refine,submit){
   }
   const point=e=>{const r=canvas.getBoundingClientRect(),pad=r.width*.045,s=(r.width-2*pad)/Math.max(viewSide,engine.side);return{x:(e.clientX-r.left-pad)/s,y:(r.bottom-e.clientY-pad)/s};};
   const hit=p=>{for(let i=engine.n-1;i>=0;i--){const k=i*8,dx=p.x-engine.data[k],dy=p.y-engine.data[k+1],a=engine.data[k+2];if(Math.abs(dx*Math.cos(a)+dy*Math.sin(a))<=.5&&Math.abs(-dx*Math.sin(a)+dy*Math.cos(a))<=.5)return i;}return -1;};
-  on(canvas,'pointerdown',e=>{if(busy)return;e.preventDefault();canvas.focus({preventScroll:true});const p=point(e);selected=hit(p);rotating=e.shiftKey;lastPointer=p;grabOffset=selected>=0?{x:engine.data[selected*8]-p.x,y:engine.data[selected*8+1]-p.y}:{x:0,y:0};if(selected>=0&&!busy)setPause(false);engine.mouse={x:p.x+grabOffset.x,y:p.y+grabOffset.y,index:selected,down:selected>=0&&!rotating&&!busy};canvas.setPointerCapture(e.pointerId);invalidate();});
+  on(canvas,'pointerdown',e=>{if(busy)return;e.preventDefault();canvas.focus({preventScroll:true});const p=point(e);selected=hit(p);rotating=e.shiftKey;lastPointer=p;grabOffset=selected>=0?{x:engine.data[selected*8]-p.x,y:engine.data[selected*8+1]-p.y}:{x:0,y:0};if(selected>=0)setPause(false);engine.mouse={x:p.x+grabOffset.x,y:p.y+grabOffset.y,index:selected,down:selected>=0&&!rotating};canvas.setPointerCapture(e.pointerId);invalidate();});
   on(canvas,'pointermove',e=>{const p=point(e);if(lastPointer&&selected>=0&&canvas.hasPointerCapture(e.pointerId)){const k=selected*8;if(rotating){engine.data[k+2]+=(p.x-lastPointer.x)*2;}lastPointer=p;invalidate(rotating);}engine.mouse.x=p.x+grabOffset.x;engine.mouse.y=p.y+grabOffset.y;});
   const release=()=>{engine.mouse.down=false;lastPointer=null;};on(canvas,'pointerup',release);on(canvas,'pointercancel',release);on(canvas,'lostpointercapture',release);
   on(canvas,'wheel',e=>{const i=hit(point(e));if(i<0)return;e.preventDefault();selected=i;engine.data[i*8+2]+=Math.sign(e.deltaY)*.04;invalidate(true);},{passive:false});
