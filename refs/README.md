@@ -27,8 +27,9 @@ sqrt(n) is available for every n, but often weak.
 
 The bibliography below follows the [Wikipedia starting page](https://en.wikipedia.org/wiki/Square_packing)
 then checks the original publications. Downloadable author/publisher copies
-are indexed by `sources.json`; `fetch.py` downloads available PDFs on demand,
-checks their signatures, and records SHA-256 hashes in `downloads/manifest.json`.
+are indexed by `sources.json`. PDFs are committed in `downloads/`; `fetch.py`
+re-downloads available copies, checks their signatures, and records SHA-256
+hashes in `downloads/manifest.json`.
 Third-party papers retain their own copyrights and licenses; the repository's
 software license does not relicense them.
 
