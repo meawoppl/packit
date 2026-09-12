@@ -60,6 +60,9 @@ pub struct SolveReport {
     /// This is numerical recognition, not an exact certificate.
     pub candidate_expression: Option<String>,
     pub status: String,
+    pub reference_side: Option<f64>,
+    pub lower_bound: f64,
+    pub gap_to_reference_percent: Option<f64>,
 }
 fn radius(p: &Placement, n: (f64, f64)) -> f64 {
     let (s, c) = p.theta.sin_cos();
