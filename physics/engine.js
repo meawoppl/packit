@@ -31,7 +31,7 @@ export class PackingPhysics {
   async step(steps=2) {
     if(this.paused || this.disposed)return;
     if(!this.device){for(let s=0;s<steps;s++)this.cpuStep(1/120);return;}
-    const device=this.device, revision=this.revision;
+    const device=this.device, revision=this.revision, initial=this.data.slice();
     try {
       device.queue.writeBuffer(this.buffers[0],0,this.data);
       device.queue.writeBuffer(this.uniform,0,new Float32Array([this.n,1/120,this.side,+this.gravity,+this.attraction*1.8,this.damping,this.stiffness,0,this.mouse.x,this.mouse.y,Math.max(0,this.mouse.index),+this.mouse.down]));
@@ -40,7 +40,11 @@ export class PackingPhysics {
       encoder.copyBufferToBuffer(this.buffers[steps%2],0,this.readback,0,this.data.byteLength);
       device.queue.submit([encoder.finish()]);
       await this.readback.mapAsync(GPUMapMode.READ);
-      if(!this.disposed && revision===this.revision)this.data.set(new Float32Array(this.readback.getMappedRange()));
+      if(!this.disposed){
+        const computed=new Float32Array(this.readback.getMappedRange());
+        if(revision===this.revision)this.data.set(computed);
+        else for(let i=0;i<this.data.length;i++)if(this.data[i]===initial[i])this.data[i]=computed[i];
+      }
       this.readback.unmap();
     }catch(e){if(!this.disposed){this.mode='CPU fallback';this.device=null;console.info('GPU step failed',e);}}
   }

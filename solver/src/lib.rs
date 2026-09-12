@@ -307,7 +307,7 @@ pub fn refine(input: &Arrangement) -> Result<SolveReport, String> {
     let layers = contact_system(&a, 0.08).layers;
     let mut order: Vec<usize> = (0..a.squares.len()).collect();
     order.sort_by_key(|&i| layers[i].unwrap_or(usize::MAX));
-    for iteration in 0..1500 {
+    for iteration in 0..64 {
         iterations = iteration + 1;
         for &i in &order {
             let h = radius(&a.squares[i], (1.0, 0.0));
@@ -331,14 +331,34 @@ pub fn refine(input: &Arrangement) -> Result<SolveReport, String> {
         if violation < 1e-11 {
             break;
         }
-        // If jammed, minimally grow the container to obtain an honest feasible score.
-        if iteration > 0 && iteration % 150 == 0 {
-            let factor = 1.0 + (violation / a.side).min(0.002);
-            a.side *= factor;
-            for p in &mut a.squares {
-                p.cx *= factor;
-                p.cy *= factor;
+    }
+    // Uniformly dilating centers separates every pair on at least one of its
+    // SAT axes. This bounded fallback preserves rotations and gives an honest,
+    // possibly larger score rather than spending seconds on a jammed scene.
+    let mut expansion: f64 = 1.0;
+    for (i, p) in a.squares.iter().enumerate() {
+        for q in a.squares.iter().skip(i + 1) {
+            let mut required = f64::INFINITY;
+            for t in [
+                p.theta,
+                p.theta + std::f64::consts::FRAC_PI_2,
+                q.theta,
+                q.theta + std::f64::consts::FRAC_PI_2,
+            ] {
+                let (s, c) = t.sin_cos();
+                let distance = ((q.cx - p.cx) * c + (q.cy - p.cy) * s).abs();
+                if distance > 1e-15 {
+                    required = required.min((radius(p, (c, s)) + radius(q, (c, s))) / distance);
+                }
             }
+            expansion = expansion.max(required);
+        }
+    }
+    if expansion.is_finite() && expansion < 1000.0 {
+        expansion *= 1.0 + 1e-10;
+        for p in &mut a.squares {
+            p.cx *= expansion;
+            p.cy *= expansion;
         }
     }
     a = tighten(&a.squares);
@@ -447,6 +467,32 @@ mod tests {
             p.cy += 2.0;
         }
         assert!(contact_system(&a, 1e-6).layers.iter().all(Option::is_none));
+    }
+    #[test]
+    fn jostled_large_grids_refine_with_bounded_work() {
+        for k in [5, 7, 10] {
+            let squares = (0..k * k)
+                .map(|i| Placement {
+                    cx: (i % k) as f64 * 0.995 + 0.5 + ((i * 7919) % 13) as f64 * 1e-3,
+                    cy: (i / k) as f64 * 0.995 + 0.5,
+                    theta: ((i * 104729) % 17) as f64 * 2e-3,
+                })
+                .collect();
+            let report = refine(&Arrangement {
+                n: k * k,
+                side: k as f64,
+                squares,
+            })
+            .unwrap();
+            assert!(
+                report.valid,
+                "n={} violation={}",
+                k * k,
+                report.max_violation
+            );
+            assert!(report.iterations <= 64);
+            assert!(report.arrangement.side < k as f64 * 1.1);
+        }
     }
     #[test]
     fn rejects_nonfinite() {
