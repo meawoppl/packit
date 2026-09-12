@@ -333,6 +333,45 @@ svg.arrangement .square {
     .pg-hint-touch {
         display: inline;
     }
+
+    /* Native range thumbs are too small to grab with a finger; the thumb can
+       only be resized once the native appearance is replaced. */
+    .packing-game input[type="range"] {
+        -webkit-appearance: none;
+        appearance: none;
+        height: 44px;
+        background: transparent;
+    }
+
+    .packing-game input[type="range"]::-webkit-slider-runnable-track {
+        height: 6px;
+        border-radius: 3px;
+        background: #344159;
+    }
+
+    .packing-game input[type="range"]::-webkit-slider-thumb {
+        -webkit-appearance: none;
+        width: 28px;
+        height: 28px;
+        margin-top: -11px;
+        border-radius: 50%;
+        border: 2px solid #17200d;
+        background: var(--pg-accent);
+    }
+
+    .packing-game input[type="range"]::-moz-range-track {
+        height: 6px;
+        border-radius: 3px;
+        background: #344159;
+    }
+
+    .packing-game input[type="range"]::-moz-range-thumb {
+        width: 28px;
+        height: 28px;
+        border-radius: 50%;
+        border: 2px solid #17200d;
+        background: var(--pg-accent);
+    }
 }
 
 .packing-game button:disabled {
