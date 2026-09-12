@@ -54,3 +54,13 @@ pub async fn known_records() -> Result<Vec<KnownRecord>, String> {
         .map_err(|e| e.to_string())?;
     decode(resp).await
 }
+
+pub async fn create_share(body: shared::CreateShare) -> Result<shared::ShortShare, String> {
+    let resp = Request::post("/api/shares")
+        .json(&body)
+        .map_err(|e| e.to_string())?
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    decode(resp).await
+}

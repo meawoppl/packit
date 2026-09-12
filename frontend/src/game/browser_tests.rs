@@ -781,32 +781,228 @@ async fn bad_share_link_reports_an_error() {
     root.remove();
 }
 
-#[wasm_bindgen_test]
-async fn share_button_writes_a_decodable_link() {
-    let _gpu = NoWebGpu::install();
-    let (handle, root, physics) = mount().await;
-    force_button(&root, "Pause").click();
-    sleep(30).await;
+/// Stub only /api/shares; other mounted-screen requests still use fetch.
+struct ShareApi {
+    original: wasm_bindgen::JsValue,
+    _fetch: wasm_bindgen::closure::Closure<
+        dyn FnMut(wasm_bindgen::JsValue, wasm_bindgen::JsValue) -> js_sys::Promise,
+    >,
+    requests: Rc<std::cell::RefCell<Vec<shared::CreateShare>>>,
+}
+impl ShareApi {
+    fn install(fail: bool) -> Self {
+        let window = web_sys::window().unwrap();
+        let original = js_sys::Reflect::get(&window, &"fetch".into()).unwrap();
+        let fetch = original.clone().dyn_into::<js_sys::Function>().unwrap();
+        let requests = Rc::new(std::cell::RefCell::new(Vec::new()));
+        let captured = requests.clone();
+        let replacement = wasm_bindgen::closure::Closure::wrap(Box::new(
+            move |request: wasm_bindgen::JsValue, init: wasm_bindgen::JsValue| {
+                let req = request.clone().dyn_into::<web_sys::Request>().unwrap();
+                if !req.url().ends_with("/api/shares") {
+                    return fetch
+                        .call2(&web_sys::window().unwrap(), &request, &init)
+                        .unwrap()
+                        .unchecked_into();
+                }
+                let captured = captured.clone();
+                wasm_bindgen_futures::future_to_promise(async move {
+                    let body = wasm_bindgen_futures::JsFuture::from(req.text().unwrap())
+                        .await?
+                        .as_string()
+                        .unwrap();
+                    captured
+                        .borrow_mut()
+                        .push(serde_json::from_str(&body).unwrap());
+                    sleep(150).await;
+                    let options = web_sys::ResponseInit::new();
+                    options.set_status(if fail { 503 } else { 200 });
+                    let text = if fail {
+                        r#"{"error":"storage unavailable"}"#
+                    } else {
+                        r#"{"url":"https://packit.test/s/0123456789abcdef01234567"}"#
+                    };
+                    Ok(web_sys::Response::new_with_opt_str_and_init(Some(text), &options)?.into())
+                })
+            },
+        )
+            as Box<dyn FnMut(wasm_bindgen::JsValue, wasm_bindgen::JsValue) -> js_sys::Promise>);
+        js_sys::Reflect::set(&window, &"fetch".into(), replacement.as_ref()).unwrap();
+        Self {
+            original,
+            _fetch: replacement,
+            requests,
+        }
+    }
+}
+impl Drop for ShareApi {
+    fn drop(&mut self) {
+        js_sys::Reflect::set(&web_sys::window().unwrap(), &"fetch".into(), &self.original).unwrap();
+    }
+}
+
+struct Clipboard {
+    _write: wasm_bindgen::closure::Closure<dyn FnMut(String) -> js_sys::Promise>,
+    values: Rc<std::cell::RefCell<Vec<String>>>,
+    fail: Rc<Cell<bool>>,
+}
+impl Clipboard {
+    fn install(fail: bool) -> Self {
+        let values = Rc::new(std::cell::RefCell::new(Vec::new()));
+        let captured = values.clone();
+        let fail = Rc::new(Cell::new(fail));
+        let failing = fail.clone();
+        let write = wasm_bindgen::closure::Closure::wrap(Box::new(move |text: String| {
+            if failing.get() {
+                js_sys::Promise::reject(&wasm_bindgen::JsValue::UNDEFINED)
+            } else {
+                captured.borrow_mut().push(text);
+                js_sys::Promise::resolve(&wasm_bindgen::JsValue::UNDEFINED)
+            }
+        })
+            as Box<dyn FnMut(String) -> js_sys::Promise>);
+        let clipboard = js_sys::Object::new();
+        js_sys::Reflect::set(&clipboard, &"writeText".into(), write.as_ref()).unwrap();
+        let descriptor = js_sys::Object::new();
+        js_sys::Reflect::set(&descriptor, &"configurable".into(), &true.into()).unwrap();
+        js_sys::Reflect::set(&descriptor, &"value".into(), &clipboard).unwrap();
+        js_sys::Object::define_property(
+            web_sys::window().unwrap().navigator().as_ref(),
+            &"clipboard".into(),
+            &descriptor,
+        );
+        Self {
+            _write: write,
+            values,
+            fail,
+        }
+    }
+}
+impl Drop for Clipboard {
+    fn drop(&mut self) {
+        let _ = js_sys::Reflect::delete_property(
+            web_sys::window().unwrap().navigator().as_ref(),
+            &"clipboard".into(),
+        );
+    }
+}
+
+fn submit_button(root: &Element, label: &str) -> HtmlElement {
     let buttons = root.query_selector_all(".pg-submit button").unwrap();
-    let share: HtmlElement = (0..buttons.length())
+    (0..buttons.length())
         .filter_map(|i| buttons.item(i))
         .filter_map(|b| b.dyn_into::<HtmlElement>().ok())
-        .find(|b| b.text_content().unwrap_or_default() == "Share")
-        .unwrap();
-    share.click();
-    sleep(100).await;
-    let search = web_sys::window().unwrap().location().search().unwrap();
-    let code = search
-        .strip_prefix("?s=")
-        .expect("share code in the address bar");
-    assert_eq!(share::decode(code, 2).unwrap(), physics.arrangement());
-    let status = text(&root, ".pg-status");
-    assert!(
-        status.starts_with("Share link copied") || status.contains("address bar"),
-        "{status}"
+        .find(|b| b.text_content().unwrap_or_default() == label)
+        .unwrap()
+}
+
+async fn wait_share(root: &Element) {
+    for _ in 0..100 {
+        if !text(root, ".pg-share-status").contains("Creating") {
+            return;
+        }
+        sleep(20).await;
+    }
+    panic!("share request did not complete");
+}
+
+#[wasm_bindgen_test]
+async fn share_button_copies_a_short_link_for_the_captured_precise_snapshot() {
+    let _gpu = NoWebGpu::install();
+    let api = ShareApi::install(false);
+    let clipboard = Clipboard::install(false);
+    let (handle, root, _) = mount().await;
+    submit_button(&root, "Settle & measure").click();
+    for _ in 0..100 {
+        if TEST_REPORT.with(|r| r.borrow().is_some()) {
+            break;
+        }
+        sleep(20).await;
+    }
+    let report = TEST_REPORT.with(|r| r.borrow().clone()).unwrap();
+    let url = web_sys::window().unwrap().location().href().unwrap();
+    submit_button(&root, "Share").click();
+    sleep(30).await;
+    force_button(&root, "Shake").click();
+    wait_share(&root).await;
+    let body = api.requests.borrow()[0].clone();
+    assert_eq!(share::decode(&body.code, body.n).unwrap(), report);
+    assert_eq!(
+        clipboard.values.borrow().as_slice(),
+        ["https://packit.test/s/0123456789abcdef01234567"]
+    );
+    assert!(text(&root, ".pg-share-status").contains("Snapshot link copied"));
+    assert_eq!(
+        web_sys::window().unwrap().location().href().unwrap(),
+        url,
+        "an in-flight share never overwrites the live URL"
     );
     handle.destroy();
     root.remove();
+}
+
+#[wasm_bindgen_test]
+async fn share_copy_failure_offers_selectable_url_and_fresh_gesture_retry() {
+    let _gpu = NoWebGpu::install();
+    let api = ShareApi::install(false);
+    let clipboard = Clipboard::install(true);
+    let (handle, root, _) = mount().await;
+    submit_button(&root, "Share").click();
+    sleep(30).await;
+    wait_share(&root).await;
+    assert!(text(&root, ".pg-share-status").contains("Tap Copy link"));
+    assert!(clipboard.values.borrow().is_empty());
+    let input: HtmlInputElement = root
+        .query_selector("#pg-share-link")
+        .unwrap()
+        .unwrap()
+        .unchecked_into();
+    assert_eq!(
+        input.value(),
+        "https://packit.test/s/0123456789abcdef01234567"
+    );
+    clipboard.fail.set(false);
+    submit_button(&root, "Copy link").click();
+    sleep(50).await;
+    assert!(text(&root, ".pg-share-status").contains("Snapshot link copied"));
+    assert_eq!(
+        api.requests.borrow().len(),
+        1,
+        "copy retry does not create another snapshot"
+    );
+    handle.destroy();
+    root.remove();
+}
+
+#[wasm_bindgen_test]
+async fn share_storage_failure_is_reported_without_claiming_a_copy() {
+    let _gpu = NoWebGpu::install();
+    let _api = ShareApi::install(true);
+    let clipboard = Clipboard::install(false);
+    let (handle, root, _) = mount().await;
+    submit_button(&root, "Share").click();
+    sleep(30).await;
+    wait_share(&root).await;
+    assert!(text(&root, ".pg-share-status").contains("storage unavailable"));
+    assert!(root.query_selector("#pg-share-link").unwrap().is_none());
+    assert!(clipboard.values.borrow().is_empty());
+    handle.destroy();
+    root.remove();
+}
+
+#[wasm_bindgen_test]
+async fn unmount_discards_pending_share_without_writing_the_clipboard() {
+    let _gpu = NoWebGpu::install();
+    let api = ShareApi::install(false);
+    let clipboard = Clipboard::install(false);
+    let (handle, root, _) = mount().await;
+    submit_button(&root, "Share").click();
+    sleep(30).await;
+    handle.destroy();
+    root.remove();
+    sleep(300).await;
+    assert_eq!(api.requests.borrow().len(), 1);
+    assert!(clipboard.values.borrow().is_empty());
 }
 
 #[wasm_bindgen_test]
