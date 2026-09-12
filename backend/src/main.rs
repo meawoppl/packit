@@ -7,7 +7,10 @@ mod schema;
 use crate::config::Config;
 use crate::db::DbPool;
 use axum::http::StatusCode;
-use axum::{routing::get, Router};
+use axum::{
+    routing::{get, post},
+    Router,
+};
 use clap::Parser;
 use memory_serve::{load_assets, CacheControl, MemoryServe};
 use std::sync::Arc;
@@ -54,6 +57,11 @@ pub fn build_app(state: Arc<AppState>) -> Router {
         .into_router();
 
     Router::new()
+        .route(
+            "/api/shares",
+            post(handlers::shares::create).layer(axum::extract::DefaultBodyLimit::max(16 * 1024)),
+        )
+        .route("/s/:token", get(handlers::shares::resolve))
         .route("/api/health", get(handlers::health::health))
         .route("/api/records", get(handlers::records::records))
         .route(
@@ -574,5 +582,140 @@ mod tests {
                 assert_eq!(e.rank, *rank);
             }
         }
+    }
+    #[tokio::test]
+    async fn short_links_validate_before_using_the_database() {
+        let mut arr = two_squares("", 2.0).arrangement;
+        arr.squares[0].cx = 1001.0;
+        for body in [
+            shared::CreateShare {
+                n: 0,
+                code: String::new(),
+            },
+            shared::CreateShare {
+                n: 101,
+                code: String::new(),
+            },
+            shared::CreateShare {
+                n: 2,
+                code: "zz".into(),
+            },
+            shared::CreateShare {
+                n: 3,
+                code: shared::share::encode(&two_squares("", 2.0).arrangement),
+            },
+            shared::CreateShare {
+                n: 2,
+                code: shared::share::encode(&arr),
+            },
+        ] {
+            let (status, _): (_, shared::ApiError) =
+                call(&build_app(test_state()), post_json("/api/shares", &body)).await;
+            assert_eq!(status, StatusCode::BAD_REQUEST);
+        }
+        let oversized = shared::CreateShare {
+            n: 2,
+            code: "0".repeat(20_000),
+        };
+        let response = build_app(test_state())
+            .oneshot(post_json("/api/shares", &oversized))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
+        let (status, _, _) = fetch_uri("/s/not-a-token").await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn short_links_roundtrip_deduplicate_and_keep_solution_previews() {
+        let Some(db_pool) = test_db() else {
+            eprintln!("TEST_DATABASE_URL not set; skipping");
+            return;
+        };
+        let app = build_app(Arc::new(AppState {
+            dev_mode: true,
+            db_pool,
+            public_url: TEST_URL.into(),
+        }));
+        // Both valid and unfinished snapshots are shareable. The full f64
+        // value survives storage and redirect without passing through f32.
+        let mut arr = two_squares("", 2.0 + 2e-10).arrangement;
+        arr.squares[1].cx = 1.2;
+        let code = shared::share::encode(&arr);
+        let body = shared::CreateShare {
+            n: arr.n,
+            code: code.clone(),
+        };
+        let upper = shared::CreateShare {
+            n: arr.n,
+            code: code.to_uppercase(),
+        };
+        let ((status, a), (_, b)): ((_, shared::ShortShare), (_, shared::ShortShare)) = tokio::join!(
+            call(&app, post_json("/api/shares", &body)),
+            call(&app, post_json("/api/shares", &upper)),
+        );
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(a, b, "concurrent canonical duplicates reuse the same URL");
+        assert_eq!(a.url.len(), TEST_URL.len() + 3 + 24);
+        let response = app
+            .clone()
+            .oneshot(
+                Request::get(a.url.strip_prefix(TEST_URL).unwrap())
+                    .header(header::HOST, "evil.example")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::FOUND);
+        let location = response.headers()[header::LOCATION].to_str().unwrap();
+        assert_eq!(location, format!("{TEST_URL}/play/2?s={code}"));
+        assert_eq!(
+            shared::share::decode(location.split("?s=").nth(1).unwrap(), 2).unwrap(),
+            arr
+        );
+        let page = app
+            .clone()
+            .oneshot(
+                Request::get(location.strip_prefix(TEST_URL).unwrap())
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(page.status(), StatusCode::OK);
+        let html = String::from_utf8(
+            axum::body::to_bytes(page.into_body(), usize::MAX)
+                .await
+                .unwrap()
+                .to_vec(),
+        )
+        .unwrap();
+        let tags = assert_page_with_tags(&html);
+        assert!(tags.contains(r#"name="twitter:card" content="summary_large_image""#));
+        assert!(tags.contains(&format!("{TEST_URL}/api/preview.png?n=2&amp;s={code}")));
+        let (status, headers, png) = fetch_uri(&format!("/api/preview.png?n=2&s={code}")).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(headers[header::CONTENT_TYPE], "image/png");
+        assert!(png.starts_with(b"\x89PNG\r\n\x1a\n"));
+        arr.squares[0].theta = 0.1;
+        let (_, different): (_, shared::ShortShare) = call(
+            &app,
+            post_json(
+                "/api/shares",
+                &shared::CreateShare {
+                    n: 2,
+                    code: shared::share::encode(&arr),
+                },
+            ),
+        )
+        .await;
+        assert_ne!(a, different);
+        let missing = format!("/s/{}", &uuid::Uuid::new_v4().simple().to_string()[..24]);
+        let response = app
+            .oneshot(Request::get(missing).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
     }
 }

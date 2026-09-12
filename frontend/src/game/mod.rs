@@ -105,6 +105,8 @@ pub enum Msg {
     Share,
     /// Clipboard result for a share link; `Err` if it could not be copied.
     Shared(Result<(), ()>),
+    ShareCreated(Result<shared::ShortShare, String>),
+    CopyShare,
     ImportPick,
     ImportFile(Event),
     Imported(Result<String, String>),
@@ -170,6 +172,9 @@ pub struct Game {
     settled_frames: u32,
     player: String,
     submitting: bool,
+    sharing: bool,
+    short_share: Option<String>,
+    share_status: String,
     submit_after_measure: bool,
     pending_import: Option<Arrangement>,
     anneal: Option<Anneal>,
@@ -280,6 +285,9 @@ impl Component for Game {
             settled_frames: 0,
             player: String::new(),
             submitting: false,
+            sharing: false,
+            short_share: None,
+            share_status: String::new(),
             submit_after_measure: false,
             pending_import: None,
             anneal: None,
@@ -374,6 +382,8 @@ impl Component for Game {
                 | Msg::Export
                 | Msg::Share
                 | Msg::Shared(_)
+                | Msg::ShareCreated(_)
+                | Msg::CopyShare
                 | Msg::ImportPick
         ) {
             self.drop_glue_tool();
@@ -725,33 +735,54 @@ impl Component for Game {
                 false
             }
             Msg::Share => {
-                let Some(window) = web_sys::window() else {
+                if self.sharing {
                     return false;
+                }
+                // Freeze the requested snapshot, including the solver's f64
+                // precision. Later edits never change what this link contains.
+                let arrangement = self.share_arrangement();
+                let body = shared::CreateShare {
+                    n: arrangement.n,
+                    code: share::encode(&arrangement),
                 };
-                // Put the link in the address bar too, so it survives a failed copy.
-                let Some(path) = self.update_share_url(n) else {
-                    return false;
-                };
-                let url = format!("{}{path}", window.location().origin().unwrap_or_default());
-                let copy = write_clipboard(&window, &url);
-                ctx.link().send_future(async move {
-                    Msg::Shared(
-                        wasm_bindgen_futures::JsFuture::from(copy)
-                            .await
-                            .map(|_| ())
-                            .map_err(|_| ()),
-                    )
-                });
-                false
+                self.sharing = true;
+                self.short_share = None;
+                self.share_status = "Creating a short link…".into();
+                ctx.link()
+                    .send_future(async move { Msg::ShareCreated(api::create_share(body).await) });
+                true
+            }
+            Msg::ShareCreated(result) => {
+                match result {
+                    Ok(link) => {
+                        self.short_share = Some(link.url);
+                        // Process the response in the mounted component before
+                        // starting a clipboard write, so unmounts discard it.
+                        self.copy_share(ctx);
+                    }
+                    Err(error) => {
+                        self.sharing = false;
+                        self.share_status =
+                            format!("Couldn't create a short link: {error}. Try Share again.");
+                    }
+                }
+                true
+            }
+            Msg::CopyShare => {
+                if !self.sharing {
+                    self.sharing = true;
+                    self.copy_share(ctx);
+                }
+                true
             }
             Msg::Shared(copied) => {
-                match copied {
-                    Ok(()) => self.set_status("Share link copied to the clipboard.", false),
-                    Err(()) => self.set_status(
-                        "Couldn't copy automatically; the share link is in the address bar.",
-                        false,
-                    ),
-                }
+                self.sharing = false;
+                self.share_status = match copied {
+                    Ok(()) => "Snapshot link copied to the clipboard.".into(),
+                    Err(()) => {
+                        "Short link ready. Tap Copy link, or select and copy it below.".into()
+                    }
+                };
                 true
             }
             Msg::ImportPick => {
@@ -939,11 +970,22 @@ impl Component for Game {
                                     { "Settle & measure" }
                                 </button>
                                 <button onclick={link.callback(|_| Msg::Export)}>{ "Export" }</button>
-                                <button onclick={link.callback(|_| Msg::Share)}>{ "Share" }</button>
+                                <button disabled={self.sharing} onclick={link.callback(|_| Msg::Share)}>{ if self.sharing { "Sharing…" } else { "Share" } }</button>
                                 <button onclick={link.callback(|_| Msg::ImportPick)}>{ "Import" }</button>
                                 <input ref={self.file_input.clone()} type="file" accept="application/json,.json" hidden=true
                                     onchange={link.callback(Msg::ImportFile)} />
                             </div>
+                            <p class="pg-share-status pg-help" role="status" aria-live="polite">{ &self.share_status }</p>
+                            { if let Some(url) = &self.short_share {
+                                html! {
+                                    <div class="pg-share-result">
+                                        <label class="pg-help" for="pg-share-link">{ "Shared snapshot" }</label>
+                                        <input id="pg-share-link" class="pg-field" type="url" readonly=true value={url.clone()}
+                                            onclick={Callback::from(|e: MouseEvent| e.target_unchecked_into::<HtmlInputElement>().select())} />
+                                        <button disabled={self.sharing} onclick={link.callback(|_| Msg::CopyShare)}>{ "Copy link" }</button>
+                                    </div>
+                                }
+                            } else { Html::default() } }
                             <p class="pg-help">{ &self.bound }</p>
                             <p class={status_class} role="status" aria-live="polite">{ &self.status }</p>
                             <label class="pg-help" for="pg-player">{ "Leaderboard name" }</label>
@@ -1044,14 +1086,36 @@ impl Game {
         true
     }
 
+    fn share_arrangement(&self) -> Arrangement {
+        match &self.last_report {
+            Some(r) if r.valid => r.arrangement.clone(),
+            _ => self.physics.arrangement(),
+        }
+    }
+
+    fn copy_share(&self, ctx: &Context<Self>) {
+        let copy = web_sys::window()
+            .zip(self.short_share.as_ref())
+            .map(|(window, url)| write_clipboard(&window, url))
+            .unwrap_or_else(|| js_sys::Promise::reject(&wasm_bindgen::JsValue::UNDEFINED));
+        // Safari may reject a write after the network await loses the user
+        // gesture. The visible Copy link button retries within a fresh gesture;
+        // the selectable URL remains usable even without the Clipboard API.
+        ctx.link().send_future(async move {
+            Msg::Shared(
+                wasm_bindgen_futures::JsFuture::from(copy)
+                    .await
+                    .map(|_| ())
+                    .map_err(|_| ()),
+            )
+        });
+    }
+
     /// Point the address bar at a share link for the current solution (the
     /// validated arrangement if there is one, else the live scene) without
     /// adding a history entry. Returns the path written.
     fn update_share_url(&self, n: u32) -> Option<String> {
-        let arrangement = match &self.last_report {
-            Some(r) if r.valid => r.arrangement.clone(),
-            _ => self.physics.arrangement(),
-        };
+        let arrangement = self.share_arrangement();
         let path = format!("/play/{n}?s={}", share::encode(&arrangement));
         web_sys::window()?
             .history()

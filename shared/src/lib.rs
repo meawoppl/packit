@@ -132,6 +132,20 @@ pub struct ApiError {
     pub error: String,
 }
 
+/// A snapshot to shorten: the existing bit-preserving share code and its n.
+/// This accepts unfinished packings and does not create a leaderboard score.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CreateShare {
+    pub n: u32,
+    pub code: String,
+}
+
+/// Permanent public URL of an immutable solution snapshot.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ShortShare {
+    pub url: String,
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
