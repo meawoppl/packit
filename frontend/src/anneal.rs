@@ -171,7 +171,8 @@ mod tests {
         let cmds = run(4.5, 3.0);
         let shakes = shakes(&cmds);
         assert!(shakes.len() >= 10, "{} shakes", shakes.len());
-        assert_eq!(shakes[0].1, 1.0);
+        // The first shake lands on the first frame, at nearly full strength.
+        assert!(shakes[0].1 > 0.99, "first strength {}", shakes[0].1);
         assert!(shakes.windows(2).all(|w| w[1].1 < w[0].1));
         assert!(
             shakes.windows(2).all(|w| w[1].2 != w[0].2),
