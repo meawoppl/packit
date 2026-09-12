@@ -45,6 +45,14 @@ pub(super) fn wall(b: &Body, n: (f32, f32), depth: f32, stiffness: f32) -> [f32;
     let u = (c, s);
     let v = (-s, c);
     let h = 0.5 * (dot(u, n).abs() + dot(v, n).abs());
+    let mut total_penetration = 0.0;
+    for a in [-1.0, 1.0] {
+        for z in [-1.0, 1.0] {
+            let r = (0.5 * (a * u.0 + z * v.0), 0.5 * (a * u.1 + z * v.1));
+            total_penetration += (depth - dot(r, n) - h).max(0.0);
+        }
+    }
+    let weight = depth / total_penetration.max(1e-12);
     let mut result = [0.0; 3];
     // Integrate the two penetrating face corners instead of switching a single
     // support vertex at tiny angles; this gives resting faces a stable torque.
@@ -57,7 +65,7 @@ pub(super) fn wall(b: &Body, n: (f32, f32), depth: f32, stiffness: f32) -> [f32;
             }
             let spin = r.0 * n.1 - r.1 * n.0;
             let speed = dot((b.vx, b.vy), n) + b.omega * spin;
-            let force = 0.5 * (stiffness * penetration - 12.0 * speed).max(0.0);
+            let force = weight * (stiffness * penetration - 12.0 * speed).max(0.0);
             result[0] += n.0 * force;
             result[1] += n.1 * force;
             result[2] += spin * force * 6.0;

@@ -54,11 +54,17 @@ fn contact_levers(me:Body,other:Body,n:vec2<f32>,depth:f32)->vec3<f32>{
 fn wall_contact(me:Body,n:vec2<f32>,depth:f32)->vec3<f32>{
  var result=vec3<f32>(0.0);if(depth<=0.0){return result;}
  let u=axis(me.p.z);let v=vec2<f32>(-u.y,u.x);let h=0.5*(abs(dot(u,n))+abs(dot(v,n)));
+ var total=0.0;
+ for(var i=0u;i<2u;i++){for(var j=0u;j<2u;j++){
+  let r=0.5*((f32(i)*2.0-1.0)*u+(f32(j)*2.0-1.0)*v);
+  total+=max(0.0,depth-dot(r,n)-h);
+ }}
+ let weight=depth/max(total,1e-12);
  for(var i=0u;i<2u;i++){for(var j=0u;j<2u;j++){
   let r=0.5*(select(-1.0,1.0,i==1u)*u+select(-1.0,1.0,j==1u)*v);
   let penetration=depth-dot(r,n)-h;if(penetration<=0.0){continue;}
   let spin=cross(r,n);let speed=dot(me.v.xy,n)+me.v.z*spin;
-  let strength=0.5*max(0.0,params.b.z*penetration-12.0*speed);
+  let strength=weight*max(0.0,params.b.z*penetration-12.0*speed);
   result+=vec3<f32>(n*strength,spin*strength*6.0);
  }}return result;
 }
