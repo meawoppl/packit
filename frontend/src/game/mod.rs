@@ -378,12 +378,15 @@ impl Component for Game {
                 self.stop_anneal();
                 let mut params = self.physics.params();
                 params.target_side = side;
-                self.physics.set_params(params);
+                // A size edit is a spring target, never a teleport. Enable
+                // pressure if it was off, retaining any chosen nonzero strength.
                 if params.band_tension == 0.0 {
-                    self.physics.set_side(side);
+                    params.band_tension = 30.0;
                 }
-                self.invalidate();
-                self.refresh_readout()
+                self.physics.set_params(params);
+                self.set_pause(false);
+                self.refresh_readout();
+                true
             }
             Msg::BandTension(tension) => {
                 self.stop_anneal();
@@ -678,7 +681,7 @@ impl Component for Game {
                             </label>
                             <input id="pg-band" type="range" min="0" max="100" step="1" value={params.band_tension.to_string()}
                                 oninput={link.callback(|e: InputEvent| Msg::BandTension(input_value(&e).parse().unwrap_or(0.0)))} />
-                            <p class="pg-help">{ "Pulls the band toward the container target size. Squares push back. Set to zero to hold the current size." }</p>
+                            <p class="pg-help">{ "Changing container size animates the band with live pressure. Squares push back. Zero holds the current size; moving the size slider re-engages pressure at 30." }</p>
                             <label class="pg-row">
                                 { "Gravity " }
                                 <input type="checkbox" checked={params.gravity}
@@ -834,6 +837,17 @@ impl Game {
         };
         let bodies = self.physics.bodies();
         let params = self.physics.params();
+        // Make room smoothly for an expanding target; retain the larger view
+        // when squeezing so boundary motion remains visible.
+        let extent = if params.band_tension > 0.0 {
+            params.target_side.max(self.physics.side())
+        } else {
+            self.physics.side()
+        };
+        if extent > self.view_side.get() {
+            self.view_side
+                .set(self.view_side.get() + (extent - self.view_side.get()) * 0.12);
+        }
         let forces = self.physics.contact_forces();
         let show_forces = self.dragging
             || self.rotating
