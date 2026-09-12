@@ -79,11 +79,6 @@ impl Anneal {
         self.finished
     }
 
-    /// Stop without measuring (e.g. the player grabbed a square).
-    pub fn cancel(&mut self) {
-        self.finished = true;
-    }
-
     /// Temperature in `[0, 1]`: quadratic cooling over the heating phase.
     fn temperature(&self) -> f64 {
         let heat_end = self.schedule.duration * self.schedule.heat_fraction;
@@ -226,15 +221,6 @@ mod tests {
             .filter(|c| matches!(c, Command::Shake { .. }))
             .count();
         assert_eq!(count, 1);
-    }
-
-    #[test]
-    fn cancel_stops_without_measuring() {
-        let mut a = Anneal::new(Schedule::default(), 4.5, 3.0, 1);
-        assert!(!a.advance(FRAME).is_empty());
-        a.cancel();
-        assert!(a.is_finished());
-        assert!(a.advance(100.0).is_empty());
     }
 
     #[test]

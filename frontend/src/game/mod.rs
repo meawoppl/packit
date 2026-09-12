@@ -5,6 +5,8 @@ mod browser_tests;
 mod canvas;
 mod files;
 
+use crate::anneal::{Anneal, Command, Schedule};
+use crate::benchmark::Benchmark;
 use crate::{api, Route};
 use canvas::Scene;
 use gloo_events::{EventListener, EventListenerOptions};
@@ -62,6 +64,7 @@ pub enum Msg {
     TogglePause,
     Shake,
     Reset,
+    Anneal,
     Measure,
     Refine,
     Player(String),
@@ -83,6 +86,8 @@ struct Readout {
     meter: String,
     record: String,
     size_value: f64,
+    /// Annealing progress in percent while a run is active.
+    anneal: Option<u32>,
 }
 
 pub struct Game {
@@ -115,6 +120,7 @@ pub struct Game {
     submitting: bool,
     submit_after_measure: bool,
     pending_import: Option<Arrangement>,
+    anneal: Option<Anneal>,
     readout: Readout,
 }
 
@@ -185,6 +191,7 @@ impl Component for Game {
             submitting: false,
             submit_after_measure: false,
             pending_import: None,
+            anneal: None,
             readout: Readout::default(),
         };
         // Fill the sidebar before the first view; later frames only re-render on change.
@@ -237,6 +244,7 @@ impl Component for Game {
                     .last_time
                     .map_or(0.0, |last| ((time - last) / 1000.0).clamp(0.0, 0.05));
                 self.last_time = Some(time);
+                self.tick_anneal(ctx, elapsed);
                 if self.physics.paused() {
                     self.accumulator = 0.0;
                 } else {
@@ -293,6 +301,7 @@ impl Component for Game {
                     (bodies[i].x as f64 - p.0, bodies[i].y as f64 - p.1)
                 });
                 if self.selected.is_some() {
+                    self.stop_anneal();
                     self.set_pause(false);
                 }
                 self.dragging = self.selected.is_some() && !self.rotating;
@@ -327,6 +336,7 @@ impl Component for Game {
                 false
             }
             Msg::Wheel(i, sign) => {
+                self.stop_anneal();
                 self.selected = Some(i);
                 self.physics.rotate(i, sign * ROTATE_STEP);
                 self.invalidate();
@@ -335,6 +345,7 @@ impl Component for Game {
             Msg::Key(e) => {
                 if e.code() == "Space" {
                     e.prevent_default();
+                    self.stop_anneal();
                     self.set_pause(!self.physics.paused());
                     return self.refresh_readout();
                 }
@@ -351,6 +362,7 @@ impl Component for Game {
                     _ => return false,
                 }
                 e.prevent_default();
+                self.stop_anneal();
                 self.invalidate();
                 false
             }
@@ -363,6 +375,7 @@ impl Component for Game {
                 false
             }
             Msg::TargetSide(side) => {
+                self.stop_anneal();
                 let mut params = self.physics.params();
                 params.target_side = side;
                 self.physics.set_params(params);
@@ -373,6 +386,7 @@ impl Component for Game {
                 self.refresh_readout()
             }
             Msg::BandTension(tension) => {
+                self.stop_anneal();
                 let mut params = self.physics.params();
                 params.band_tension = tension;
                 self.physics.set_params(params);
@@ -381,6 +395,7 @@ impl Component for Game {
                 true
             }
             Msg::Gravity(on) => {
+                self.stop_anneal();
                 let mut params = self.physics.params();
                 params.gravity = on;
                 self.physics.set_params(params);
@@ -388,6 +403,7 @@ impl Component for Game {
                 true
             }
             Msg::Attraction(on) => {
+                self.stop_anneal();
                 let mut params = self.physics.params();
                 params.attraction = on;
                 self.physics.set_params(params);
@@ -395,6 +411,7 @@ impl Component for Game {
                 true
             }
             Msg::EdgeAttraction(strength) => {
+                self.stop_anneal();
                 let mut params = self.physics.params();
                 params.edge_attraction = strength;
                 self.physics.set_params(params);
@@ -403,23 +420,27 @@ impl Component for Game {
                 true
             }
             Msg::Damping(damping) => {
+                self.stop_anneal();
                 let mut params = self.physics.params();
                 params.damping = damping;
                 self.physics.set_params(params);
                 true
             }
             Msg::Stiffness(stiffness) => {
+                self.stop_anneal();
                 let mut params = self.physics.params();
                 params.stiffness = stiffness;
                 self.physics.set_params(params);
                 true
             }
             Msg::TogglePause => {
+                self.stop_anneal();
                 self.set_pause(!self.physics.paused());
                 self.refresh_readout();
                 true
             }
             Msg::Shake => {
+                self.stop_anneal();
                 self.physics
                     .shake((js_sys::Math::random() * u64::MAX as f64) as u64);
                 self.invalidate();
@@ -427,6 +448,7 @@ impl Component for Game {
                 true
             }
             Msg::Reset => {
+                self.stop_anneal();
                 let side = initial_side(n);
                 self.physics.set_side(side);
                 let mut params = self.physics.params();
@@ -438,19 +460,31 @@ impl Component for Game {
                 self.set_status("Fresh grid. Make it yours.", false);
                 true
             }
-            Msg::Measure => {
+            Msg::Anneal => {
+                if self.anneal.is_some() {
+                    self.stop_anneal();
+                    self.refresh_readout();
+                    return true;
+                }
                 if self.busy {
                     return false;
                 }
-                self.busy = true;
-                self.set_pause(true);
-                self.set_status("Refining contacts from the walls inward…", false);
-                // Let the status paint before the solver blocks the main thread.
-                ctx.link().send_future(async {
-                    gloo_timers::future::sleep(Duration::from_millis(25)).await;
-                    Msg::Refine
-                });
+                let seed = (js_sys::Math::random() * u64::MAX as f64) as u64;
+                let floor = (n as f64).sqrt();
+                self.anneal = Some(Anneal::new(
+                    Schedule::default(),
+                    self.physics.side(),
+                    floor,
+                    seed,
+                ));
+                self.set_pause(false);
+                self.set_status("Annealing: gentler shakes, tighter band…", false);
+                self.refresh_readout();
                 true
+            }
+            Msg::Measure => {
+                self.stop_anneal();
+                self.begin_measure(ctx)
             }
             Msg::Refine => {
                 if self.stepping {
@@ -546,6 +580,7 @@ impl Component for Game {
             Msg::Imported(text) => {
                 match text.and_then(|t| files::parse_arrangement(&t, n)) {
                     Ok(a) => {
+                        self.stop_anneal();
                         self.set_pause(true);
                         if self.stepping {
                             self.pending_import = Some(a);
@@ -568,6 +603,11 @@ impl Component for Game {
         let size_min = ((n as f64).sqrt() * 1000.0).ceil() / 1000.0;
         let size_max = (n as f64).sqrt().ceil() + 3.0;
         let status_class = classes!("pg-status", self.status_error.then_some("pg-invalid"));
+        // Compare the refined f64 side once validated; otherwise the live side.
+        let (bench_side, validated) = match &self.last_report {
+            Some(report) if report.valid => (report.arrangement.side, true),
+            _ => (self.physics.side(), false),
+        };
         html! {
             <div class="packing-game">
                 <div class="pg-top">
@@ -576,6 +616,11 @@ impl Component for Game {
                         <h1>{ "Make room." }</h1>
                         <div class="pg-sub">{ "Pack unit squares. Chase the smallest container." }</div>
                     </div>
+                    <Benchmark
+                        side={bench_side}
+                        reference_side={self.record.as_ref().map(|r| r.side)}
+                        proven={self.record.as_ref().is_some_and(|r| r.proven_optimal)}
+                        {validated} />
                     <label class="pg-sub">
                         { "Squares " }
                         <input class="pg-count" type="number" min="1" max={MAX_N.to_string()} value={n.to_string()}
@@ -664,6 +709,10 @@ impl Component for Game {
                                 </button>
                                 <button onclick={link.callback(|_| Msg::Shake)}>{ "Shake" }</button>
                                 <button onclick={link.callback(|_| Msg::Reset)}>{ "Reset" }</button>
+                                <button class={classes!(r.anneal.is_some().then_some("pg-primary"))}
+                                    onclick={link.callback(|_| Msg::Anneal)}>
+                                    { match r.anneal { Some(p) => format!("Stop · {p}%"), None => "Anneal".into() } }
+                                </button>
                             </div>
                         </section>
                         <section class="pg-panel pg-submit">
@@ -702,6 +751,61 @@ impl Component for Game {
 }
 
 impl Game {
+    /// Advance an annealing run by `dt` seconds and apply its commands.
+    fn tick_anneal(&mut self, ctx: &Context<Self>, dt: f64) {
+        let Some(anneal) = self.anneal.as_mut() else {
+            return;
+        };
+        let commands = anneal.advance(dt);
+        if anneal.is_finished() {
+            self.anneal = None;
+        }
+        for command in commands {
+            match command {
+                Command::Shake { seed, strength } => self.physics.shake_scaled(seed, strength),
+                Command::Band {
+                    target_side,
+                    tension,
+                } => {
+                    let mut params = self.physics.params();
+                    params.target_side = target_side;
+                    params.band_tension = tension;
+                    self.physics.set_params(params);
+                }
+                Command::Measure => {
+                    // Release the band so it stops compressing once the run ends.
+                    let mut params = self.physics.params();
+                    params.band_tension = 0.0;
+                    self.physics.set_params(params);
+                    self.begin_measure(ctx);
+                }
+            }
+        }
+    }
+
+    /// Manual input takes over from an annealing run.
+    fn stop_anneal(&mut self) {
+        if self.anneal.take().is_some() {
+            self.set_status("Anneal stopped.", false);
+        }
+    }
+
+    /// Pause and refine the current scene, once the status has painted.
+    fn begin_measure(&mut self, ctx: &Context<Self>) -> bool {
+        if self.busy {
+            return false;
+        }
+        self.busy = true;
+        self.set_pause(true);
+        self.set_status("Refining contacts from the walls inward…", false);
+        // Let the status paint before the solver blocks the main thread.
+        ctx.link().send_future(async {
+            gloo_timers::future::sleep(Duration::from_millis(25)).await;
+            Msg::Refine
+        });
+        true
+    }
+
     fn schedule_frame(&mut self, ctx: &Context<Self>) {
         let link = ctx.link().clone();
         self.frame = Some(request_animation_frame(move |t| {
@@ -737,7 +841,13 @@ impl Game {
     }
 
     fn check_settled(&mut self, ctx: &Context<Self>) {
-        if self.physics.paused() || self.dragging || self.busy || self.auto_measured {
+        // An annealing run measures on its own schedule.
+        if self.physics.paused()
+            || self.dragging
+            || self.busy
+            || self.auto_measured
+            || self.anneal.is_some()
+        {
             return;
         }
         let n = ctx.props().n as f32;
@@ -792,6 +902,7 @@ impl Game {
             } else {
                 side
             },
+            anneal: self.anneal.as_ref().map(|a| (a.progress() * 100.0) as u32),
         };
         let changed = next != self.readout;
         self.readout = next;
