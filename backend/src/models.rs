@@ -2,28 +2,24 @@ use chrono::NaiveDateTime;
 use diesel::prelude::*;
 use uuid::Uuid;
 
-use crate::schema::items;
+use crate::schema::scores;
 
 #[derive(Debug, Queryable, Selectable)]
-#[diesel(table_name = items)]
-pub struct Item {
+#[diesel(table_name = scores)]
+pub struct Score {
     pub id: Uuid,
-    pub name: String,
-    pub created_at: NaiveDateTime,
+    pub player: String,
+    pub n: i32,
+    pub side: f64,
+    pub arrangement: serde_json::Value,
+    pub submitted_at: NaiveDateTime,
 }
 
 #[derive(Debug, Insertable)]
-#[diesel(table_name = items)]
-pub struct NewItem {
-    pub name: String,
-}
-
-impl From<Item> for shared::Item {
-    fn from(item: Item) -> Self {
-        shared::Item {
-            id: item.id,
-            name: item.name,
-            created_at: item.created_at,
-        }
-    }
+#[diesel(table_name = scores)]
+pub struct NewScore {
+    pub player: String,
+    pub n: i32,
+    pub side: f64,
+    pub arrangement: serde_json::Value,
 }

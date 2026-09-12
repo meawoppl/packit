@@ -53,6 +53,12 @@ pub fn build_app(state: Arc<AppState>) -> Router {
 
     Router::new()
         .route("/api/health", get(handlers::health::health))
+        .route("/api/records", get(handlers::records::records))
+        .route(
+            "/api/scores",
+            get(handlers::scores::list).post(handlers::scores::submit),
+        )
+        .route("/api/scores/:id", get(handlers::scores::detail))
         .with_state(state)
         .route(shared::AppSocket::PATH, handlers::websocket::handler())
         .merge(frontend)
@@ -232,5 +238,127 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    async fn call<T: serde::de::DeserializeOwned>(
+        app: &Router,
+        req: Request<Body>,
+    ) -> (StatusCode, T) {
+        let resp = app.clone().oneshot(req).await.unwrap();
+        let status = resp.status();
+        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        (status, serde_json::from_slice(&bytes).unwrap())
+    }
+
+    fn post_json(uri: &str, body: &impl serde::Serialize) -> Request<Body> {
+        Request::post(uri)
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(serde_json::to_vec(body).unwrap()))
+            .unwrap()
+    }
+
+    fn two_squares(player: &str, side: f64) -> shared::SubmitScore {
+        let sq = |cx| shared::Placement {
+            cx,
+            cy: 0.5,
+            theta: 0.0,
+        };
+        shared::SubmitScore {
+            player: player.to_string(),
+            arrangement: shared::Arrangement {
+                n: 2,
+                side,
+                squares: vec![sq(0.5), sq(1.5)],
+            },
+        }
+    }
+
+    #[tokio::test]
+    async fn records_served_from_refs() {
+        let (status, records): (_, Vec<shared::KnownRecord>) = call(
+            &build_app(test_state()),
+            Request::get("/api/records").body(Body::empty()).unwrap(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(records[0].n, 1);
+    }
+
+    #[tokio::test]
+    async fn overlapping_submission_rejected_before_db() {
+        let mut body = two_squares("ada", 2.0);
+        body.arrangement.squares[1].cx = 1.0;
+        let (status, err): (_, shared::ApiError) =
+            call(&build_app(test_state()), post_json("/api/scores", &body)).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(err.error.contains("overlap"), "{}", err.error);
+    }
+
+    /// Submit / list / detail against a real Postgres. Runs only when
+    /// TEST_DATABASE_URL is set; CI provides one.
+    #[tokio::test]
+    async fn scores_roundtrip_against_postgres() {
+        let Ok(url) = std::env::var("TEST_DATABASE_URL") else {
+            eprintln!("TEST_DATABASE_URL not set; skipping");
+            return;
+        };
+        let db_pool = Pool::builder()
+            .max_size(2)
+            .build(ConnectionManager::<PgConnection>::new(url))
+            .unwrap();
+        db::run_migrations(&db_pool).unwrap();
+        let app = build_app(Arc::new(AppState {
+            dev_mode: true,
+            db_pool,
+        }));
+
+        let (status, loose): (_, shared::ScoreEntry) =
+            call(&app, post_json("/api/scores", &two_squares("loose", 3.0))).await;
+        assert_eq!(status, StatusCode::OK);
+        let (_, tight): (_, shared::ScoreEntry) =
+            call(&app, post_json("/api/scores", &two_squares("tight", 2.0))).await;
+
+        let (status, board): (_, Vec<shared::ScoreEntry>) = call(
+            &app,
+            Request::get("/api/scores?n=2&limit=200")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(board.iter().any(|e| e.id == tight.id));
+        assert!(board.windows(2).all(|w| w[0].side <= w[1].side));
+
+        let (_, leaders): (_, Vec<shared::ScoreEntry>) = call(
+            &app,
+            Request::get("/api/scores").body(Body::empty()).unwrap(),
+        )
+        .await;
+        assert!(leaders.iter().any(|e| e.n == 2 && e.side <= 2.0));
+
+        let (status, detail): (_, shared::ScoreDetail) = call(
+            &app,
+            Request::get(format!("/api/scores/{}", loose.id))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(detail.entry.id, loose.id);
+        assert_eq!(detail.entry.side, 3.0);
+        // Rank is computed at read time, so the tighter packing now outranks it.
+        assert!(detail.entry.rank > tight.rank);
+        assert_eq!(detail.arrangement, two_squares("loose", 3.0).arrangement);
+
+        let (status, _): (_, shared::ApiError) = call(
+            &app,
+            Request::get(format!("/api/scores/{}", uuid::Uuid::new_v4()))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
     }
 }

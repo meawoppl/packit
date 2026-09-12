@@ -1,7 +1,10 @@
 diesel::table! {
-    items (id) {
+    scores (id) {
         id -> Uuid,
-        name -> Text,
-        created_at -> Timestamp,
+        player -> Text,
+        n -> Int4,
+        side -> Float8,
+        arrangement -> Jsonb,
+        submitted_at -> Timestamp,
     }
 }

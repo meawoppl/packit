@@ -1,8 +1,9 @@
-use gloo_net::http::Request;
-use gloo_timers::future::sleep;
-use shared::{AppSocket, ClientMsg, HealthResponse, ServerMsg};
-use std::time::Duration;
-use wasm_bindgen_futures::spawn_local;
+mod api;
+mod leaderboard;
+
+use leaderboard::{Leaderboard, LeaderboardN, ScorePage};
+use shared::MAX_N;
+use uuid::Uuid;
 use yew::prelude::*;
 use yew_router::prelude::*;
 
@@ -10,6 +11,14 @@ use yew_router::prelude::*;
 enum Route {
     #[at("/")]
     Home,
+    #[at("/play/:n")]
+    Play { n: u32 },
+    #[at("/leaderboard")]
+    Leaderboard,
+    #[at("/leaderboard/:n")]
+    LeaderboardN { n: u32 },
+    #[at("/score/:id")]
+    Score { id: Uuid },
     #[not_found]
     #[at("/404")]
     NotFound,
@@ -18,7 +27,13 @@ enum Route {
 fn switch(route: Route) -> Html {
     match route {
         Route::Home => html! { <Home /> },
-        Route::NotFound => html! { <h1>{ "404 - Not Found" }</h1> },
+        Route::Play { n } if (1..=MAX_N).contains(&n) => {
+            html! { <p>{ format!("Game board for {n} squares goes here.") }</p> }
+        }
+        Route::Leaderboard => html! { <Leaderboard /> },
+        Route::LeaderboardN { n } => html! { <LeaderboardN {n} /> },
+        Route::Score { id } => html! { <ScorePage {id} /> },
+        Route::Play { .. } | Route::NotFound => html! { <h1>{ "404 - Not Found" }</h1> },
     }
 }
 
@@ -26,109 +41,27 @@ fn switch(route: Route) -> Html {
 pub fn app() -> Html {
     html! {
         <BrowserRouter>
-            <Switch<Route> render={switch} />
+            <nav class="topbar">
+                <Link<Route> to={Route::Home} classes="brand">{ "packit" }</Link<Route>>
+                <Link<Route> to={Route::Leaderboard}>{ "Leaderboard" }</Link<Route>>
+            </nav>
+            <main>
+                <Switch<Route> render={switch} />
+            </main>
         </BrowserRouter>
     }
 }
 
 #[function_component(Home)]
 fn home() -> Html {
-    let health = use_state(|| None::<String>);
-    let ws_status = use_state(|| "Connecting...".to_string());
-    let ws_messages = use_state(Vec::<String>::new);
-
-    // Health check via HTTP
-    {
-        let health = health.clone();
-        use_effect_with((), move |_| {
-            spawn_local(async move {
-                match Request::get("/api/health").send().await {
-                    Ok(resp) => {
-                        if let Ok(data) = resp.json::<HealthResponse>().await {
-                            health.set(Some(data.status));
-                        }
-                    }
-                    Err(e) => health.set(Some(format!("Error: {}", e))),
-                }
-            });
-        });
-    }
-
-    // WebSocket connection via ws-bridge
-    {
-        let ws_status = ws_status.clone();
-        let ws_messages = ws_messages.clone();
-        use_effect_with((), move |_| {
-            match ws_bridge::yew_client::connect::<AppSocket>() {
-                Ok(conn) => {
-                    ws_status.set("Connected".to_string());
-                    let (mut tx, mut rx) = conn.split();
-
-                    // Ping loop — sends a Ping every 5 seconds
-                    spawn_local(async move {
-                        loop {
-                            sleep(Duration::from_secs(5)).await;
-                            if tx.send(ClientMsg::Ping).await.is_err() {
-                                break;
-                            }
-                        }
-                    });
-
-                    // Receive loop — updates UI state on each message
-                    let msgs = ws_messages;
-                    let status = ws_status;
-                    spawn_local(async move {
-                        while let Some(result) = rx.recv().await {
-                            match result {
-                                Ok(ServerMsg::Heartbeat) => {
-                                    let mut current = (*msgs).clone();
-                                    current.push("Received: Heartbeat".to_string());
-                                    if current.len() > 10 {
-                                        current.drain(..current.len() - 10);
-                                    }
-                                    msgs.set(current);
-                                }
-                                Ok(ServerMsg::Error { message }) => {
-                                    let mut current = (*msgs).clone();
-                                    current.push(format!("Received: Error — {}", message));
-                                    msgs.set(current);
-                                }
-                                Ok(ServerMsg::ServerShutdown { reason, .. }) => {
-                                    status.set(format!("Server shutting down: {}", reason));
-                                    break;
-                                }
-                                Err(e) => {
-                                    status.set(format!("WebSocket error: {}", e));
-                                    break;
-                                }
-                            }
-                        }
-                    });
-                }
-                Err(e) => {
-                    ws_status.set(format!("Connect failed: {}", e));
-                }
-            }
-        });
-    }
-
     html! {
-        <div>
-            <h1>{ "App" }</h1>
-            <div class="status">
-                { match (*health).as_ref() {
-                    Some(s) => format!("Backend: {}", s),
-                    None => "Checking backend...".to_string(),
-                }}
-            </div>
-            <div class="ws-status">
-                { format!("WebSocket: {}", *ws_status) }
-            </div>
-            <div class="ws-messages">
-                <h3>{ "WebSocket messages" }</h3>
-                <ul>
-                    { for (*ws_messages).iter().map(|m| html! { <li>{ m }</li> }) }
-                </ul>
+        <div class="home">
+            <h1>{ "Pack the squares" }</h1>
+            <p>{ "Fit n unit squares into the smallest square box you can, and chase the best known records." }</p>
+            <div class="n-grid">
+                { for (1..=30u32).map(|n| html! {
+                    <Link<Route> to={Route::Play { n }} classes="n-button">{ n }</Link<Route>>
+                }) }
             </div>
         </div>
     }

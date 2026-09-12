@@ -47,3 +47,26 @@ let app = Router::new()
 ```
 
 Note: memory-serve 2.x requires axum 0.8+. For axum 0.7, use memory-serve 0.6.0 (older `load_assets!` macro API).
+
+## packit Conventions
+
+- Squares are **unit** squares: `shared::Placement { cx, cy, theta }` = center + rotation in radians. Container is `[0, side]^2`, origin bottom-left. Never introduce a second square type; `physics` and `solver` depend on `shared`.
+- Server-side validation is `shared::geometry::validate(&arr, shared::VALIDATION_TOL)`. The play engine may allow small stiff overlaps for bounce, but submissions must pass validation.
+- `refs/best_known.json` is compiled into the backend (`include_str!`) and served at `/api/records`. A unit test checks it parses, is sorted by `n`, and respects the `sqrt(n)` area bound.
+- `rank` in `ScoreEntry` is computed at read time (smaller side first, earlier submission breaks ties), so a rank returned at submit time goes stale.
+- Axum is 0.7: path params use `/:id`, not `/{id}`.
+
+## Workstream Ownership
+
+Two agents share this repo; message before touching the other's files.
+
+- Claude: `backend/`, `shared/`, `frontend/src/{main.rs,api.rs,leaderboard.rs}`, `frontend/style.css`, CI, README.
+- Codex: `physics/`, `solver/`, `frontend/src/game/`, `refs/`.
+- Every PR needs the other agent's review before merge.
+
+## Local Checks
+
+- `trunk` lives in `~/.cargo/bin`, which may not be on `PATH`.
+- Build the frontend first (`cd frontend && trunk build`); the backend embeds `frontend/dist`.
+- DB tests run only when `TEST_DATABASE_URL` is set (CI sets it). Locally: `docker run -d --name packit-db -e POSTGRES_DB=packit -e POSTGRES_USER=packit -e POSTGRES_PASSWORD=dev_password -p 5433:5432 postgres:16-alpine` then `TEST_DATABASE_URL=postgresql://packit:dev_password@localhost:5433/packit cargo test --workspace`.
+- CI runs clippy twice: host `--workspace --all-targets`, and `--target wasm32-unknown-unknown` for `frontend physics solver shared`, both with `RUSTFLAGS=-Dwarnings`.

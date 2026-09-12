@@ -76,9 +76,26 @@ jobs:
       - name: Run Clippy
         run: cargo clippy --workspace --all-targets --locked
 
+      - name: Run Clippy (wasm crates)
+        run: cargo clippy -p frontend -p physics -p solver -p shared --target wasm32-unknown-unknown --locked
+
   test:
     name: Tests
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: packit_test
+          POSTGRES_USER: packit
+          POSTGRES_PASSWORD: dev_password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U packit"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v4
 
@@ -100,3 +117,5 @@ jobs:
 
       - name: Run tests
         run: cargo test --workspace --locked
+        env:
+          TEST_DATABASE_URL: postgresql://packit:dev_password@localhost:5432/packit_test
