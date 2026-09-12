@@ -25,6 +25,13 @@ survives an await. Concurrent steps are ignored, cancelled mappings unmap their
 buffers, and device loss or unavailable WebGPU selects CPU fallback. Call
 `dispose` at UI teardown; dropping the final GPU handle also destroys its device.
 
+Wheel, Q/E, and shift-drag use `turn(index, delta)` rather than pose edits.
+It applies a transient angular spring (60 gain, 8 damping, acceleration capped
+at 30 rad/s²) for half a second after the latest input. Target lead is bounded
+to 0.35 radians to prevent wind-up when wedged. Contacts can resist and transfer
+the turn; inputs never increment the body revision. Pause, reset, load, and
+dispose clear the spring. `rotate()` remains a direct pose-edit API for tooling.
+
 Outer band tension couples the top/right walls to one side-length spring;
 bottom/left edges stay anchored. `target_side` sets its rest length; contact
 pressure can expand it. Zero tension fixes the current side. The scalar band

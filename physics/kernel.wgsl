@@ -1,5 +1,5 @@
 struct Body { p: vec4<f32>, v: vec4<f32> }
-struct Params { a: vec4<f32>, b: vec4<f32>, mouse: vec4<f32> }
+struct Params { a: vec4<f32>, b: vec4<f32>, mouse: vec4<f32>, rotation: vec4<f32> }
 @group(0) @binding(0) var<storage, read> input: array<Body>;
 @group(0) @binding(1) var<storage, read_write> output: array<Body>;
 @group(0) @binding(2) var<uniform> params: Params;
@@ -101,6 +101,10 @@ fn step(@builtin(global_invocation_id) id:vec3<u32>) {
   let delta=params.mouse.xy-me.p.xy;
   let gain=100.0*min(1.0,0.4/max(0.0001,length(delta)));
   force+=delta*gain-me.v.xy*14.0;
+ }
+ if(i==u32(params.rotation.y) && params.rotation.z>0.0){
+  let error=params.rotation.x-me.p.z;
+  torque+=clamp(60.0*atan2(sin(error),cos(error))-8.0*me.v.z,-30.0,30.0);
  }
  var vel=(me.v.xy+force*dt)*exp(-params.b.y*dt);
  vel=clamp(vel,vec2<f32>(-15.0),vec2<f32>(15.0));

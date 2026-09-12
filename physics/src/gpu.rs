@@ -1,5 +1,5 @@
 //! WebGPU owns body integration; only the scalar band coordinate stays on CPU.
-use super::{Body, Mouse, Params, FIXED_STEP, GPU_KERNEL};
+use super::{Body, Mouse, Params, Rotation, FIXED_STEP, GPU_KERNEL};
 use std::{
     borrow::Cow,
     sync::{
@@ -70,7 +70,7 @@ impl Gpu {
         });
         let uniform = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("packing parameters"),
-            size: 48,
+            size: 64,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -134,12 +134,13 @@ impl Gpu {
         initial: &[Body],
         p: Params,
         side: f64,
-        mouse: Mouse,
+        controls: (Mouse, Rotation),
         steps: u32,
     ) -> Option<(Vec<Body>, Vec<[f32; 2]>)> {
         if !self.alive() {
             return None;
         }
+        let (mouse, rotation) = controls;
         let data: Vec<f32> = initial
             .iter()
             .flat_map(|b| [b.x, b.y, b.theta, 0.0, b.vx, b.vy, b.omega, 0.0])
@@ -161,6 +162,10 @@ impl Gpu {
             } else {
                 0.0
             },
+            rotation.target,
+            rotation.index.unwrap_or(0) as f32,
+            rotation.remaining,
+            0.0,
         ];
         self.queue
             .write_buffer(&self.buffers[0], 0, bytemuck::cast_slice(&data));
