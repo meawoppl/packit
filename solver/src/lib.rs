@@ -403,10 +403,24 @@ pub fn refine(input: &Arrangement) -> Result<SolveReport, String> {
         _ if a.n == 11 => 2.0 + 4.0 / 5.0_f64.sqrt(),
         _ => (a.n as f64).sqrt(),
     };
-    Ok(SolveReport{algebraic,
+    let status = if valid {
+        "Numerically feasible local packing; polynomial contacts are not a proof of optimality."
+    } else {
+        "Refinement did not reach a feasible packing; increase the container or rearrange squares."
+    };
+    Ok(SolveReport {
+        algebraic,
         reference_side: record.as_ref().map(|r| r.side),
         lower_bound,
-        gap_to_reference_percent: record.as_ref().map(|r| (a.side / r.side - 1.0) * 100.0),max_violation:max_violation(&a),arrangement:a,valid,iterations,contacts,candidate_expression,status:if valid{"Numerically feasible local packing; polynomial contacts are not a proof of optimality."}else{"Refinement did not reach a feasible packing; increase the container or rearrange squares."}.into()})
+        gap_to_reference_percent: record.as_ref().map(|r| (a.side / r.side - 1.0) * 100.0),
+        max_violation: max_violation(&a),
+        arrangement: a,
+        valid,
+        iterations,
+        contacts,
+        candidate_expression,
+        status: status.into(),
+    })
 }
 
 #[cfg(test)]

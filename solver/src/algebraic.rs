@@ -223,7 +223,14 @@ pub fn recover(
                 .to_string(),
         ]
     };
-    Some(AlgebraicCandidate{side_expression:result.expression(),side_polynomial:polynomial,side_approximation:approximation,assumptions,status:"Exact elimination on the stated contact/orientation branch; feasibility and global optimality are not certified.".into()})
+    const STATUS: &str = "Exact elimination on the stated contact/orientation branch; feasibility and global optimality are not certified.";
+    Some(AlgebraicCandidate {
+        side_expression: result.expression(),
+        side_polynomial: polynomial,
+        side_approximation: approximation,
+        assumptions,
+        status: STATUS.into(),
+    })
 }
 
 #[cfg(test)]
