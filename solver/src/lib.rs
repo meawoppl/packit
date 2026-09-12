@@ -3,6 +3,7 @@
 //! Contact branches are selected numerically, then represented as polynomials
 //! in (x_i,y_i,c_i,s_i,L), with c_i²+s_i²=1. Solving one branch is not a proof
 //! of global optimality. Reports retain residuals and never claim certification.
+pub mod algebraic;
 use serde::{Deserialize, Serialize};
 use shared::geometry::{tighten, validate};
 pub use shared::{Arrangement, Placement};
@@ -59,6 +60,7 @@ pub struct SolveReport {
     /// Recognized expression, only when a feasible side matches a simple value.
     /// This is numerical recognition, not an exact certificate.
     pub candidate_expression: Option<String>,
+    pub algebraic: Option<algebraic::AlgebraicCandidate>,
     pub status: String,
     pub reference_side: Option<f64>,
     pub lower_bound: f64,
@@ -390,6 +392,7 @@ pub fn refine(input: &Arrangement) -> Result<SolveReport, String> {
         None
     };
     let contacts = contact_system(&a, 1e-6);
+    let algebraic = algebraic::recover(&contacts, &a.squares, a.side);
     let record = serde_json::from_str::<Vec<shared::KnownRecord>>(include_str!(
         "../../refs/best_known.json"
     ))
@@ -400,7 +403,7 @@ pub fn refine(input: &Arrangement) -> Result<SolveReport, String> {
         _ if a.n == 11 => 2.0 + 4.0 / 5.0_f64.sqrt(),
         _ => (a.n as f64).sqrt(),
     };
-    Ok(SolveReport{
+    Ok(SolveReport{algebraic,
         reference_side: record.as_ref().map(|r| r.side),
         lower_bound,
         gap_to_reference_percent: record.as_ref().map(|r| (a.side / r.side - 1.0) * 100.0),max_violation:max_violation(&a),arrangement:a,valid,iterations,contacts,candidate_expression,status:if valid{"Numerically feasible local packing; polynomial contacts are not a proof of optimality."}else{"Refinement did not reach a feasible packing; increase the container or rearrange squares."}.into()})
@@ -538,5 +541,7 @@ mod tests {
         assert!(r.valid);
         assert!(r.contacts.max_residual < 1e-8);
         assert!(r.candidate_expression.is_some());
+        let exact = r.algebraic.unwrap();
+        assert_eq!(exact.side_polynomial, vec!["1", "-4", "7/2"]);
     }
 }
