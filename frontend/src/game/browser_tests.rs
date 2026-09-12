@@ -942,6 +942,38 @@ async fn share_button_copies_a_short_link_for_the_captured_precise_snapshot() {
 }
 
 #[wasm_bindgen_test]
+async fn sharing_during_relaxation_keeps_the_run_and_its_snapshot() {
+    let _gpu = NoWebGpu::install();
+    let api = ShareApi::install(false);
+    let clipboard = Clipboard::install(false);
+    let (handle, root, physics) = mount_at(&format!("s={}", share::encode(&cramped()))).await;
+    submit_button(&root, "Settle & measure").click();
+    for _ in 0..50 {
+        if physics.params().band_tension == 20.0 {
+            break;
+        }
+        sleep(20).await;
+    }
+    assert_eq!(physics.params().band_tension, 20.0);
+    let snapshot = physics.arrangement();
+    submit_button(&root, "Share").click();
+    sleep(30).await;
+    wait_share(&root).await;
+    let body = api.requests.borrow()[0].clone();
+    assert_eq!(share::decode(&body.code, body.n).unwrap(), snapshot);
+    assert_eq!(clipboard.values.borrow().len(), 1);
+    assert_eq!(
+        physics.params().band_tension,
+        20.0,
+        "sharing leaves the relax in control"
+    );
+    assert!(!physics.paused());
+    assert!(text(&root, ".pg-status").starts_with("Relaxing the box"));
+    handle.destroy();
+    root.remove();
+}
+
+#[wasm_bindgen_test]
 async fn share_copy_failure_offers_selectable_url_and_fresh_gesture_retry() {
     let _gpu = NoWebGpu::install();
     let api = ShareApi::install(false);
