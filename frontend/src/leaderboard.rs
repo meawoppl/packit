@@ -1,4 +1,5 @@
 use crate::api;
+use crate::benchmark::Benchmark;
 use crate::Route;
 use shared::{Arrangement, KnownRecord, ScoreDetail, ScoreEntry};
 use std::cell::Cell;
@@ -203,14 +204,26 @@ pub struct ScorePageProps {
 #[function_component(ScorePage)]
 pub fn score_page(props: &ScorePageProps) -> Html {
     let detail = use_fetch(props.id, api::get_score);
+    let records = use_fetch((), |_| api::known_records());
     if let Some(h) = loading_or_error(&detail) {
         return h;
     }
     let ScoreDetail { entry, arrangement } = detail.as_ref().and_then(|r| r.as_ref().ok()).unwrap();
+    let known = records
+        .as_ref()
+        .and_then(|r| r.as_ref().ok())
+        .and_then(|r| r.iter().find(|k| k.n == entry.n));
     html! {
         <div class="score-page">
             <h1>{ format!("{} squares by {}", entry.n, entry.player) }</h1>
             <p>{ format!("Side {} · rank #{}", fmt_side(entry.side), entry.rank) }</p>
+            // Stored scores passed server-side validation.
+            <Benchmark
+                side={entry.side}
+                reference_side={known.map(|k| k.side)}
+                proven={known.is_some_and(|k| k.proven_optimal)}
+                validated=true />
+
             <ArrangementSvg arrangement={arrangement.clone()} />
             <p>
                 <Link<Route> to={Route::LeaderboardN { n: entry.n }}>{ "Back to leaderboard" }</Link<Route>>
