@@ -1,12 +1,15 @@
 use crate::api;
 use crate::Route;
 use shared::{Arrangement, KnownRecord, ScoreDetail, ScoreEntry};
+use std::cell::Cell;
+use std::rc::Rc;
 use uuid::Uuid;
 use wasm_bindgen_futures::spawn_local;
 use yew::prelude::*;
 use yew_router::prelude::*;
 
-/// Fetch once per `deps` change and hold `None` until loaded.
+/// Fetch once per `deps` change and hold `None` until loaded. A response that
+/// arrives after `deps` changed (or the component unmounted) is dropped.
 #[hook]
 fn use_fetch<T, D, F, Fut>(deps: D, fetch: F) -> UseStateHandle<Option<Result<T, String>>>
 where
@@ -20,8 +23,18 @@ where
         let state = state.clone();
         use_effect_with(deps, move |deps| {
             state.set(None);
+            let live = Rc::new(Cell::new(true));
             let fut = fetch(deps.clone());
-            spawn_local(async move { state.set(Some(fut.await)) });
+            {
+                let live = live.clone();
+                spawn_local(async move {
+                    let result = fut.await;
+                    if live.get() {
+                        state.set(Some(result));
+                    }
+                });
+            }
+            move || live.set(false)
         });
     }
     state
@@ -50,14 +63,11 @@ pub fn leaderboard() -> Html {
     let records = use_fetch((), |_| api::known_records());
     let leaders = use_fetch((), |_| api::list_scores(None, Some(shared::MAX_N)));
 
-    if let Some(h) = loading_or_error(&records) {
+    if let Some(h) = loading_or_error(&records).or_else(|| loading_or_error(&leaders)) {
         return h;
     }
     let records = records.as_ref().and_then(|r| r.as_ref().ok()).unwrap();
-    let leaders: &[ScoreEntry] = match leaders.as_ref() {
-        Some(Ok(l)) => l,
-        _ => &[],
-    };
+    let leaders: &[ScoreEntry] = leaders.as_ref().and_then(|r| r.as_ref().ok()).unwrap();
 
     html! {
         <div class="leaderboard">
