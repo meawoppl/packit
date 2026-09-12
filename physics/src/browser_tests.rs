@@ -266,3 +266,17 @@ async fn glue_pairs_match_cpu_in_both_orders() {
     }
     gpu.dispose();
 }
+
+#[wasm_bindgen_test(async)]
+async fn redundant_corner_unions_settle_on_gpu() {
+    let p = Physics::new(4, 5.0);
+    p.init_gpu().await;
+    assert_eq!(p.mode(), Backend::Gpu);
+    tests::dense_corner_cluster(&p);
+    for _ in 0..400 {
+        p.step(6).await;
+    }
+    assert_eq!(p.mode(), Backend::Gpu);
+    assert!(p.motion() < 0.008, "motion={}", p.motion());
+    p.dispose();
+}

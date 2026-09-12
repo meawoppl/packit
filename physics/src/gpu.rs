@@ -153,11 +153,23 @@ impl Gpu {
             return None;
         }
         let (mouse, rotation, glues, band_velocity) = controls;
+        let mut degrees = vec![0u32; initial.len()];
+        for g in glues {
+            for f in [g.a, g.b] {
+                if let Some(i) = f.square() {
+                    degrees[i] += 1;
+                }
+            }
+        }
         let encode = |f: Feature| -> [u32; 4] {
             match f {
-                Feature::Edge { square, edge } => [0, square as u32, edge as u32, 0],
-                Feature::Corner { square, corner } => [1, square as u32, corner as u32, 0],
-                Feature::Midpoint { square, edge } => [2, square as u32, edge as u32, 0],
+                Feature::Edge { square, edge } => [0, square as u32, edge as u32, degrees[square]],
+                Feature::Corner { square, corner } => {
+                    [1, square as u32, corner as u32, degrees[square]]
+                }
+                Feature::Midpoint { square, edge } => {
+                    [2, square as u32, edge as u32, degrees[square]]
+                }
                 Feature::Wall(w) => [3, u32::MAX, w as u32, 0],
             }
         };

@@ -1,7 +1,7 @@
 # packit
 
 An interactive square packing game. Players shove `n` unit squares around a
-playful physics sandbox (gravity, self-attraction, mouse pokes) to fit them
+playful physics sandbox (self-attraction, mouse pokes) to fit them
 into the smallest square container they can. When the scene settles, a solver
 tightens the arrangement and compares it with the best known results from the
 literature. Good packings go on the leaderboard.

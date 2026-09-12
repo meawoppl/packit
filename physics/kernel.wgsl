@@ -115,7 +115,8 @@ fn glue_force(g:GlueInput,i:u32)->vec3<f32>{
  let speed=glue_velocity(b,pb)-glue_velocity(a,pa);
  var force=(pb-pa)*params.b.z+speed*18.0;
  if(sliding){force=normal*dot(force,normal);}
- force*=min(1.0,80.0/max(length(force),0.0001));
+ let weight=1.0/f32(max(1u,max(g.a.w,g.b.w)));
+ force*=min(1.0,80.0/max(length(force),0.0001))*weight;couple*=weight;
  if(a.owner==i){return vec3<f32>(force,6.0*(cross(pa-input[i].p.xy,force)+couple));}
  return vec3<f32>(-force,6.0*(cross(pb-input[i].p.xy,-force)-couple));
 }
