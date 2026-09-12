@@ -345,17 +345,6 @@ impl Physics {
             remaining: 0.5,
         };
     }
-    pub fn rotate(&self, i: usize, dtheta: f32) {
-        if !dtheta.is_finite() {
-            return;
-        }
-        let mut s = self.state.borrow_mut();
-        if let Some(b) = s.bodies.get_mut(i) {
-            b.theta += dtheta;
-            s.contact_forces.fill([0.0; 2]);
-            s.revision += 1;
-        }
-    }
     pub fn nudge(&self, i: usize, dx: f32, dy: f32) {
         if !dx.is_finite() || !dy.is_finite() {
             return;
