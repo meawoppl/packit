@@ -5,7 +5,6 @@ mod browser_tests;
 mod canvas;
 mod files;
 mod glue;
-mod share;
 mod tap;
 
 use crate::anneal::{Anneal, Command, Schedule};
@@ -15,7 +14,7 @@ use canvas::Scene;
 use gloo_events::{EventListener, EventListenerOptions};
 use gloo_render::{request_animation_frame, AnimationFrame};
 use physics::{Backend, Physics};
-use shared::{Arrangement, KnownRecord, ScoreEntry, SubmitScore, MAX_N};
+use shared::{share, Arrangement, KnownRecord, ScoreEntry, SubmitScore, MAX_N};
 use solver::SolveReport;
 use std::cell::Cell;
 use std::rc::Rc;

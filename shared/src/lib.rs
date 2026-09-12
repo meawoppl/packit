@@ -3,6 +3,7 @@ use uuid::Uuid;
 use ws_bridge::WsEndpoint;
 
 pub mod geometry;
+pub mod share;
 
 // ---------------------------------------------------------------------------
 // Packing model — the coordinate conventions every crate shares
