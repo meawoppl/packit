@@ -268,8 +268,18 @@ async fn size_slider_animates_pressure_and_wakes_a_paused_scene() {
     assert_eq!(text(&root, "label[for=pg-size] output"), "1.800");
     assert_eq!(physics.params().band_tension, 30.0);
     assert!(physics.side() > start - 0.2, "no instant resize");
-    sleep(650).await;
-    assert!(physics.side() < start - 0.05, "pressure shrinks the band");
+    // Allow slow/headless animation scheduling while requiring real movement.
+    for _ in 0..60 {
+        if physics.side() < start - 0.05 && physics.bodies()[1].x < right_square - 0.02 {
+            break;
+        }
+        sleep(50).await;
+    }
+    assert!(
+        physics.side() < start - 0.05,
+        "pressure shrinks the band: {}",
+        physics.side()
+    );
     assert!(
         physics.bodies()[1].x < right_square - 0.02,
         "the band pushes squares"
@@ -293,8 +303,17 @@ async fn size_slider_animates_pressure_and_wakes_a_paused_scene() {
         "preserve chosen pressure"
     );
     assert!(physics.side() < before + 0.2, "expansion also animates");
-    sleep(650).await;
-    assert!(physics.side() > before + 0.05);
+    for _ in 0..60 {
+        if physics.side() > before + 0.05 {
+            break;
+        }
+        sleep(50).await;
+    }
+    assert!(
+        physics.side() > before + 0.05,
+        "pressure expands the band: {}",
+        physics.side()
+    );
     handle.destroy();
     root.remove();
 }
