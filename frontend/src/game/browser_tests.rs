@@ -697,3 +697,54 @@ async fn manual_measure_writes_the_solution_into_the_url() {
     handle.destroy();
     root.remove();
 }
+
+fn turn_button(root: &Element, label: &str) -> HtmlElement {
+    root.query_selector(&format!(".pg-turn button[aria-label='{label}']"))
+        .unwrap()
+        .unwrap_or_else(|| panic!("{label} button rendered"))
+        .dyn_into()
+        .unwrap()
+}
+
+#[wasm_bindgen_test]
+async fn turn_buttons_turn_the_selected_square() {
+    let _gpu = NoWebGpu::install();
+    let (handle, root, physics) = mount().await;
+    // Nothing selected yet: a turn tap asks for a square first.
+    turn_button(&root, "Turn left").click();
+    sleep(30).await;
+    assert!(text(&root, ".pg-status").starts_with("Tap a square first"));
+
+    let canvas: HtmlCanvasElement = root
+        .query_selector("canvas")
+        .unwrap()
+        .unwrap()
+        .dyn_into()
+        .unwrap();
+    let b = physics.bodies()[0];
+    let at = (b.x as f64, b.y as f64);
+    pointer(&canvas, "pointerdown", at, physics.side());
+    pointer(&canvas, "pointerup", at, physics.side());
+    sleep(30).await;
+    force_button(&root, "Pause").click();
+    sleep(30).await;
+    assert!(physics.paused());
+    let start = physics.bodies()[0].theta;
+    turn_button(&root, "Turn left").click();
+    sleep(30).await;
+    assert!(!physics.paused(), "turning wakes the scene");
+    for _ in 0..60 {
+        if physics.bodies()[0].theta > start + 0.03 {
+            break;
+        }
+        sleep(30).await;
+    }
+    assert!(
+        physics.bodies()[0].theta > start + 0.03,
+        "turn left is counterclockwise: {} -> {}",
+        start,
+        physics.bodies()[0].theta
+    );
+    handle.destroy();
+    root.remove();
+}

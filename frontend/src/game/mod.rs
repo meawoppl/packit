@@ -40,6 +40,8 @@ const MAX_SUBSTEPS: u32 = 6;
 const SETTLE_FRAMES: u32 = 150;
 const NUDGE: f32 = 0.025;
 const ROTATE_STEP: f32 = 0.04;
+/// Turn per tap of the on-screen turn buttons (touch has no wheel or keys).
+const TOUCH_TURN: f32 = 0.12;
 /// How far the effective size target may lead the actual container at full
 /// band tension (100); lower tension shortens the reach proportionally.
 const MAX_SCRUB: f64 = 1.0;
@@ -65,6 +67,8 @@ pub enum Msg {
     PointerMove(PointerEvent),
     PointerUp,
     Wheel(usize, f32),
+    /// On-screen turn buttons: turn the selected square by this many radians.
+    Turn(f32),
     Key(KeyboardEvent),
     SetCount(String),
     TargetSide(f64),
@@ -414,6 +418,19 @@ impl Component for Game {
                 self.push_mouse();
                 false
             }
+            Msg::Turn(delta) => {
+                let Some(i) = self.selected else {
+                    self.set_status("Tap a square first, then turn it.", false);
+                    return true;
+                };
+                if self.busy {
+                    return false;
+                }
+                self.stop_anneal();
+                self.physics.turn(i, delta);
+                self.set_pause(false);
+                true
+            }
             Msg::Wheel(i, sign) => {
                 if self.busy {
                     return false;
@@ -736,7 +753,12 @@ impl Component for Game {
                                 onkeydown={link.callback(Msg::Key)} />
                             <div class="pg-board-footer">
                                 <span class="pg-mode">{ &r.mode }</span>
-                                <span>{ "drag · wheel to rotate · shift-drag to spin" }</span>
+                                <span class="pg-turn">
+                                    <button aria-label="Turn left" onclick={link.callback(|_| Msg::Turn(TOUCH_TURN))}>{ "⟲" }</button>
+                                    <button aria-label="Turn right" onclick={link.callback(|_| Msg::Turn(-TOUCH_TURN))}>{ "⟳" }</button>
+                                </span>
+                                <span class="pg-hint-mouse">{ "drag · wheel to rotate · shift-drag to spin" }</span>
+                                <span class="pg-hint-touch">{ "drag to move · tap a square, then ⟲ ⟳ to turn" }</span>
                             </div>
                         </div>
                         <p class="pg-help">{ "Force arrows: blue = net contact and edge pull · gold = mouse spring. Dashed band = target size." }</p>
