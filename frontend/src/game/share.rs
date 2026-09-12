@@ -42,8 +42,11 @@ pub fn decode(hex: &str, n: u32) -> Result<Arrangement, String> {
         .as_bytes()
         .chunks_exact(2)
         .map(|pair| {
-            std::str::from_utf8(pair)
-                .ok()
+            // `from_str_radix` alone would accept a leading '+' ("+1").
+            pair.iter()
+                .all(u8::is_ascii_hexdigit)
+                .then(|| std::str::from_utf8(pair).ok())
+                .flatten()
                 .and_then(|s| u8::from_str_radix(s, 16).ok())
                 .ok_or_else(|| "This share link is not valid hex".to_string())
         })
@@ -124,6 +127,8 @@ mod tests {
     fn rejects_bad_hex_and_out_of_range_values() {
         let hex = encode(&five());
         assert!(decode(&hex.replacen('0', "g", 1), 5).is_err());
+        // Same length, but "+1" in place of the version byte "01".
+        assert!(decode(&format!("+1{}", &hex[2..]), 5).is_err());
         assert!(decode(&hex.replacen('0', "é", 1), 5).is_err());
         assert!(decode("", 1).is_err());
         assert!(

@@ -168,9 +168,10 @@ fn focus_without_scroll(canvas: &HtmlCanvasElement) {
     }
 }
 
-/// `navigator.clipboard.writeText(text)`. The pinned web-sys has no
-/// `Clipboard` binding, so the call goes through `Reflect`; when the API is
-/// unavailable (e.g. an insecure context) the returned promise is rejected.
+/// `navigator.clipboard.writeText(text)` via `Reflect`: `cargo add` rejects
+/// web-sys's `Clipboard` feature in this workspace, and the lookup also
+/// covers the API being absent at runtime (e.g. an insecure context), in
+/// which case the returned promise is rejected.
 fn write_clipboard(window: &web_sys::Window, text: &str) -> js_sys::Promise {
     let write = || -> Option<js_sys::Promise> {
         let navigator = js_sys::Reflect::get(window, &"navigator".into()).ok()?;
