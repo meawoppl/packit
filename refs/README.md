@@ -77,11 +77,15 @@ above for the canonical versions.
 `markdown/*.md` were machine-converted from the PDFs with
 [pymupdf4llm](https://pypi.org/project/pymupdf4llm/) for searching and quoting.
 Each starts with its source and license. Formulas, figures, and tables are
-often garbled, so check the PDF before relying on any statement. To regenerate:
+often garbled, so check the PDF before relying on any statement. To regenerate
+one, keep its existing `> **Source:** ... > **License:** ...` header block and
+replace everything below it with the output of:
 
 ```sh
 uv run --with pymupdf4llm python -c "import pymupdf4llm,sys; print(pymupdf4llm.to_markdown(sys.argv[1]))" downloads/<id>.pdf
 ```
+
+The command emits only the converted body, not the header.
 
 ## Solver interpretation
 
