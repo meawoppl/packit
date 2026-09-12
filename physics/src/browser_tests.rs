@@ -17,6 +17,7 @@ async fn gpu_matches_cpu_and_keeps_direct_edits() {
         p.set_pose(1, 2.2, 1.0, -0.1);
         p.set_pose(2, 1.1, 2.8, 0.1);
         p.set_pose(3, 2.5, 2.8, -0.1);
+        p.turn(0, 0.04);
     }
     gpu.init_gpu().await;
     assert_eq!(gpu.mode(), Backend::Gpu, "test requires a WebGPU adapter");
@@ -52,6 +53,9 @@ async fn gpu_matches_cpu_and_keeps_direct_edits() {
     ));
     gpu.set_pose(0, 3.0, 3.0, 0.0);
     gpu.set_mouse(2.0, 2.0, Some(1), true);
+    let revision = gpu.state.borrow().revision;
+    gpu.turn(1, 0.04);
+    assert_eq!(gpu.state.borrow().revision, revision);
     gpu.step(1).await; // A concurrent step is safely ignored.
     pending.await;
     assert_eq!(gpu.bodies()[0].x, 3.0);
@@ -181,4 +185,36 @@ async fn gpu_torque_clamp_and_resting_grids() {
         );
         p.dispose();
     }
+}
+
+#[wasm_bindgen_test(async)]
+async fn gpu_turn_pushes_neighbors_and_resists_a_wedge() {
+    let p = Physics::new(2, 4.0);
+    p.set_pose(0, 1.5, 2.0, 0.0);
+    p.set_pose(1, 2.51, 2.0, 0.0);
+    p.init_gpu().await;
+    assert_eq!(p.mode(), Backend::Gpu);
+    let revision = p.state.borrow().revision;
+    p.turn(0, 0.35);
+    assert_eq!(p.bodies()[0].theta, 0.0);
+    for _ in 0..10 {
+        p.step(6).await;
+    }
+    assert!(p.bodies()[1].x > 2.53, "{:?}", p.bodies());
+    assert_eq!(p.state.borrow().revision, revision);
+    p.dispose();
+    let wedged = Physics::new(4, 2.0);
+    wedged.init_gpu().await;
+    assert_eq!(wedged.mode(), Backend::Gpu);
+    for _ in 0..20 {
+        wedged.turn(0, 10.0);
+        wedged.step(6).await;
+    }
+    assert!(
+        wedged.bodies()[0].theta.abs() < 0.2,
+        "{:?}",
+        wedged.bodies()
+    );
+    assert_eq!(wedged.state.borrow().revision, 1);
+    wedged.dispose();
 }

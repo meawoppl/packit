@@ -326,3 +326,44 @@ fn contact_vectors_follow_pushes_and_clear_after_edits() {
     p.reset();
     assert!(p.contact_forces().iter().all(|f| *f == [0.0; 2]));
 }
+
+#[test]
+fn turn_uses_contact_physics_and_does_not_edit_the_pose() {
+    let free = Physics::new(1, 4.0);
+    free.set_pose(0, 1.5, 2.0, 0.0);
+    let crowded = Physics::new(2, 4.0);
+    crowded.set_pose(0, 1.5, 2.0, 0.0);
+    crowded.set_pose(1, 2.51, 2.0, 0.0);
+    let revision = crowded.state.borrow().revision;
+    for p in [&free, &crowded] {
+        p.turn(0, 0.35);
+    }
+    assert_eq!(crowded.bodies()[0].theta, 0.0);
+    advance(&free, 60);
+    advance(&crowded, 60);
+    assert!(
+        crowded.bodies()[1].x > 2.53,
+        "neighbor pushed: {:?}",
+        crowded.bodies()
+    );
+    assert!(
+        crowded.bodies()[0].theta < free.bodies()[0].theta,
+        "contact resists rotation"
+    );
+    assert_eq!(crowded.state.borrow().revision, revision);
+    let wedged = Physics::new(4, 2.0);
+    for _ in 0..120 {
+        wedged.turn(0, 10.0);
+        advance(&wedged, 1);
+    }
+    assert!(
+        wedged.bodies()[0].theta.abs() < 0.2,
+        "wedged: {:?}",
+        wedged.bodies()
+    );
+    assert_eq!(wedged.state.borrow().revision, 1);
+    wedged.set_paused(true);
+    assert_eq!(wedged.state.borrow().rotation.remaining, 0.0);
+    crowded.reset();
+    assert_eq!(crowded.state.borrow().rotation.remaining, 0.0);
+}

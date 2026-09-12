@@ -374,3 +374,82 @@ async fn size_scrub_reach_follows_band_pressure() {
     handle.destroy();
     root.remove();
 }
+
+#[wasm_bindgen_test]
+async fn wheel_and_keys_wake_physics_and_turn_without_teleporting() {
+    let _gpu = NoWebGpu::install();
+    let (handle, root, physics) = mount().await;
+    let canvas: HtmlCanvasElement = root
+        .query_selector("canvas")
+        .unwrap()
+        .unwrap()
+        .dyn_into()
+        .unwrap();
+    // Select the square, then pause; keyboard turns must wake it again.
+    let b = physics.bodies()[0];
+    pointer(
+        &canvas,
+        "pointerdown",
+        (b.x as f64, b.y as f64),
+        physics.side(),
+    );
+    pointer(
+        &canvas,
+        "pointerup",
+        (b.x as f64, b.y as f64),
+        physics.side(),
+    );
+    sleep(30).await;
+    force_button(&root, "Pause").click();
+    sleep(30).await;
+    let start = physics.bodies()[0].theta;
+    let key = web_sys::KeyboardEventInit::new();
+    key.set_bubbles(true);
+    key.set_key("e");
+    canvas
+        .dispatch_event(&KeyboardEvent::new_with_keyboard_event_init_dict("keydown", &key).unwrap())
+        .unwrap();
+    sleep(30).await;
+    assert!(!physics.paused());
+    assert!(
+        (physics.bodies()[0].theta - start).abs() < 0.02,
+        "key does not teleport"
+    );
+    for _ in 0..60 {
+        if physics.bodies()[0].theta > start + 0.015 {
+            break;
+        }
+        sleep(30).await;
+    }
+    assert!(physics.bodies()[0].theta > start + 0.015);
+    force_button(&root, "Pause").click();
+    sleep(30).await;
+    let b = physics.bodies()[0];
+    let r = canvas.get_bounding_client_rect();
+    let pad = r.width() * 0.045;
+    let scale = (r.width() - 2.0 * pad) / physics.side();
+    let wheel = web_sys::WheelEventInit::new();
+    wheel.set_bubbles(true);
+    wheel.set_cancelable(true);
+    wheel.set_client_x((r.left() + pad + b.x as f64 * scale) as i32);
+    wheel.set_client_y((r.bottom() - pad - b.y as f64 * scale) as i32);
+    wheel.set_delta_y(-1.0);
+    canvas
+        .dispatch_event(&WheelEvent::new_with_event_init_dict("wheel", &wheel).unwrap())
+        .unwrap();
+    sleep(30).await;
+    assert!(!physics.paused());
+    assert!(
+        (physics.bodies()[0].theta - b.theta).abs() < 0.02,
+        "wheel does not teleport"
+    );
+    for _ in 0..60 {
+        if physics.bodies()[0].theta < b.theta - 0.01 {
+            break;
+        }
+        sleep(30).await;
+    }
+    assert!(physics.bodies()[0].theta < b.theta - 0.01);
+    handle.destroy();
+    root.remove();
+}

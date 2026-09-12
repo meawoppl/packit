@@ -333,7 +333,9 @@ impl Component for Game {
                 if let (Some(last), Some(i)) = (self.last_pointer, self.selected) {
                     if canvas.has_pointer_capture(e.pointer_id()) {
                         if self.rotating {
-                            self.physics.rotate(i, ((p.0 - last.0) * 2.0) as f32);
+                            self.stop_anneal();
+                            self.set_pause(false);
+                            self.physics.turn(i, ((p.0 - last.0) * 2.0) as f32);
                         }
                         self.last_pointer = Some(p);
                         self.invalidate();
@@ -345,18 +347,25 @@ impl Component for Game {
             }
             Msg::PointerUp => {
                 self.dragging = false;
+                self.rotating = false;
                 self.last_pointer = None;
                 self.push_mouse();
                 false
             }
             Msg::Wheel(i, sign) => {
+                if self.busy {
+                    return false;
+                }
                 self.stop_anneal();
                 self.selected = Some(i);
-                self.physics.rotate(i, sign * ROTATE_STEP);
-                self.invalidate();
+                self.physics.turn(i, sign * ROTATE_STEP);
+                self.set_pause(false);
                 false
             }
             Msg::Key(e) => {
+                if self.busy {
+                    return false;
+                }
                 if e.code() == "Space" {
                     e.prevent_default();
                     self.stop_anneal();
@@ -371,13 +380,13 @@ impl Component for Game {
                     "ArrowRight" => self.physics.nudge(i, NUDGE, 0.0),
                     "ArrowUp" => self.physics.nudge(i, 0.0, NUDGE),
                     "ArrowDown" => self.physics.nudge(i, 0.0, -NUDGE),
-                    "q" => self.physics.rotate(i, -ROTATE_STEP),
-                    "e" => self.physics.rotate(i, ROTATE_STEP),
+                    "q" => self.physics.turn(i, -ROTATE_STEP),
+                    "e" => self.physics.turn(i, ROTATE_STEP),
                     _ => return false,
                 }
                 e.prevent_default();
                 self.stop_anneal();
-                self.invalidate();
+                self.set_pause(false);
                 false
             }
             Msg::SetCount(value) => {
@@ -671,7 +680,7 @@ impl Component for Game {
                         <p class="pg-help">{ "Force arrows: blue = net contact and edge pull · gold = mouse spring. Dashed band = target size." }</p>
                         <details class="pg-details">
                             <summary>{ "How to play & what the score means" }</summary>
-                            <p>{ "Each square has side length 1. Make the container smaller while keeping every square inside and avoiding overlap. Dragging resumes physics, pushes neighbors, and resists blocked motion. Lower the container target with outer band tension enabled to squeeze the packing. Turn on forces, or use Q/E to rotate a selected square. Arrow keys nudge it. Space pauses." }</p>
+                            <p>{ "Each square has side length 1. Make the container smaller while keeping every square inside and avoiding overlap. Dragging and rotating resume physics, push neighbors, and resist blocked motion. Lower the container target with outer band tension enabled to squeeze the packing. Turn on forces, or use Q/E to rotate a selected square. Arrow keys nudge it. Space pauses." }</p>
                             <p>{ "The simulation has springy contacts. “Settle & measure” pauses the scene and refines its contacts with a numerical polynomial solver. Only an independently validated arrangement can be submitted. A best-known packing is an upper bound, not necessarily a proven optimum. A numerical match is not an exact proof." }</p>
                             <p>
                                 <a href="https://kingbird.myphotos.cc/packing/squares_in_squares.html" target="_blank" rel="noopener">
