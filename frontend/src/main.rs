@@ -1,4 +1,5 @@
 mod api;
+mod benchmark;
 mod game;
 mod leaderboard;
 
