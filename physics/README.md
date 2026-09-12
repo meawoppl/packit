@@ -2,7 +2,7 @@
 
 `Physics` is a cloneable `Rc<RefCell<_>>` simulation handle. It runs immediately
 on the Rust CPU fallback and can asynchronously initialize WebGPU through
-`wgpu`. `kernel.wgsl` computes oriented-square SAT contacts, damping, gravity,
+`wgpu`. `kernel.wgsl` computes oriented-square SAT contacts, damping,
 attraction, and a bounded mouse spring. The CPU implementation uses the same
 model. Both use 120 Hz substeps, capped at six per frame, for up to 100 squares.
 Contacts are stiff penalty springs, intentionally not exact constraints.
@@ -16,6 +16,19 @@ use the same 0.75-unit range and falloff. It acts across gaps; penalty contacts
 handle overlaps. Attraction to moving walls also pulls on the outer band.
 `shake_scaled(seed, strength)` scales a deterministic shake from zero to full
 strength; `shake(seed)` is the full-strength version.
+
+`set_glues(&[Glue])` replaces up to 4096 explicit feature contacts atomically.
+Corners and edge midpoints are points; square edges and walls are segments.
+Point–point links pull to coincidence. Point–segment links slide along the
+segment, pulling toward the endpoint if they slide off. Segment–segment links
+align opposing normals and close their gap while allowing tangential sliding.
+Springs are capped at 80 force units, with an alignment couple capped at 12.
+Forces act at the features and transmit torque; moving walls receive the opposite
+reaction. Invalid indices, same-object links and reversed duplicates are rejected.
+Each link is weighted by the larger incident-body degree, bounding total
+explicit stiffness and damping even for redundant point unions.
+Inputs do not change revisions; reset, load and dispose clear links, pause keeps
+them. GPU glue input uses a separate bounded storage buffer; body stride is unchanged.
 
 Dragging uses a spring capped at 40 force units, so neighbors push back even
 when the pointer is far away. Mouse-target updates never increment the body
@@ -41,7 +54,7 @@ must use the separately refined and validated f64 solver arrangement. The Yew
 play screen (`frontend/src/game/`) drives `Physics` directly.
 
 `contact_forces()` exposes the last substep's net collision and edge-attraction
-force per body, separately from body state. GPU output uses the two spare f32
+and glue force per body, separately from body state. GPU output uses the two spare f32
 slots of the existing 32-byte body stride; telemetry never participates in pose
 merging and clears after direct edits. `mouse_force()` exposes the current
 capped mouse spring. The canvas uses logarithmically scaled arrows during

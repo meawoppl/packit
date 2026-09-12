@@ -5,11 +5,12 @@ fn advance(p: &Physics, n: usize) {
     }
 }
 #[test]
-fn gravity_and_stiff_contacts_stay_bounded() {
+fn pressure_and_stiff_contacts_stay_bounded() {
     let p = Physics::new(16, 4.5);
     p.set_params(Params {
-        gravity: true,
         attraction: true,
+        band_tension: 40.0,
+        target_side: 4.0,
         stiffness: 1600.0,
         damping: 0.3,
         ..p.params()
@@ -97,7 +98,7 @@ fn pause_dispose_and_step_budget() {
     };
     let p = Physics::new(4, 3.0);
     p.set_params(Params {
-        gravity: true,
+        attraction: true,
         ..p.params()
     });
     p.set_paused(true);
@@ -253,12 +254,13 @@ fn off_center_bumps_and_wall_corners_impart_torque() {
     }
 }
 #[test]
-fn gravity_grids_settle_with_and_without_edge_attraction() {
+fn pressure_grids_settle_with_and_without_edge_attraction() {
     for edge_attraction in [0.0, 30.0] {
         let p = Physics::new(9, 3.5);
         p.set_params(Params {
-            gravity: true,
             edge_attraction,
+            band_tension: 30.0,
+            target_side: 3.0,
             ..p.params()
         });
         advance(&p, 960);
@@ -290,7 +292,7 @@ fn anneal_kicks_scale_deterministically() {
 
 #[test]
 fn wall_equilibrium_depth_is_independent_of_orientation() {
-    // Hold orientation fixed and solve vertical equilibrium under gravity.
+    // Hold orientation fixed and solve vertical equilibrium under a constant external pressure.
     for theta in [0.0_f32, 0.001, 0.2, std::f32::consts::FRAC_PI_4] {
         let mut b = Body {
             theta,
@@ -366,4 +368,72 @@ fn turn_uses_contact_physics_and_does_not_edit_the_pose() {
     assert_eq!(wedged.state.borrow().rotation.remaining, 0.0);
     crowded.reset();
     assert_eq!(crowded.state.borrow().rotation.remaining, 0.0);
+}
+
+pub(super) fn dense_corner_cluster(p: &Physics) {
+    let features = std::array::from_fn::<_, 4, _>(|i| Feature::Corner {
+        square: i,
+        corner: 3 - i as u8,
+    });
+    let mut links = Vec::new();
+    for i in 0..4 {
+        p.set_pose(i, 1.5 + (i % 2) as f32, 1.5 + (i / 2) as f32, 0.0);
+        for j in i + 1..4 {
+            links.push(Glue {
+                a: features[i],
+                b: features[j],
+            });
+        }
+    }
+    p.set_glues(&links).unwrap();
+    p.shake(123);
+}
+#[test]
+fn redundant_corner_unions_settle() {
+    let p = Physics::new(4, 5.0);
+    dense_corner_cluster(&p);
+    advance(&p, 2400);
+    assert!(
+        p.motion() < 0.008,
+        "motion={}, bodies={:?}",
+        p.motion(),
+        p.bodies()
+    );
+}
+#[test]
+fn dense_edge_midpoint_unions_settle() {
+    let p = Physics::new(9, 5.0);
+    let mut links = Vec::new();
+    for i in 0..9 {
+        p.set_pose(i, 1.0 + (i % 3) as f32, 1.0 + (i / 3) as f32, 0.0);
+        for (j, ea, eb) in [(i + 1, 0, 2), (i + 3, 1, 3)] {
+            if j >= 9 || (ea == 0 && i % 3 == 2) {
+                continue;
+            }
+            links.push(Glue {
+                a: Feature::Edge {
+                    square: i,
+                    edge: ea,
+                },
+                b: Feature::Edge {
+                    square: j,
+                    edge: eb,
+                },
+            });
+            links.push(Glue {
+                a: Feature::Midpoint {
+                    square: i,
+                    edge: ea,
+                },
+                b: Feature::Midpoint {
+                    square: j,
+                    edge: eb,
+                },
+            });
+        }
+    }
+    p.set_glues(&links).unwrap();
+    p.shake(123);
+    advance(&p, 2400);
+    assert!(p.motion() < 0.018, "motion={}", p.motion());
 }

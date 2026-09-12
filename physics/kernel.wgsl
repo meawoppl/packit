@@ -1,5 +1,5 @@
 struct Body { p: vec4<f32>, v: vec4<f32> }
-struct Params { a: vec4<f32>, b: vec4<f32>, mouse: vec4<f32>, rotation: vec4<f32> }
+struct Params { a: vec4<f32>, b: vec4<f32>, mouse: vec4<f32>, rotation: vec4<f32>, glue: vec4<f32> }
 @group(0) @binding(0) var<storage, read> input: array<Body>;
 @group(0) @binding(1) var<storage, read_write> output: array<Body>;
 @group(0) @binding(2) var<uniform> params: Params;
@@ -68,11 +68,64 @@ fn wall_contact(me:Body,n:vec2<f32>,depth:f32)->vec3<f32>{
   result+=vec3<f32>(n*strength,spin*strength*6.0);
  }}return result;
 }
+struct GlueInput { a:vec4<u32>, b:vec4<u32> }
+@group(0) @binding(3) var<storage,read> glues:array<GlueInput>;
+struct GlueWorld { p:vec2<f32>, n:vec2<f32>, half:f32, owner:u32 }
+fn tangent(n:vec2<f32>)->vec2<f32>{return vec2<f32>(-n.y,n.x);}
+fn glue_world(f:vec4<u32>)->GlueWorld {
+ let side=params.a.z;
+ if(f.x==3u){
+  let positions=array<vec2<f32>,4>(vec2<f32>(0.0,side/2.0),vec2<f32>(side/2.0,0.0),vec2<f32>(side,side/2.0),vec2<f32>(side/2.0,side));
+  let ns=array<vec2<f32>,4>(vec2<f32>(1.0,0.0),vec2<f32>(0.0,1.0),vec2<f32>(-1.0,0.0),vec2<f32>(0.0,-1.0));
+  return GlueWorld(positions[f.z],ns[f.z],side/2.0,0xffffffffu);
+ }
+ let body=input[f.y];let ns=normals(body.p.z);
+ if(f.x==0u){return GlueWorld(body.p.xy+0.5*ns[f.z],ns[f.z],0.5,f.y);}
+ if(f.x==2u){return GlueWorld(body.p.xy+0.5*ns[f.z],vec2<f32>(0.0),0.0,f.y);}
+ let offset=select(-0.5,0.5,(f.z&1u)!=0u)*ns[0]+select(-0.5,0.5,(f.z&2u)!=0u)*ns[1];
+ return GlueWorld(body.p.xy+offset,vec2<f32>(0.0),0.0,f.y);
+}
+fn glue_velocity(w:GlueWorld,p:vec2<f32>)->vec2<f32>{
+ if(w.owner!=0xffffffffu){let b=input[w.owner];return b.v.xy+b.v.z*tangent(p-b.p.xy);}
+ return params.glue.y*select(vec2<f32>(0.0),vec2<f32>(1.0),p>=vec2<f32>(params.a.z-1e-6));
+}
+fn glue_omega(w:GlueWorld)->f32{if(w.owner!=0xffffffffu){return input[w.owner].v.z;}return 0.0;}
+fn glue_point(w:GlueWorld,t:vec2<f32>,q:f32)->vec2<f32>{
+ let d=dot(tangent(w.n),t);var offset=0.0;
+ if(abs(d)>0.1){offset=clamp((q-dot(w.p,t))/d,-w.half,w.half);}
+ return w.p+tangent(w.n)*offset;
+}
+fn glue_force(g:GlueInput,i:u32)->vec3<f32>{
+ if(g.a.y!=i && g.b.y!=i){return vec3<f32>(0.0);}
+ var a=glue_world(g.a);var b=glue_world(g.b);
+ if(a.half>0.0 && b.half==0.0){let temp=a;a=b;b=temp;}
+ var pa=a.p;var pb=b.p;var normal=vec2<f32>(0.0);var sliding=false;var couple=0.0;
+ if(a.half>0.0 && b.half>0.0){
+  normal=a.n-b.n;let len=length(normal);if(len>0.001){normal/=len;}else{normal=a.n;}
+  let t=tangent(normal);let ha=a.half*abs(dot(tangent(a.n),t));let hb=b.half*abs(dot(tangent(b.n),t));
+  let lo=max(dot(a.p,t)-ha,dot(b.p,t)-hb);let hi=min(dot(a.p,t)+ha,dot(b.p,t)+hb);
+  let q=(lo+hi)*0.5;pa=glue_point(a,t,q);pb=glue_point(b,t,q);sliding=lo<=hi;
+  let sine=cross(a.n,-b.n);let cosine=dot(a.n,-b.n);var angle=atan2(sine,cosine);
+  if(abs(sine)<1e-6 && cosine<0.0){angle=3.141592653589793;}
+  couple=clamp(params.b.z/24.0*angle+4.0*(glue_omega(b)-glue_omega(a)),-12.0,12.0);
+ }else if(b.half>0.0){
+  normal=b.n;let t=tangent(b.n);let q=dot(a.p-b.p,t);
+  pb=b.p+t*clamp(q,-b.half,b.half);sliding=abs(q)<=b.half;
+ }
+ let speed=glue_velocity(b,pb)-glue_velocity(a,pa);
+ var force=(pb-pa)*params.b.z+speed*18.0;
+ if(sliding){force=normal*dot(force,normal);}
+ let weight=1.0/f32(max(1u,max(g.a.w,g.b.w)));
+ force*=min(1.0,80.0/max(length(force),0.0001))*weight;couple*=weight;
+ if(a.owner==i){return vec3<f32>(force,6.0*(cross(pa-input[i].p.xy,force)+couple));}
+ return vec3<f32>(-force,6.0*(cross(pb-input[i].p.xy,-force)-couple));
+}
+
 @compute @workgroup_size(64)
 fn step(@builtin(global_invocation_id) id:vec3<u32>) {
  let i=id.x; let count=u32(params.a.x); if(i>=count){return;}
  let dt=params.a.y; let side=params.a.z;
- let me=input[i]; var force=vec2<f32>(0.0,-params.a.w*9.0); var torque=0.0; var contact=vec2<f32>(0.0);
+ let me=input[i]; var force=vec2<f32>(0.0); var torque=0.0; var contact=vec2<f32>(0.0);
  for(var j=0u;j<count;j++) {
   if(i==j){continue;} let other=input[j]; let delta=me.p.xy-other.p.xy;
   let d2=dot(delta,delta)+0.15;
@@ -97,6 +150,7 @@ fn step(@builtin(global_invocation_id) id:vec3<u32>) {
  let h=radius(me.p.z,vec2<f32>(1.0,0.0));
  let walls=wall_contact(me,vec2<f32>(1.0,0.0),h-me.p.x)+wall_contact(me,vec2<f32>(0.0,1.0),h-me.p.y)+wall_contact(me,vec2<f32>(-1.0,0.0),me.p.x-side+h)+wall_contact(me,vec2<f32>(0.0,-1.0),me.p.y-side+h);
  let pull=wall_edges(me,side,params.b.w);force+=walls.xy+pull.xy;contact+=walls.xy+pull.xy;torque+=walls.z+pull.z;
+ for(var g=0u;g<u32(params.glue.x);g++){let f=glue_force(glues[g],i);force+=f.xy;contact+=f.xy;torque+=f.z;}
  if(i==u32(params.mouse.z) && params.mouse.w>0.0){
   let delta=params.mouse.xy-me.p.xy;
   let gain=100.0*min(1.0,0.4/max(0.0001,length(delta)));

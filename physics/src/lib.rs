@@ -9,6 +9,8 @@ mod browser_tests;
 mod contacts;
 mod cpu;
 mod edges;
+mod glue;
+pub use glue::{Feature, Glue, MAX_GLUES};
 #[cfg(target_arch = "wasm32")]
 mod gpu;
 #[cfg(test)]
@@ -30,7 +32,6 @@ pub enum Backend {
 }
 #[derive(Clone, Copy, Debug)]
 pub struct Params {
-    pub gravity: bool,
     pub attraction: bool,
     pub edge_attraction: f32,
     pub damping: f32,
@@ -53,6 +54,7 @@ struct Rotation {
 }
 struct State {
     bodies: Vec<Body>,
+    glues: Vec<Glue>,
     contact_forces: Vec<[f32; 2]>,
     side: f64,
     params: Params,
@@ -80,11 +82,11 @@ impl Physics {
         assert!(side.is_finite() && (1.0..=1000.0).contains(&side));
         let physics = Self {
             state: Rc::new(RefCell::new(State {
+                glues: Vec::new(),
                 bodies: vec![Body::default(); n as usize],
                 contact_forces: vec![[0.0; 2]; n as usize],
                 side,
                 params: Params {
-                    gravity: false,
                     attraction: false,
                     edge_attraction: 0.0,
                     damping: 3.0,
@@ -167,19 +169,38 @@ impl Physics {
                         s.mouse,
                         s.rotation,
                         s.revision,
+                        s.glues.clone(),
+                        s.band_velocity,
                     ))
                 } else {
                     s.gpu = None;
                     None
                 }
             };
-            if let Some((gpu, initial, params, side, mouse, rotation, revision)) = snapshot {
+            if let Some((
+                gpu,
+                initial,
+                params,
+                side,
+                mouse,
+                rotation,
+                revision,
+                glues,
+                band_velocity,
+            )) = snapshot
+            {
                 let _guard = BusyGuard {
                     state: Rc::downgrade(&self.state),
                     initializing: false,
                 };
                 let result = gpu
-                    .step(&initial, params, side, (mouse, rotation), steps)
+                    .step(
+                        &initial,
+                        params,
+                        side,
+                        (mouse, rotation, &glues, band_velocity),
+                        steps,
+                    )
                     .await;
                 let mut s = self.state.borrow_mut();
                 if s.disposed {
@@ -269,7 +290,7 @@ impl Physics {
             s.rotation = Rotation::default();
         }
     }
-    /// Net collision and edge forces from the last substep, excluding gravity,
+    /// Net collision and edge forces from the last substep, excluding
     /// center attraction, and the mouse spring. Output-only visualization data.
     pub fn contact_forces(&self) -> Vec<[f32; 2]> {
         self.state.borrow().contact_forces.clone()
@@ -393,6 +414,7 @@ impl Physics {
         s.band_velocity = 0.0;
         s.mouse.down = false;
         s.rotation = Rotation::default();
+        s.glues.clear();
         s.contact_forces.fill([0.0; 2]);
         s.revision += 1;
     }
@@ -433,6 +455,7 @@ impl Physics {
         s.band_velocity = 0.0;
         s.mouse.down = false;
         s.rotation = Rotation::default();
+        s.glues.clear();
         for (b, p) in s.bodies.iter_mut().zip(&a.squares) {
             *b = Body {
                 x: p.cx as f32,
@@ -447,6 +470,7 @@ impl Physics {
     pub fn dispose(&self) {
         let mut s = self.state.borrow_mut();
         s.disposed = true;
+        s.glues.clear();
         s.rotation = Rotation::default();
         #[cfg(target_arch = "wasm32")]
         if let Some(gpu) = s.gpu.take() {
