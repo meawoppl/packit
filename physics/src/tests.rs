@@ -68,3 +68,80 @@ fn clones_share_edits_and_load_clears_momentum() {
     p.set_pose(0, f32::NAN, 1.0, 0.0);
     assert!(p.bodies()[0].x.is_finite());
 }
+
+#[test]
+fn stale_readback_keeps_edits_and_merges_other_motion() {
+    let p = Physics::new(2, 4.0);
+    let initial = p.bodies();
+    let revision = p.state.borrow().revision;
+    let mut computed = initial.clone();
+    computed[0].x += 0.1;
+    computed[0].y += 0.2;
+    computed[1].x += 0.3;
+    computed[0].vx = 1.0;
+    p.nudge(0, 1.0, 0.0);
+    p.state
+        .borrow_mut()
+        .merge_readback(&initial, &computed, revision);
+    let b = p.bodies();
+    assert_eq!(b[0].x, initial[0].x + 1.0);
+    assert_eq!(b[0].y, computed[0].y);
+    assert_eq!(b[0].vx, 1.0);
+    assert_eq!(b[1].x, computed[1].x);
+}
+#[test]
+fn pause_dispose_and_step_budget() {
+    use std::{
+        future::Future,
+        task::{Context, Poll, Waker},
+    };
+    let p = Physics::new(4, 3.0);
+    p.set_params(Params {
+        gravity: true,
+        ..p.params()
+    });
+    p.set_paused(true);
+    let initial = p.bodies();
+    let run = |steps| {
+        let mut future = std::pin::pin!(p.step(steps));
+        assert!(matches!(
+            future
+                .as_mut()
+                .poll(&mut Context::from_waker(Waker::noop())),
+            Poll::Ready(())
+        ));
+    };
+    run(6);
+    assert_eq!(p.bodies(), initial);
+    p.set_paused(false);
+    run(0);
+    assert_eq!(p.bodies(), initial);
+    run(600);
+    let moved = p.bodies();
+    let expected = Physics::new(4, 3.0);
+    expected.set_params(p.params());
+    advance(&expected, 6);
+    assert_eq!(moved, expected.bodies());
+    p.dispose();
+    run(6);
+    assert_eq!(p.bodies(), moved);
+}
+#[test]
+fn rotated_overlap_and_attraction() {
+    let p = Physics::new(2, 5.0);
+    p.set_pose(0, 2.0, 2.0, 0.15);
+    p.set_pose(1, 2.7, 2.0, -0.15);
+    advance(&p, 240);
+    let b = p.bodies();
+    assert!((b[0].x - b[1].x).hypot(b[0].y - b[1].y) > 0.99);
+    let p = Physics::new(2, 8.0);
+    p.set_pose(0, 2.0, 4.0, 0.0);
+    p.set_pose(1, 6.0, 4.0, 0.0);
+    p.set_params(Params {
+        attraction: true,
+        ..p.params()
+    });
+    advance(&p, 120);
+    let b = p.bodies();
+    assert!(b[1].x - b[0].x < 4.0);
+}

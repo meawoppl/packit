@@ -4,7 +4,11 @@ use std::{cell::RefCell, rc::Rc};
 pub const MAX_SQUARES: usize = shared::MAX_N as usize;
 pub const FIXED_STEP: f64 = 1.0 / 120.0;
 pub const GPU_KERNEL: &str = include_str!("../kernel.wgsl");
+#[cfg(all(test, target_arch = "wasm32"))]
+mod browser_tests;
 mod cpu;
+#[cfg(target_arch = "wasm32")]
+mod gpu;
 #[cfg(test)]
 mod tests;
 
@@ -47,6 +51,12 @@ struct State {
     paused: bool,
     disposed: bool,
     revision: u64,
+    #[cfg(target_arch = "wasm32")]
+    gpu: Option<Rc<gpu::Gpu>>,
+    #[cfg(target_arch = "wasm32")]
+    initializing: bool,
+    #[cfg(target_arch = "wasm32")]
+    stepping: bool,
 }
 /// Clones share one simulation. Call `dispose` when the owning UI unmounts.
 #[derive(Clone)]
@@ -74,22 +84,106 @@ impl Physics {
                 paused: false,
                 disposed: false,
                 revision: 0,
+                #[cfg(target_arch = "wasm32")]
+                gpu: None,
+                #[cfg(target_arch = "wasm32")]
+                initializing: false,
+                #[cfg(target_arch = "wasm32")]
+                stepping: false,
             })),
         };
         physics.reset();
         physics
     }
-    // The GPU implementation lands next; CPU is immediately usable.
-    pub async fn init_gpu(&self) {}
+    /// Attempts WebGPU initialization; CPU stays available throughout.
+    pub async fn init_gpu(&self) {
+        #[cfg(target_arch = "wasm32")]
+        {
+            let n = {
+                let mut s = self.state.borrow_mut();
+                if s.disposed || s.initializing || s.gpu.is_some() {
+                    return;
+                }
+                s.initializing = true;
+                s.bodies.len()
+            };
+            let _guard = BusyGuard {
+                state: Rc::downgrade(&self.state),
+                initializing: true,
+            };
+            let gpu = gpu::Gpu::new(n).await;
+            let mut s = self.state.borrow_mut();
+            if !s.disposed {
+                s.gpu = gpu.map(Rc::new);
+            }
+        }
+    }
     pub fn mode(&self) -> Backend {
+        #[cfg(target_arch = "wasm32")]
+        if self
+            .state
+            .borrow()
+            .gpu
+            .as_ref()
+            .is_some_and(|gpu| gpu.alive())
+        {
+            return Backend::Gpu;
+        }
         Backend::Cpu
     }
     pub async fn step(&self, steps: u32) {
+        let steps = steps.min(6);
+        if steps == 0 {
+            return;
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            let snapshot = {
+                let mut s = self.state.borrow_mut();
+                if s.paused || s.disposed || s.stepping {
+                    return;
+                }
+                if let Some(gpu) = s.gpu.clone().filter(|g| g.alive()) {
+                    s.stepping = true;
+                    Some((gpu, s.bodies.clone(), s.params, s.side, s.mouse, s.revision))
+                } else {
+                    s.gpu = None;
+                    None
+                }
+            };
+            if let Some((gpu, initial, params, side, mouse, revision)) = snapshot {
+                let _guard = BusyGuard {
+                    state: Rc::downgrade(&self.state),
+                    initializing: false,
+                };
+                let result = gpu.step(&initial, params, side, mouse, steps).await;
+                let mut s = self.state.borrow_mut();
+                if s.disposed {
+                    return;
+                }
+                if let Some(result) = result {
+                    s.merge_readback(&initial, &result, revision);
+                    if s.revision == revision {
+                        for _ in 0..steps {
+                            s.step_band();
+                        }
+                    }
+                } else {
+                    s.gpu = None;
+                    for _ in 0..steps {
+                        if !s.paused {
+                            s.cpu_step();
+                        }
+                    }
+                }
+                return;
+            }
+        }
         let mut s = self.state.borrow_mut();
         if s.paused || s.disposed {
             return;
         }
-        for _ in 0..steps.min(6) {
+        for _ in 0..steps {
             s.cpu_step();
         }
     }
@@ -267,6 +361,43 @@ impl Physics {
         s.revision += 1;
     }
     pub fn dispose(&self) {
-        self.state.borrow_mut().disposed = true;
+        let mut s = self.state.borrow_mut();
+        s.disposed = true;
+        #[cfg(target_arch = "wasm32")]
+        if let Some(gpu) = s.gpu.take() {
+            gpu.destroy();
+        }
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+struct BusyGuard {
+    state: std::rc::Weak<RefCell<State>>,
+    initializing: bool,
+}
+#[cfg(target_arch = "wasm32")]
+impl Drop for BusyGuard {
+    fn drop(&mut self) {
+        if let Some(state) = self.state.upgrade() {
+            let mut s = state.borrow_mut();
+            if self.initializing {
+                s.initializing = false;
+            } else {
+                s.stepping = false;
+            }
+        }
+    }
+}
+impl State {
+    #[cfg(any(target_arch = "wasm32", test))]
+    fn merge_readback(&mut self, initial: &[Body], computed: &[Body], revision: u64) {
+        if self.revision == revision {
+            self.bodies.copy_from_slice(computed);
+            return;
+        }
+        for ((current, old), new) in self.bodies.iter_mut().zip(initial).zip(computed) {
+            macro_rules! merge {($($field:ident),*)=>{$(if current.$field==old.$field {current.$field=new.$field;})*};}
+            merge!(x, y, theta, vx, vy, omega);
+        }
     }
 }
