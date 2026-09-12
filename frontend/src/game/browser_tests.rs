@@ -906,6 +906,269 @@ async fn squeeze_down_relaxes_between_squeezes_and_stop_keeps_glue() {
     root.remove();
 }
 
+/// Settling a cramped scene relaxes the box first, so the measured packing
+/// is where the squares already are instead of a pop to the solver's result.
+#[wasm_bindgen_test]
+async fn settling_relaxes_the_box_instead_of_popping() {
+    let _gpu = NoWebGpu::install();
+    // Two squares overlapping by 0.2 in a box they need 2.0 to fit.
+    let sq = |cx| shared::Placement {
+        cx,
+        cy: 0.5,
+        theta: 0.0,
+    };
+    let cramped = Arrangement {
+        n: 2,
+        side: 1.8,
+        squares: vec![sq(0.5), sq(1.3)],
+    };
+    let (handle, root, physics) = mount_at(&format!("s={}", share::encode(&cramped))).await;
+    let buttons = root.query_selector_all(".pg-submit button").unwrap();
+    let measure: HtmlElement = (0..buttons.length())
+        .filter_map(|i| buttons.item(i))
+        .filter_map(|b| b.dyn_into::<HtmlElement>().ok())
+        .find(|b| b.text_content().unwrap_or_default() == "Settle & measure")
+        .unwrap();
+    measure.click();
+    sleep(30).await;
+    let status = text(&root, ".pg-status");
+    assert!(status.starts_with("Relaxing the box"), "{status}");
+
+    // The last live frame before the measurement lands. Refine loads its
+    // result and records it in the same message, so a frame sampled with
+    // no report yet is always the relaxed scene.
+    let mut relaxed = physics.arrangement();
+    let mut band_relaxed = false;
+    for _ in 0..600 {
+        if TEST_REPORT.with(|r| r.borrow().is_some()) {
+            break;
+        }
+        band_relaxed |= physics.params().band_tension > 0.0;
+        relaxed = physics.arrangement();
+        sleep(20).await;
+    }
+    let report = TEST_REPORT
+        .with(|r| r.borrow().clone())
+        .expect("the relaxed scene measured valid");
+    assert!(band_relaxed, "the band relaxed before measuring");
+    let left = shared::geometry::worst_violation(&relaxed);
+    assert!(left <= 2e-3, "relaxed until clear, {left} left");
+    let pop = relaxed
+        .squares
+        .iter()
+        .zip(&report.squares)
+        .map(|(a, b)| (a.cx - b.cx).hypot(a.cy - b.cy))
+        .fold(0.0, f64::max);
+    assert!(pop < 0.05, "measuring moved a square by {pop}");
+    assert!(
+        (report.side - relaxed.side).abs() < 0.05,
+        "box {} -> {}",
+        relaxed.side,
+        report.side
+    );
+    assert!(report.side >= 2.0 - 1e-9);
+    assert_eq!(physics.params().band_tension, 0.0, "band released");
+    handle.destroy();
+    root.remove();
+}
+
+/// A jam the band can't relax is reported rather than measured, since
+/// measuring it would pop the squares apart.
+#[wasm_bindgen_test]
+async fn a_glued_jam_that_cannot_relax_is_reported_not_popped() {
+    let _gpu = NoWebGpu::install();
+    let (handle, root, physics) = mount().await;
+    // Both side midpoints of square 1 glued to square 2's: only a full
+    // overlap satisfies the glue, and contacts resist it, so an overlap
+    // stays however far the box relaxes.
+    let glues = vec![
+        Glue {
+            a: Feature::Midpoint { square: 0, edge: 0 },
+            b: Feature::Midpoint { square: 1, edge: 0 },
+        },
+        Glue {
+            a: Feature::Midpoint { square: 0, edge: 2 },
+            b: Feature::Midpoint { square: 1, edge: 2 },
+        },
+    ];
+    physics.set_glues(&glues).unwrap();
+    for _ in 0..100 {
+        if shared::geometry::worst_violation(&physics.arrangement()) > 0.02 {
+            break;
+        }
+        sleep(50).await;
+    }
+    let jammed = shared::geometry::worst_violation(&physics.arrangement());
+    assert!(jammed > 2e-3, "the glue holds an overlap: {jammed}");
+
+    let buttons = root.query_selector_all(".pg-submit button").unwrap();
+    let measure: HtmlElement = (0..buttons.length())
+        .filter_map(|i| buttons.item(i))
+        .filter_map(|b| b.dyn_into::<HtmlElement>().ok())
+        .find(|b| b.text_content().unwrap_or_default() == "Settle & measure")
+        .unwrap();
+    measure.click();
+    for _ in 0..120 {
+        if text(&root, ".pg-status").starts_with("Couldn't relax") {
+            break;
+        }
+        sleep(100).await;
+    }
+    let status = text(&root, ".pg-status");
+    assert!(status.starts_with("Couldn't relax"), "{status}");
+    assert!(
+        TEST_REPORT.with(|r| r.borrow().is_none()),
+        "no measurement loaded over the jam"
+    );
+    assert_eq!(physics.params().band_tension, 0.0, "band released");
+    assert_eq!(physics.glues(), glues, "glue kept");
+    handle.destroy();
+    root.remove();
+}
+
+/// Two squares overlapping by 0.2 in a box they need 2.0 to fit.
+fn cramped() -> Arrangement {
+    let sq = |cx| shared::Placement {
+        cx,
+        cy: 0.5,
+        theta: 0.0,
+    };
+    Arrangement {
+        n: 2,
+        side: 1.8,
+        squares: vec![sq(0.5), sq(1.3)],
+    }
+}
+
+/// Click the button labelled `label` inside `scope`.
+fn click_button(root: &Element, scope: &str, label: &str) {
+    let buttons = root.query_selector_all(&format!("{scope} button")).unwrap();
+    (0..buttons.length())
+        .filter_map(|i| buttons.item(i))
+        .filter_map(|b| b.dyn_into::<HtmlElement>().ok())
+        .find(|b| b.text_content().unwrap_or_default().trim() == label)
+        .unwrap_or_else(|| panic!("{label} button rendered"))
+        .click();
+}
+
+#[wasm_bindgen_test]
+async fn starting_a_run_takes_the_band_from_a_relax() {
+    let _gpu = NoWebGpu::install();
+    let (handle, root, physics) = mount_at(&format!("s={}", share::encode(&cramped()))).await;
+    click_button(&root, ".pg-submit", "Settle & measure");
+    sleep(100).await;
+    let status = text(&root, ".pg-status");
+    assert!(status.starts_with("Relaxing the box"), "{status}");
+
+    force_button(&root, "Anneal").click();
+    sleep(50).await;
+    let status = text(&root, ".pg-status");
+    assert!(status.starts_with("Annealing"), "{status}");
+    for _ in 0..40 {
+        sleep(50).await;
+        assert_eq!(physics.params().band_tension, 30.0, "the run owns the band");
+        assert!(!physics.paused(), "no measurement mid-run");
+    }
+    assert!(TEST_REPORT.with(|r| r.borrow().is_none()));
+    force_button(&root, "Stop").click();
+    sleep(50).await;
+    assert_eq!(physics.params().band_tension, 0.0);
+    handle.destroy();
+    root.remove();
+}
+
+/// A submission waits on its measurement; cancelling the relax before it
+/// drops the submission, so a later settle can't submit another scene.
+#[wasm_bindgen_test]
+async fn cancelling_a_relax_drops_its_pending_submit() {
+    let _gpu = NoWebGpu::install();
+    let (handle, root, physics) = mount_at(&format!("s={}", share::encode(&cramped()))).await;
+    let name: HtmlInputElement = root
+        .query_selector("#pg-player")
+        .unwrap()
+        .unwrap()
+        .dyn_into()
+        .unwrap();
+    name.set_value("relax-test");
+    name.dispatch_event(&Event::new("input").unwrap()).unwrap();
+    sleep(30).await;
+    click_button(&root, ".pg-submit", "Submit packing");
+    sleep(100).await;
+    let status = text(&root, ".pg-status");
+    assert!(status.starts_with("Relaxing the box"), "{status}");
+
+    force_button(&root, "Pause").click();
+    sleep(50).await;
+    assert_eq!(
+        physics.params().band_tension,
+        0.0,
+        "cancel releases the band"
+    );
+
+    click_button(&root, ".pg-submit", "Settle & measure");
+    for _ in 0..600 {
+        if TEST_REPORT.with(|r| r.borrow().is_some()) {
+            break;
+        }
+        sleep(20).await;
+    }
+    assert!(TEST_REPORT.with(|r| r.borrow().is_some()), "measured");
+    // A submission would have come back (saved or failed) by now.
+    sleep(1500).await;
+    let status = text(&root, ".pg-status");
+    assert!(
+        status.starts_with("Ready"),
+        "nothing was submitted: {status}"
+    );
+    handle.destroy();
+    root.remove();
+}
+
+/// Submitting while a relax is already running rides along with it: the
+/// relax measures once clear and then submits.
+#[wasm_bindgen_test]
+async fn submitting_during_a_relax_submits_when_it_measures() {
+    let _gpu = NoWebGpu::install();
+    let (handle, root, _physics) = mount_at(&format!("s={}", share::encode(&cramped()))).await;
+    let name: HtmlInputElement = root
+        .query_selector("#pg-player")
+        .unwrap()
+        .unwrap()
+        .dyn_into()
+        .unwrap();
+    name.set_value("relax-test");
+    name.dispatch_event(&Event::new("input").unwrap()).unwrap();
+    click_button(&root, ".pg-submit", "Settle & measure");
+    sleep(100).await;
+    let status = text(&root, ".pg-status");
+    assert!(status.starts_with("Relaxing the box"), "{status}");
+
+    click_button(&root, ".pg-submit", "Submit packing");
+    sleep(50).await;
+    let status = text(&root, ".pg-status");
+    assert!(
+        status.starts_with("Relaxing the box"),
+        "the relax continues: {status}"
+    );
+    for _ in 0..600 {
+        if TEST_REPORT.with(|r| r.borrow().is_some()) {
+            break;
+        }
+        sleep(20).await;
+    }
+    assert!(TEST_REPORT.with(|r| r.borrow().is_some()), "measured");
+    // There's no score server under test, so the submission comes back as
+    // an error; either way it replaces the "Ready" measurement status.
+    sleep(1500).await;
+    let status = text(&root, ".pg-status");
+    assert!(
+        !status.starts_with("Ready"),
+        "the submission went out: {status}"
+    );
+    handle.destroy();
+    root.remove();
+}
+
 fn history_length() -> u32 {
     web_sys::window()
         .unwrap()

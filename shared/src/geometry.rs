@@ -102,6 +102,18 @@ pub fn protrusion(p: &Placement, side: f64) -> f64 {
         .fold(f64::NEG_INFINITY, f64::max)
 }
 
+/// The worst violation in `arr`: its largest protrusion from the container
+/// or pairwise penetration, or 0 when every square is inside and disjoint.
+pub fn worst_violation(arr: &Arrangement) -> f64 {
+    let squares = &arr.squares;
+    let protrusions = squares.iter().map(|p| protrusion(p, arr.side));
+    let overlaps = squares
+        .iter()
+        .enumerate()
+        .flat_map(|(i, a)| squares[i + 1..].iter().map(move |b| penetration(a, b)));
+    protrusions.chain(overlaps).fold(0.0, f64::max)
+}
+
 /// Check that every square lies in the container and no two squares overlap,
 /// allowing violations up to `tol`.
 pub fn validate(arr: &Arrangement, tol: f64) -> Result<(), Violation> {
@@ -295,6 +307,23 @@ mod tests {
         };
         assert_eq!(validate(&arr, 1e-9), Ok(()));
         assert!((bounding_side(&arr.squares) - s).abs() < 1e-12);
+    }
+
+    #[test]
+    fn worst_violation_covers_overlap_and_walls() {
+        let arr = |side, squares| Arrangement {
+            n: 2,
+            side,
+            squares,
+        };
+        assert_eq!(
+            worst_violation(&arr(2.0, vec![sq(0.5, 0.5, 0.0), sq(1.5, 0.5, 0.0)])),
+            0.0
+        );
+        let overlap = worst_violation(&arr(2.0, vec![sq(0.5, 0.5, 0.0), sq(1.3, 0.5, 0.0)]));
+        assert!((overlap - 0.2).abs() < 1e-12, "{overlap}");
+        let outside = worst_violation(&arr(1.8, vec![sq(0.5, 0.5, 0.0), sq(1.5, 0.5, 0.0)]));
+        assert!((outside - 0.2).abs() < 1e-12, "{outside}");
     }
 
     #[test]
