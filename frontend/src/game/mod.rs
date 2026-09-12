@@ -83,6 +83,7 @@ pub enum Msg {
     Reset,
     Anneal,
     Squeeze,
+    SqueezeDown,
     Measure,
     Refine,
     Player(String),
@@ -104,6 +105,7 @@ pub enum Msg {
 enum RunKind {
     Anneal,
     Squeeze,
+    SqueezeDown,
 }
 
 /// Sidebar text derived from the simulation; the component only re-renders
@@ -625,6 +627,7 @@ impl Component for Game {
             }
             Msg::Anneal => self.toggle_run(n, RunKind::Anneal),
             Msg::Squeeze => self.toggle_run(n, RunKind::Squeeze),
+            Msg::SqueezeDown => self.toggle_run(n, RunKind::SqueezeDown),
             Msg::Measure => {
                 self.stop_anneal();
                 self.begin_measure(ctx)
@@ -886,11 +889,15 @@ impl Component for Game {
                                 </button>
                                 <button onclick={link.callback(|_| Msg::Shake)}>{ "Shake" }</button>
                                 <button onclick={link.callback(|_| Msg::Reset)}>{ "Reset" }</button>
-                                { for [(RunKind::Anneal, "Anneal"), (RunKind::Squeeze, "Gentle squeeze")].map(|(kind, label)| {
+                                { for [(RunKind::Anneal, "Anneal"), (RunKind::Squeeze, "Gentle squeeze"), (RunKind::SqueezeDown, "Squeeze down")].map(|(kind, label)| {
                                     let running = r.anneal.filter(|_| self.run_kind == kind);
                                     html! {
                                         <button class={classes!(running.is_some().then_some("pg-primary"))}
-                                            onclick={link.callback(move |_| match kind { RunKind::Anneal => Msg::Anneal, RunKind::Squeeze => Msg::Squeeze })}>
+                                            onclick={link.callback(move |_| match kind {
+                                                RunKind::Anneal => Msg::Anneal,
+                                                RunKind::Squeeze => Msg::Squeeze,
+                                                RunKind::SqueezeDown => Msg::SqueezeDown,
+                                            })}>
                                             { match running { Some(p) => format!("Stop · {p}%"), None => label.into() } }
                                         </button>
                                     }
@@ -991,6 +998,10 @@ impl Game {
                 Schedule::gentle(),
                 "Gently squeezing: a slow, soft band and no shakes…",
             ),
+            RunKind::SqueezeDown => (
+                Schedule::squeeze_down(),
+                "Squeezing down: squeeze, relax, squeeze a little lower…",
+            ),
         };
         let seed = (js_sys::Math::random() * u64::MAX as f64) as u64;
         let floor = (n as f64).sqrt();
@@ -1030,6 +1041,7 @@ impl Game {
             let stopped = match self.run_kind {
                 RunKind::Anneal => "Anneal stopped.",
                 RunKind::Squeeze => "Gentle squeeze stopped.",
+                RunKind::SqueezeDown => "Squeeze down stopped.",
             };
             self.set_status(stopped, false);
         }
