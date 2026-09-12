@@ -1,0 +1,46 @@
+name: Reference math
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  math:
+    name: GitHub Math Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check GitHub math rendering hazards
+        uses: CosmicFrontierLabs/github-math-lint@e10771b2289108830ee9687fa292c9e8c0bbbf4e # v1
+        with:
+          paths: |-
+            refs/**/*.md
+          report-path: github-math-lint-report.json
+      - name: Keep equation numbers out of unsupported MathML rows
+        run: |
+          python3 - <<'PYTHON'
+          import pathlib
+          import re
+          import sys
+
+          # GitHub emits mlabeledtr for TeX tags; Chrome stacks its symbols.
+          # Use an adjacent "Equation (n)" prose label instead.
+          bad = []
+          for path in pathlib.Path("refs/markdown").glob("*.md"):
+              for number, line in enumerate(path.read_text().splitlines(), 1):
+                  if re.search(r"\\tag\*?\s*\{", line):
+                      bad.append(f"{path}:{number}: use a prose equation label")
+          if bad:
+              print("\n".join(bad))
+              sys.exit(1)
+          PYTHON
+      - name: Save complete math report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: github-math-lint-report
+          path: github-math-lint-report.json
