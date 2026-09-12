@@ -115,13 +115,6 @@ jobs:
       - name: Build frontend (required for backend embed)
         run: cd frontend && trunk build
 
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-
-      - name: Test browser physics fallback
-        run: node --test physics/engine.test.js
-
       - name: Run tests
         run: cargo test --workspace --locked
         env:
@@ -154,4 +147,4 @@ jobs:
           with open(os.environ['WASM_BINDGEN_TEST_WEBDRIVER_JSON'], 'w') as f:
               json.dump(config, f)
           PYTHON
-          cargo test -p physics --target wasm32-unknown-unknown --lib --locked
+          cargo test -p physics -p frontend --target wasm32-unknown-unknown --locked
