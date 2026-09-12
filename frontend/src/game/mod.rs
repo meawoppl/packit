@@ -14,7 +14,7 @@ use canvas::Scene;
 use gloo_events::{EventListener, EventListenerOptions};
 use gloo_render::{request_animation_frame, AnimationFrame};
 use physics::{Backend, Feature, Glue, Physics};
-use shared::{share, Arrangement, KnownRecord, ScoreEntry, SubmitScore, MAX_N};
+use shared::{geometry, share, Arrangement, KnownRecord, ScoreEntry, SubmitScore, MAX_N};
 use solver::SolveReport;
 use std::cell::Cell;
 use std::rc::Rc;
@@ -46,6 +46,18 @@ const TOUCH_TURN: f32 = 0.12;
 /// How far the effective size target may lead the actual container at full
 /// band tension (100); lower tension shortens the reach proportionally.
 const MAX_SCRUB: f64 = 1.0;
+/// Before measuring an overlapping scene, the band's target grows at this
+/// rate (side units per second) until nothing overlaps, so the measurement
+/// doesn't pop the squares apart.
+const RELAX_RATE: f64 = 0.1;
+const RELAX_TENSION: f32 = 20.0;
+/// Overlap or wall protrusion small enough to measure: well under a pixel.
+const RELAX_TOL: f64 = 2e-3;
+/// Frames the scene must stay clear before measuring.
+const RELAX_CLEAR_FRAMES: u32 = 8;
+/// Give up relaxing after this long. Glue or a jam can hold an overlap the
+/// band can't clear, and measuring it then would pop the squares apart.
+const RELAX_MAX_SECS: f64 = 8.0;
 
 /// The band's size target for a requested `desired` side: it can only run
 /// ahead of the actual `side` as far as the band pressure reaches.
@@ -103,6 +115,14 @@ pub enum Msg {
 }
 
 /// The scheduled runs that share one slot: shaking anneal or gentle squeeze.
+/// The band relaxing outward before a measurement.
+struct Relax {
+    start_side: f64,
+    elapsed: f64,
+    /// Consecutive frames with nothing overlapping.
+    clear_frames: u32,
+}
+
 #[derive(Clone, Copy, PartialEq)]
 enum RunKind {
     Anneal,
@@ -171,6 +191,8 @@ pub struct Game {
     glue_tool: Option<Option<Feature>>,
     /// Whether closing the glue tool resumes the simulation it paused.
     glue_resume: bool,
+    /// Set while the band relaxes out of overlap before a measurement.
+    relax: Option<Relax>,
 }
 
 fn initial_side(n: u32) -> f64 {
@@ -275,6 +297,7 @@ impl Component for Game {
             taps: tap::DoubleTap::default(),
             glue_tool: None,
             glue_resume: false,
+            relax: None,
         };
         // A shared packing opens paused and unvalidated, even if it was
         // validated when shared; it has to be measured again here.
@@ -373,6 +396,7 @@ impl Component for Game {
                     .map_or(0.0, |last| ((time - last) / 1000.0).clamp(0.0, 0.05));
                 self.last_time = Some(time);
                 self.tick_anneal(ctx, elapsed);
+                self.tick_relax(ctx, elapsed);
                 if self.physics.paused() {
                     self.accumulator = 0.0;
                 } else {
@@ -640,7 +664,7 @@ impl Component for Game {
             Msg::SqueezeDown => self.toggle_run(n, RunKind::SqueezeDown),
             Msg::Measure => {
                 self.stop_anneal();
-                self.begin_measure(ctx)
+                self.settle(ctx)
             }
             Msg::Refine => {
                 if self.stepping {
@@ -674,7 +698,11 @@ impl Component for Game {
                     ),
                     None => {
                         self.submit_after_measure = true;
-                        ctx.link().send_message(Msg::Measure);
+                        // A relax in progress measures (and so submits) once
+                        // it clears; restarting it would drop this request.
+                        if self.relax.is_none() {
+                            ctx.link().send_message(Msg::Measure);
+                        }
                     }
                 }
                 true
@@ -863,7 +891,7 @@ impl Component for Game {
                         <details class="pg-details">
                             <summary>{ "How to play & what the score means" }</summary>
                             <p>{ "Each square has side length 1. Make the container smaller while keeping every square inside and avoiding overlap. Dragging and rotating resume physics, push neighbors, and resist blocked motion. Lower the container target with outer band tension enabled to squeeze the packing. Turn on forces, or use Q/E to rotate a selected square. Arrow keys nudge it. Space pauses." }</p>
-                            <p>{ "The simulation has springy contacts. “Settle & measure” pauses the scene and refines its contacts with a numerical polynomial solver. Only an independently validated arrangement can be submitted. A best-known packing is an upper bound, not necessarily a proven optimum. A numerical match is not an exact proof." }</p>
+                            <p>{ "The simulation has springy contacts. “Settle & measure” first relaxes the box until nothing overlaps, then pauses the scene and refines its contacts with a numerical polynomial solver. Only an independently validated arrangement can be submitted. A best-known packing is an upper bound, not necessarily a proven optimum. A numerical match is not an exact proof." }</p>
                             <p>
                                 <a href="https://kingbird.myphotos.cc/packing/squares_in_squares.html" target="_blank" rel="noopener">
                                     { "Explore the research records ↗" }
@@ -1005,11 +1033,12 @@ impl Game {
                     self.physics.set_params(params);
                 }
                 Command::Measure => {
-                    // Release the band so it stops compressing once the run ends.
+                    // Release the band so it stops compressing once the run
+                    // ends, then relax out of any overlap and measure.
                     let mut params = self.physics.params();
                     params.band_tension = 0.0;
                     self.physics.set_params(params);
-                    self.begin_measure(ctx);
+                    self.settle(ctx);
                 }
             }
         }
@@ -1018,6 +1047,8 @@ impl Game {
     /// Start a scheduled run of `kind`, or stop it if it is the active one.
     /// Clicking the other run's button switches runs.
     fn toggle_run(&mut self, n: u32, kind: RunKind) -> bool {
+        // A run takes the band over from a relax in progress.
+        self.stop_relax();
         if self.anneal.is_some() {
             let same = self.run_kind == kind;
             self.stop_anneal();
@@ -1109,6 +1140,76 @@ impl Game {
             };
             self.set_status(stopped, false);
         }
+        self.stop_relax();
+    }
+
+    /// Cancel a relax in progress and release the band. A submission waiting
+    /// on its measurement is dropped too, so a later settle of a different
+    /// scene can't submit it.
+    fn stop_relax(&mut self) {
+        if self.relax.take().is_some() {
+            let mut params = self.physics.params();
+            params.band_tension = 0.0;
+            self.physics.set_params(params);
+            self.submit_after_measure = false;
+            self.set_status("Relaxing stopped. Settle & measure when ready.", false);
+        }
+    }
+
+    /// Settle before measuring. If anything overlaps, relax the band outward
+    /// until nothing does, so the measured packing doesn't pop the squares
+    /// apart; a clear scene is measured right away.
+    fn settle(&mut self, ctx: &Context<Self>) -> bool {
+        if self.busy {
+            return false;
+        }
+        if geometry::worst_violation(&self.physics.arrangement()) <= RELAX_TOL {
+            return self.begin_measure(ctx);
+        }
+        self.relax = Some(Relax {
+            start_side: self.physics.side(),
+            elapsed: 0.0,
+            clear_frames: 0,
+        });
+        self.desired_side = None;
+        self.set_pause(false);
+        self.set_status("Relaxing the box until nothing overlaps…", false);
+        true
+    }
+
+    /// Grow the band's target while relaxing, and measure once the scene
+    /// has stayed clear for a few frames (or the relax runs out of time).
+    fn tick_relax(&mut self, ctx: &Context<Self>, dt: f64) {
+        let Some(relax) = self.relax.as_mut() else {
+            return;
+        };
+        relax.elapsed += dt;
+        let clear = geometry::worst_violation(&self.physics.arrangement()) <= RELAX_TOL;
+        relax.clear_frames = if clear { relax.clear_frames + 1 } else { 0 };
+        let mut params = self.physics.params();
+        let clear = relax.clear_frames >= RELAX_CLEAR_FRAMES;
+        if clear || relax.elapsed >= RELAX_MAX_SECS {
+            self.relax = None;
+            // Zero tension holds the relaxed size.
+            params.band_tension = 0.0;
+            self.physics.set_params(params);
+            if clear {
+                self.begin_measure(ctx);
+            } else {
+                // Measuring a scene that still overlaps would pop the
+                // squares apart, which is what relaxing is meant to avoid.
+                self.auto_measured = true;
+                self.submit_after_measure = false;
+                self.set_status(
+                    "Couldn't relax out of the overlap; glue or a jam is holding it. Loosen it, then Settle & measure.",
+                    true,
+                );
+            }
+            return;
+        }
+        params.band_tension = RELAX_TENSION;
+        params.target_side = relax.start_side + RELAX_RATE * relax.elapsed;
+        self.physics.set_params(params);
     }
 
     /// Pause and refine the current scene, once the status has painted.
@@ -1192,6 +1293,7 @@ impl Game {
             || self.busy
             || self.auto_measured
             || self.anneal.is_some()
+            || self.relax.is_some()
         {
             return;
         }
