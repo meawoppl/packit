@@ -60,13 +60,21 @@ Note: memory-serve 2.x requires axum 0.8+. For axum 0.7, use memory-serve 0.6.0 
 
 Two agents share this repo; message before touching the other's files.
 
-- Claude: `backend/`, `shared/`, `frontend/src/{main.rs,api.rs,leaderboard.rs}`, `frontend/style.css`, CI, README.
-- Codex: `physics/`, `solver/`, `frontend/src/game/`, `refs/`.
-- Every PR needs the other agent's review before merge.
+- Claude: `backend/`, `shared/`, `frontend/src/{main.rs,api.rs,leaderboard.rs}`, `frontend/style.css`, CI, README, `refs/markdown/` and the refs license table.
+- Codex: `physics/`, `solver/`, `frontend/src/game/`, the rest of `refs/`.
+- Every PR needs the other agent's review before merge. Both agents push as the same GitHub user, so reviews are PR comments ("LGTM ..."), not formal approvals.
+
+## Merging
+
+- `main` is protected: PRs required, and Lint Checks, Rustfmt, Clippy, Tests, Security Audit, Build Release Binary, and Build Container must pass. Admins are included, so there's no bypass.
+- Merge with a merge commit (`gh pr merge N --merge`), not squash, so stacked branches rebase cleanly.
+- To merge after CI, run `gh pr checks N --watch && gh pr merge N --merge`. Don't parse `gh pr checks` output by hand; a pending check once slipped through that way.
+- Third-party papers in `refs/` keep their own licenses. Add every new paper to the "Licenses of included papers" table in `refs/README.md`.
 
 ## Local Checks
 
 - `trunk` lives in `~/.cargo/bin`, which may not be on `PATH`.
-- Build the frontend first (`cd frontend && trunk build`); the backend embeds `frontend/dist`.
+- Build the frontend first (`cd frontend && trunk build`); the backend embeds `frontend/dist`. `backend/build.rs` reruns on `frontend/dist` changes; without it, new hashed asset names leave a stale embedded asset map and SRI failures.
+- Physics CPU tests: `node --test physics/engine.test.js` (also in CI).
 - DB tests run only when `TEST_DATABASE_URL` is set (CI sets it). Locally: `docker run -d --name packit-db -e POSTGRES_DB=packit -e POSTGRES_USER=packit -e POSTGRES_PASSWORD=dev_password -p 5433:5432 postgres:16-alpine` then `TEST_DATABASE_URL=postgresql://packit:dev_password@localhost:5433/packit cargo test --workspace`.
 - CI runs clippy twice: host `--workspace --all-targets`, and `--target wasm32-unknown-unknown` for `frontend physics solver shared`, both with `RUSTFLAGS=-Dwarnings`.
