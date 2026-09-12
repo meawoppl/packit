@@ -1,0 +1,130 @@
+:root {
+    --bg: #14141f;
+    --panel: #1e1e2e;
+    --text: #e6e6f0;
+    --muted: #8a8aa3;
+    --accent: #ff9e3d;
+    --accent-2: #5ec2ff;
+    --error: #ff6b81;
+}
+
+body {
+    font-family: system-ui, sans-serif;
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+}
+
+a {
+    color: var(--accent-2);
+    text-decoration: none;
+}
+
+a:hover {
+    text-decoration: underline;
+}
+
+h1 {
+    color: var(--accent);
+}
+
+main {
+    padding: 1.5rem 2rem;
+    max-width: 1100px;
+    margin: 0 auto;
+}
+
+.topbar {
+    display: flex;
+    gap: 1.5rem;
+    align-items: baseline;
+    padding: 0.75rem 2rem;
+    background: var(--panel);
+}
+
+.topbar .brand {
+    font-weight: 800;
+    font-size: 1.4rem;
+    color: var(--accent);
+    letter-spacing: 0.05em;
+}
+
+.muted {
+    color: var(--muted);
+}
+
+.error {
+    color: var(--error);
+}
+
+.n-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(3.5rem, 1fr));
+    gap: 0.5rem;
+    max-width: 40rem;
+}
+
+.n-button,
+.button {
+    display: inline-block;
+    padding: 0.6rem 0.9rem;
+    text-align: center;
+    background: var(--panel);
+    border: 2px solid var(--accent);
+    border-radius: 6px;
+    color: var(--text);
+    font-weight: 700;
+}
+
+.n-button:hover,
+.button:hover {
+    background: var(--accent);
+    color: var(--bg);
+    text-decoration: none;
+}
+
+table {
+    border-collapse: collapse;
+    margin-top: 1rem;
+    width: 100%;
+}
+
+th,
+td {
+    padding: 0.4rem 0.8rem;
+    text-align: left;
+    border-bottom: 1px solid var(--panel);
+    font-variant-numeric: tabular-nums;
+}
+
+th {
+    color: var(--muted);
+    font-weight: 600;
+}
+
+.badge {
+    margin-left: 0.5rem;
+    padding: 0.05rem 0.4rem;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    background: var(--accent-2);
+    color: var(--bg);
+}
+
+svg.arrangement {
+    width: min(90vw, 480px);
+    height: auto;
+    display: block;
+    margin: 1rem 0;
+}
+
+svg.arrangement .container {
+    fill: var(--panel);
+    stroke: var(--muted);
+    stroke-width: 0.02;
+}
+
+svg.arrangement .square {
+    stroke: var(--bg);
+    stroke-width: 0.02;
+}

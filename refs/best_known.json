@@ -1,0 +1,7 @@
+[
+  { "n": 1, "side": 1.0, "side_expr": "1", "proven_optimal": true, "source": "trivial" },
+  { "n": 2, "side": 2.0, "side_expr": "2", "proven_optimal": true, "source": "trivial" },
+  { "n": 3, "side": 2.0, "side_expr": "2", "proven_optimal": true, "source": "trivial" },
+  { "n": 4, "side": 2.0, "side_expr": "2", "proven_optimal": true, "source": "trivial" },
+  { "n": 5, "side": 2.7071067811865475, "side_expr": "2 + 1/sqrt(2)", "proven_optimal": true, "source": "Göbel 1979" }
+]
