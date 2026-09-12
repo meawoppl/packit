@@ -34,7 +34,26 @@ impl Drop for NoWebGpu {
 }
 
 async fn mount() -> (yew::AppHandle<Host>, Element, Physics) {
-    let document = web_sys::window().unwrap().document().unwrap();
+    mount_at("").await
+}
+
+/// Mount with `?{query}` as the page query (empty clears it). Settling writes a
+/// share code into the URL, so every mount sets the query it expects.
+async fn mount_at(query: &str) -> (yew::AppHandle<Host>, Element, Physics) {
+    let window = web_sys::window().unwrap();
+    let path = window.location().pathname().unwrap();
+    let url = if query.is_empty() {
+        path
+    } else {
+        format!("{path}?{query}")
+    };
+    window
+        .history()
+        .unwrap()
+        .replace_state_with_url(&wasm_bindgen::JsValue::NULL, "", Some(&url))
+        .unwrap();
+    TEST_REPORT.with(|r| r.take());
+    let document = window.document().unwrap();
     let root = document.create_element("div").unwrap();
     root.set_attribute("style", "width: 600px").unwrap();
     document.body().unwrap().append_child(&root).unwrap();
@@ -454,30 +473,6 @@ async fn wheel_and_keys_wake_physics_and_turn_without_teleporting() {
     root.remove();
 }
 
-/// Point the page at `?{query}` for the duration of a test.
-struct PageQuery(String);
-impl PageQuery {
-    fn set(query: &str) -> Self {
-        let window = web_sys::window().unwrap();
-        let original = window.location().href().unwrap();
-        window
-            .history()
-            .unwrap()
-            .replace_state_with_url(&wasm_bindgen::JsValue::NULL, "", Some(&format!("?{query}")))
-            .unwrap();
-        Self(original)
-    }
-}
-impl Drop for PageQuery {
-    fn drop(&mut self) {
-        let _ = web_sys::window()
-            .unwrap()
-            .history()
-            .unwrap()
-            .replace_state_with_url(&wasm_bindgen::JsValue::NULL, "", Some(&self.0));
-    }
-}
-
 fn two_squares() -> Arrangement {
     let sq = |cx| shared::Placement {
         cx,
@@ -494,8 +489,7 @@ fn two_squares() -> Arrangement {
 #[wasm_bindgen_test]
 async fn share_link_loads_paused_and_unvalidated() {
     let _gpu = NoWebGpu::install();
-    let _query = PageQuery::set(&format!("s={}", share::encode(&two_squares())));
-    let (handle, root, physics) = mount().await;
+    let (handle, root, physics) = mount_at(&format!("s={}", share::encode(&two_squares()))).await;
     assert!(physics.paused(), "shared packings open paused");
     assert_eq!(physics.arrangement(), two_squares());
     assert!(text(&root, ".pg-status").starts_with("Shared packing loaded"));
@@ -510,8 +504,7 @@ async fn share_link_loads_paused_and_unvalidated() {
 #[wasm_bindgen_test]
 async fn bad_share_link_reports_an_error() {
     let _gpu = NoWebGpu::install();
-    let _query = PageQuery::set("s=zz");
-    let (handle, root, physics) = mount().await;
+    let (handle, root, physics) = mount_at("s=zz").await;
     assert!(text(&root, ".pg-status").starts_with("Share link:"));
     assert_eq!(physics.side(), 2.5, "nothing was loaded");
     handle.destroy();
@@ -521,7 +514,6 @@ async fn bad_share_link_reports_an_error() {
 #[wasm_bindgen_test]
 async fn share_button_writes_a_decodable_link() {
     let _gpu = NoWebGpu::install();
-    let _query = PageQuery::set("");
     let (handle, root, physics) = mount().await;
     force_button(&root, "Pause").click();
     sleep(30).await;
@@ -598,6 +590,110 @@ async fn finished_gentle_squeeze_measures_and_releases_the_band() {
     assert_eq!(physics.params().band_tension, 0.0, "band released");
     assert!(physics.paused(), "measuring pauses the scene");
     force_button(&root, "Gentle squeeze");
+    handle.destroy();
+    root.remove();
+}
+
+fn history_length() -> u32 {
+    web_sys::window()
+        .unwrap()
+        .history()
+        .unwrap()
+        .length()
+        .unwrap()
+}
+
+/// Poll the address bar for a share code, for up to `ms` milliseconds.
+async fn wait_for_share_code(ms: u64) -> String {
+    for _ in 0..ms / 100 {
+        let search = web_sys::window().unwrap().location().search().unwrap();
+        if let Some(code) = search.strip_prefix("?s=") {
+            return code.to_string();
+        }
+        sleep(100).await;
+    }
+    panic!("no share code in the URL after {ms} ms");
+}
+
+/// After a valid measure the URL carries the refined f64 arrangement, not the
+/// f32 display scene: refine's final (1 + 2e-10) expansion leaves a side that
+/// f32 cannot represent.
+fn assert_validated_f64(code: &str, root: &Element) {
+    let status = text(root, ".pg-status");
+    assert!(status.starts_with("Ready"), "measure validated: {status}");
+    let shared = share::decode(code, 2).unwrap();
+    let report = TEST_REPORT
+        .with(|r| r.borrow().clone())
+        .expect("a validated report");
+    assert_eq!(
+        shared, report,
+        "URL carries the validated report bit-for-bit"
+    );
+    // Supplemental: the refined side is not something f32 could represent.
+    assert_ne!(
+        shared.side as f32 as f64, shared.side,
+        "URL keeps the refined f64 side"
+    );
+}
+
+/// The URL's code decodes to the arrangement now in the physics (which holds
+/// the refined packing in f32, hence the tolerance).
+fn assert_url_matches_scene(code: &str, physics: &Physics) {
+    let shared = share::decode(code, 2).unwrap();
+    let scene = physics.arrangement();
+    assert!(
+        (shared.side - scene.side).abs() < 1e-6,
+        "{} vs {}",
+        shared.side,
+        scene.side
+    );
+    for (a, b) in shared.squares.iter().zip(&scene.squares) {
+        for (x, y) in [(a.cx, b.cx), (a.cy, b.cy), (a.theta, b.theta)] {
+            assert!((x - y).abs() < 1e-6, "URL {a:?} vs scene {b:?}");
+        }
+    }
+}
+
+#[wasm_bindgen_test]
+async fn auto_settle_writes_the_solution_into_the_url() {
+    let _gpu = NoWebGpu::install();
+    let entries = history_length();
+    let (handle, root, physics) = mount().await;
+    // A fresh grid is already calm, so auto-measure runs after the settle window.
+    let code = wait_for_share_code(8000).await;
+    assert!(physics.paused(), "settling measured the scene");
+    assert_url_matches_scene(&code, &physics);
+    assert_validated_f64(&code, &root);
+    assert_eq!(
+        history_length(),
+        entries,
+        "replaceState adds no history entry"
+    );
+    handle.destroy();
+    root.remove();
+}
+
+#[wasm_bindgen_test]
+async fn manual_measure_writes_the_solution_into_the_url() {
+    let _gpu = NoWebGpu::install();
+    let entries = history_length();
+    let (handle, root, physics) = mount().await;
+    let buttons = root.query_selector_all(".pg-submit button").unwrap();
+    let measure: HtmlElement = (0..buttons.length())
+        .filter_map(|i| buttons.item(i))
+        .filter_map(|b| b.dyn_into::<HtmlElement>().ok())
+        .find(|b| b.text_content().unwrap_or_default() == "Settle & measure")
+        .unwrap();
+    measure.click();
+    // Well inside the ~2.5 s auto-settle window, so this is the manual measure.
+    let code = wait_for_share_code(1500).await;
+    assert_url_matches_scene(&code, &physics);
+    assert_validated_f64(&code, &root);
+    assert_eq!(
+        history_length(),
+        entries,
+        "replaceState adds no history entry"
+    );
     handle.destroy();
     root.remove();
 }
