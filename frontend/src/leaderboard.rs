@@ -114,11 +114,19 @@ pub fn leaderboard() -> Html {
     }
 }
 
+/// Closed forms longer than this (e.g. "root of a degree-8 polynomial") move
+/// into a tooltip so they don't blow out the table column.
+const MAX_INLINE_EXPR: usize = 24;
+
 fn known_cell(rec: &KnownRecord) -> Html {
     html! {
         <span title={rec.source.clone()}>
             { fmt_side(rec.side) }
-            { rec.side_expr.as_ref().map(|e| html! { <span class="muted">{ format!(" = {e}") }</span> }) }
+            { rec.side_expr.as_ref().map(|e| if e.chars().count() <= MAX_INLINE_EXPR {
+                html! { <span class="muted">{ format!(" = {e}") }</span> }
+            } else {
+                html! { <span class="muted long-expr" title={e.clone()}>{ " = algebraic ⓘ" }</span> }
+            }) }
             { if rec.proven_optimal { html! { <span class="badge">{ "proven" }</span> } } else { html! {} } }
         </span>
     }

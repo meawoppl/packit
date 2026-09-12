@@ -102,6 +102,10 @@ th {
     font-weight: 600;
 }
 
+.long-expr {
+    cursor: help;
+}
+
 .badge {
     margin-left: 0.5rem;
     padding: 0.05rem 0.4rem;
