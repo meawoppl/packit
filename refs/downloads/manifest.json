@@ -1,0 +1,44 @@
+[
+  {
+    "id": "stromquist-2003",
+    "url": "https://www.combinatorics.org/ojs/index.php/eljc/article/download/v10i1r8/pdf/",
+    "file": "stromquist-2003.pdf",
+    "sha256": "146ac14a015910a95d0c25bf986f6073bcccd21a29ee754a45dcc0d4224d5e0b",
+    "status": "downloaded"
+  },
+  {
+    "id": "nagamochi-2005",
+    "url": "https://www.combinatorics.org/ojs/index.php/eljc/article/download/v12i1r37/pdf/",
+    "file": "nagamochi-2005.pdf",
+    "sha256": "b9fbd50d3d2e5a6f6762501d0d8483e3be4df591e76d8696a84eb220f2a546d5",
+    "status": "downloaded"
+  },
+  {
+    "id": "bentz-13-46-2010",
+    "url": "https://www.combinatorics.org/ojs/index.php/eljc/article/download/v17i1r126/pdf/",
+    "file": "bentz-13-46-2010.pdf",
+    "sha256": "4aa879e438d0f58948fca6ea6533b7e3bd260da7d036165880325e4e03b2074e",
+    "status": "downloaded"
+  },
+  {
+    "id": "bentz-22-33-2016",
+    "url": "https://arxiv.org/pdf/1606.03746",
+    "file": "bentz-22-33-2016.pdf",
+    "sha256": "66f01fb966ab709cb05c6ecb5e7473db580f836f1bd4ac349e030e9aac20bdff",
+    "status": "downloaded"
+  },
+  {
+    "id": "wang-dong-li-2016",
+    "url": "https://arxiv.org/pdf/1603.02368",
+    "file": "wang-dong-li-2016.pdf",
+    "sha256": "bfdfc386869bca0547a25bafe5d93d4256b52b0242ed7adce2ec73cdd71aaa63",
+    "status": "downloaded"
+  },
+  {
+    "id": "abrahamsen-stade-2024",
+    "url": "https://arxiv.org/pdf/2404.09835",
+    "file": "abrahamsen-stade-2024.pdf",
+    "sha256": "e8ad875fe499eec89a5f021f2377765efe870681567fa6f2466112c1592c96fb",
+    "status": "downloaded"
+  }
+]

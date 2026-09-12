@@ -1,7 +1,702 @@
 [
-  { "n": 1, "side": 1.0, "side_expr": "1", "proven_optimal": true, "source": "trivial" },
-  { "n": 2, "side": 2.0, "side_expr": "2", "proven_optimal": true, "source": "trivial" },
-  { "n": 3, "side": 2.0, "side_expr": "2", "proven_optimal": true, "source": "trivial" },
-  { "n": 4, "side": 2.0, "side_expr": "2", "proven_optimal": true, "source": "trivial" },
-  { "n": 5, "side": 2.7071067811865475, "side_expr": "2 + 1/sqrt(2)", "proven_optimal": true, "source": "Göbel 1979" }
+  {
+    "n": 1,
+    "side": 1.0,
+    "side_expr": "1",
+    "proven_optimal": true,
+    "source": "https://kingbird.myphotos.cc/packing/squares_in_squares.html"
+  },
+  {
+    "n": 2,
+    "side": 2.0,
+    "side_expr": "2",
+    "proven_optimal": true,
+    "source": "https://kingbird.myphotos.cc/packing/squares_in_squares.html"
+  },
+  {
+    "n": 3,
+    "side": 2.0,
+    "side_expr": "2",
+    "proven_optimal": true,
+    "source": "https://kingbird.myphotos.cc/packing/squares_in_squares.html"
+  },
+  {
+    "n": 4,
+    "side": 2.0,
+    "side_expr": "2",
+    "proven_optimal": true,
+    "source": "https://kingbird.myphotos.cc/packing/squares_in_squares.html"
+  },
+  {
+    "n": 5,
+    "side": 2.7071067811865475,
+    "side_expr": "2 + 1/sqrt(2)",
+    "proven_optimal": true,
+    "source": "https://kingbird.myphotos.cc/packing/squares_in_squares.html"
+  },
+  {
+    "n": 6,
+    "side": 3.0,
+    "side_expr": "3",
+    "proven_optimal": true,
+    "source": "https://kingbird.myphotos.cc/packing/squares_in_squares.html"
+  },
+  {
+    "n": 7,
+    "side": 3.0,
+    "side_expr": "3",
+    "proven_optimal": true,
+    "source": "https://kingbird.myphotos.cc/packing/squares_in_squares.html"
+  },
+  {
+    "n": 8,
+    "side": 3.0,
+    "side_expr": "3",
+    "proven_optimal": true,
+    "source": "https://kingbird.myphotos.cc/packing/squares_in_squares.html"
+  },
+  {
+    "n": 9,
+    "side": 3.0,
+    "side_expr": "3",
+    "proven_optimal": true,
+    "source": "https://kingbird.myphotos.cc/packing/squares_in_squares.html"
+  },
+  {
+    "n": 10,
+    "side": 3.7071067811865475,
+    "side_expr": "3 + 1/sqrt(2)",
+    "proven_optimal": true,
+    "source": "https://kingbird.myphotos.cc/packing/squares_in_squares.html"
+  },
+  {
+    "n": 11,
+    "side": 3.87708359002281,
+    "side_expr": "root near 3.87708359002281 of L^8-20L^7+178L^6-842L^5+1923L^4-496L^3-6754L^2+12420L-6865",
+    "proven_optimal": false,
+    "source": "https://kingbird.myphotos.cc/packing/squares_in_squares.html"
+  },
+  {
+    "n": 12,
+    "side": 4.0,
+    "side_expr": "4",
+    "proven_optimal": false,
+    "source": "https://kingbird.myphotos.cc/packing/squares_in_squares.html"
+  },
+  {
+    "n": 13,
+    "side": 4.0,
+    "side_expr": "4",
+    "proven_optimal": true,
+    "source": "https://kingbird.myphotos.cc/packing/squares_in_squares.html"
+  },
+  {
+    "n": 14,
+    "side": 4.0,
+    "side_expr": "4",
+    "proven_optimal": true,
+    "source": "https://kingbird.myphotos.cc/packing/squares_in_squares.html"
+  },
+  {
+    "n": 15,
+    "side": 4.0,
+    "side_expr": "4",
+    "proven_optimal": true,
+    "source": "https://kingbird.myphotos.cc/packing/squares_in_squares.html"
+  },
+  {
+    "n": 16,
+    "side": 4.0,
+    "side_expr": "4",
+    "proven_optimal": true,
+    "source": "https://kingbird.myphotos.cc/packing/squares_in_squares.html"
+  },
+  {
+    "n": 17,
+    "side": 4.67553009360455,
+    "side_expr": null,
+    "proven_optimal": false,
+    "source": "https://kingbird.myphotos.cc/packing/squares_in_squares.html"
+  },
+  {
+    "n": 18,
+    "side": 4.82287565553229,
+    "side_expr": "(7 + sqrt(7))/2",
+    "proven_optimal": false,
+    "source": "https://kingbird.myphotos.cc/packing/squares_in_squares.html"
+  },
+  {
+    "n": 19,
+    "side": 4.88561808316412,
+    "side_expr": "3 + 4*sqrt(2)/3",
+    "proven_optimal": false,
+    "source": "https://kingbird.myphotos.cc/packing/squares_in_squares.html"
+  },
+  {
+    "n": 20,
+    "side": 5.0,
+    "side_expr": "5",
+    "proven_optimal": false,
+    "source": "https://kingbird.myphotos.cc/packing/squares_in_squares.html"
+  },
+  {
+    "n": 21,
+    "side": 5.0,
+    "side_expr": "5",
+    "proven_optimal": false,
+    "source": "https://kingbird.myphotos.cc/packing/squares_in_squares.html"
+  },
+  {
+    "n": 22,
+    "side": 5.0,
+    "side_expr": "5",
+    "proven_optimal": true,
+    "source": "https://kingbird.myphotos.cc/packing/squares_in_squares.html"
+  },
+  {
+    "n": 23,
+    "side": 5.0,
+    "side_expr": "5",
+    "proven_optimal": true,
+    "source": "https://kingbird.myphotos.cc/packing/squares_in_squares.html"
+  },
+  {
+    "n": 24,
+    "side": 5.0,
+    "side_expr": "5",
+    "proven_optimal": true,
+    "source": "https://kingbird.myphotos.cc/packing/squares_in_squares.html"
+  },
+  {
+    "n": 25,
+    "side": 5.0,
+    "side_expr": "5",
+    "proven_optimal": true,
+    "source": "https://kingbird.myphotos.cc/packing/squares_in_squares.html"
+  },
+  {
+    "n": 26,
+    "side": 5.62132034355964,
+    "side_expr": "(7 + 3*sqrt(2))/2",
+    "proven_optimal": false,
+    "source": "https://kingbird.myphotos.cc/packing/squares_in_squares.html"
+  },
+  {
+    "n": 27,
+    "side": 5.70710678118654,
+    "side_expr": "5 + 1/sqrt(2)",
+    "proven_optimal": false,
+    "source": "https://kingbird.myphotos.cc/packing/squares_in_squares.html"
+  },
+  {
+    "n": 28,
+    "side": 5.82444461667405,
+    "side_expr": null,
+    "proven_optimal": false,
+    "source": "https://kingbird.myphotos.cc/packing/squares_in_squares.html"
+  },
+  {
+    "n": 29,
+    "side": 5.93383346267692,
+    "side_expr": null,
+    "proven_optimal": false,
+    "source": "https://kingbird.myphotos.cc/packing/squares_in_squares.html"
+  },
+  {
+    "n": 30,
+    "side": 6.0,
+    "side_expr": "6",
+    "proven_optimal": false,
+    "source": "https://kingbird.myphotos.cc/packing/squares_in_squares.html"
+  },
+  {
+    "n": 31,
+    "side": 6.0,
+    "side_expr": "6",
+    "proven_optimal": false,
+    "source": "https://kingbird.myphotos.cc/packing/squares_in_squares.html"
+  },
+  {
+    "n": 32,
+    "side": 6.0,
+    "side_expr": "6",
+    "proven_optimal": false,
+    "source": "https://kingbird.myphotos.cc/packing/squares_in_squares.html"
+  },
+  {
+    "n": 33,
+    "side": 6.0,
+    "side_expr": "6",
+    "proven_optimal": true,
+    "source": "https://kingbird.myphotos.cc/packing/squares_in_squares.html"
+  },
+  {
+    "n": 34,
+    "side": 6.0,
+    "side_expr": "6",
+    "proven_optimal": true,
+    "source": "https://kingbird.myphotos.cc/packing/squares_in_squares.html"
+  },
+  {
+    "n": 35,
+    "side": 6.0,
+    "side_expr": "6",
+    "proven_optimal": true,
+    "source": "https://kingbird.myphotos.cc/packing/squares_in_squares.html"
+  },
+  {
+    "n": 36,
+    "side": 6.0,
+    "side_expr": "6",
+    "proven_optimal": true,
+    "source": "https://kingbird.myphotos.cc/packing/squares_in_squares.html"
+  },
+  {
+    "n": 37,
+    "side": 6.59861960924436,
+    "side_expr": null,
+    "proven_optimal": false,
+    "source": "https://kingbird.myphotos.cc/packing/squares_in_squares.html"
+  },
+  {
+    "n": 38,
+    "side": 6.70710678118654,
+    "side_expr": "6 + 1/sqrt(2)",
+    "proven_optimal": false,
+    "source": "https://kingbird.myphotos.cc/packing/squares_in_squares.html"
+  },
+  {
+    "n": 39,
+    "side": 6.81072208306864,
+    "side_expr": null,
+    "proven_optimal": false,
+    "source": "https://kingbird.myphotos.cc/packing/squares_in_squares.html"
+  },
+  {
+    "n": 40,
+    "side": 6.82842712474619,
+    "side_expr": "4 + 2*sqrt(2)",
+    "proven_optimal": false,
+    "source": "https://kingbird.myphotos.cc/packing/squares_in_squares.html"
+  },
+  {
+    "n": 41,
+    "side": 6.9266930944688,
+    "side_expr": null,
+    "proven_optimal": false,
+    "source": "https://kingbird.myphotos.cc/packing/squares_in_squares.html"
+  },
+  {
+    "n": 42,
+    "side": 7.0,
+    "side_expr": "7",
+    "proven_optimal": false,
+    "source": "https://kingbird.myphotos.cc/packing/squares_in_squares.html"
+  },
+  {
+    "n": 43,
+    "side": 7.0,
+    "side_expr": "7",
+    "proven_optimal": false,
+    "source": "https://kingbird.myphotos.cc/packing/squares_in_squares.html"
+  },
+  {
+    "n": 44,
+    "side": 7.0,
+    "side_expr": "7",
+    "proven_optimal": false,
+    "source": "https://kingbird.myphotos.cc/packing/squares_in_squares.html"
+  },
+  {
+    "n": 45,
+    "side": 7.0,
+    "side_expr": "7",
+    "proven_optimal": false,
+    "source": "https://kingbird.myphotos.cc/packing/squares_in_squares.html"
+  },
+  {
+    "n": 46,
+    "side": 7.0,
+    "side_expr": "7",
+    "proven_optimal": true,
+    "source": "https://kingbird.myphotos.cc/packing/squares_in_squares.html"
+  },
+  {
+    "n": 47,
+    "side": 7.0,
+    "side_expr": "7",
+    "proven_optimal": true,
+    "source": "https://kingbird.myphotos.cc/packing/squares_in_squares.html"
+  },
+  {
+    "n": 48,
+    "side": 7.0,
+    "side_expr": "7",
+    "proven_optimal": true,
+    "source": "https://kingbird.myphotos.cc/packing/squares_in_squares.html"
+  },
+  {
+    "n": 49,
+    "side": 7.0,
+    "side_expr": "7",
+    "proven_optimal": true,
+    "source": "https://kingbird.myphotos.cc/packing/squares_in_squares.html"
+  },
+  {
+    "n": 50,
+    "side": 7.571428571428571,
+    "side_expr": "53/7",
+    "proven_optimal": false,
+    "source": "https://kingbird.myphotos.cc/packing/squares_in_squares.html"
+  },
+  {
+    "n": 51,
+    "side": 7.70079923541701,
+    "side_expr": null,
+    "proven_optimal": false,
+    "source": "https://kingbird.myphotos.cc/packing/squares_in_squares.html"
+  },
+  {
+    "n": 52,
+    "side": 7.70710678118654,
+    "side_expr": "7 + 1/sqrt(2)",
+    "proven_optimal": false,
+    "source": "https://kingbird.myphotos.cc/packing/squares_in_squares.html"
+  },
+  {
+    "n": 53,
+    "side": 7.82287565553229,
+    "side_expr": "(13 + sqrt(7))/2",
+    "proven_optimal": false,
+    "source": "https://kingbird.myphotos.cc/packing/squares_in_squares.html"
+  },
+  {
+    "n": 54,
+    "side": 7.84666719284348,
+    "side_expr": "7 - sqrt(2)/2 + sqrt(1+sqrt(2))",
+    "proven_optimal": false,
+    "source": "https://kingbird.myphotos.cc/packing/squares_in_squares.html"
+  },
+  {
+    "n": 55,
+    "side": 7.94577100750391,
+    "side_expr": null,
+    "proven_optimal": false,
+    "source": "https://kingbird.myphotos.cc/packing/squares_in_squares.html"
+  },
+  {
+    "n": 56,
+    "side": 8.0,
+    "side_expr": "8",
+    "proven_optimal": false,
+    "source": "https://kingbird.myphotos.cc/packing/squares_in_squares.html"
+  },
+  {
+    "n": 57,
+    "side": 8.0,
+    "side_expr": "8",
+    "proven_optimal": false,
+    "source": "https://kingbird.myphotos.cc/packing/squares_in_squares.html"
+  },
+  {
+    "n": 58,
+    "side": 8.0,
+    "side_expr": "8",
+    "proven_optimal": false,
+    "source": "https://kingbird.myphotos.cc/packing/squares_in_squares.html"
+  },
+  {
+    "n": 59,
+    "side": 8.0,
+    "side_expr": "8",
+    "proven_optimal": false,
+    "source": "https://kingbird.myphotos.cc/packing/squares_in_squares.html"
+  },
+  {
+    "n": 60,
+    "side": 8.0,
+    "side_expr": "8",
+    "proven_optimal": false,
+    "source": "https://kingbird.myphotos.cc/packing/squares_in_squares.html"
+  },
+  {
+    "n": 61,
+    "side": 8.0,
+    "side_expr": "8",
+    "proven_optimal": false,
+    "source": "https://kingbird.myphotos.cc/packing/squares_in_squares.html"
+  },
+  {
+    "n": 62,
+    "side": 8.0,
+    "side_expr": "8",
+    "proven_optimal": true,
+    "source": "https://kingbird.myphotos.cc/packing/squares_in_squares.html"
+  },
+  {
+    "n": 63,
+    "side": 8.0,
+    "side_expr": "8",
+    "proven_optimal": true,
+    "source": "https://kingbird.myphotos.cc/packing/squares_in_squares.html"
+  },
+  {
+    "n": 64,
+    "side": 8.0,
+    "side_expr": "8",
+    "proven_optimal": true,
+    "source": "https://kingbird.myphotos.cc/packing/squares_in_squares.html"
+  },
+  {
+    "n": 65,
+    "side": 8.53553390593273,
+    "side_expr": "5 + 5*sqrt(2)/2",
+    "proven_optimal": false,
+    "source": "https://kingbird.myphotos.cc/packing/squares_in_squares.html"
+  },
+  {
+    "n": 66,
+    "side": 8.65685424949238,
+    "side_expr": "3 + 4*sqrt(2)",
+    "proven_optimal": false,
+    "source": "https://kingbird.myphotos.cc/packing/squares_in_squares.html"
+  },
+  {
+    "n": 67,
+    "side": 8.70710678118654,
+    "side_expr": "8 + 1/sqrt(2)",
+    "proven_optimal": false,
+    "source": "https://kingbird.myphotos.cc/packing/squares_in_squares.html"
+  },
+  {
+    "n": 68,
+    "side": 8.79929702767095,
+    "side_expr": null,
+    "proven_optimal": false,
+    "source": "https://kingbird.myphotos.cc/packing/squares_in_squares.html"
+  },
+  {
+    "n": 69,
+    "side": 8.82719465572973,
+    "side_expr": null,
+    "proven_optimal": false,
+    "source": "https://kingbird.myphotos.cc/packing/squares_in_squares.html"
+  },
+  {
+    "n": 70,
+    "side": 8.881666757009,
+    "side_expr": null,
+    "proven_optimal": false,
+    "source": "https://kingbird.myphotos.cc/packing/squares_in_squares.html"
+  },
+  {
+    "n": 71,
+    "side": 8.94407155757031,
+    "side_expr": null,
+    "proven_optimal": false,
+    "source": "https://kingbird.myphotos.cc/packing/squares_in_squares.html"
+  },
+  {
+    "n": 72,
+    "side": 9.0,
+    "side_expr": "9",
+    "proven_optimal": false,
+    "source": "https://kingbird.myphotos.cc/packing/squares_in_squares.html"
+  },
+  {
+    "n": 73,
+    "side": 9.0,
+    "side_expr": "9",
+    "proven_optimal": false,
+    "source": "https://kingbird.myphotos.cc/packing/squares_in_squares.html"
+  },
+  {
+    "n": 74,
+    "side": 9.0,
+    "side_expr": "9",
+    "proven_optimal": false,
+    "source": "https://kingbird.myphotos.cc/packing/squares_in_squares.html"
+  },
+  {
+    "n": 75,
+    "side": 9.0,
+    "side_expr": "9",
+    "proven_optimal": false,
+    "source": "https://kingbird.myphotos.cc/packing/squares_in_squares.html"
+  },
+  {
+    "n": 76,
+    "side": 9.0,
+    "side_expr": "9",
+    "proven_optimal": false,
+    "source": "https://kingbird.myphotos.cc/packing/squares_in_squares.html"
+  },
+  {
+    "n": 77,
+    "side": 9.0,
+    "side_expr": "9",
+    "proven_optimal": false,
+    "source": "https://kingbird.myphotos.cc/packing/squares_in_squares.html"
+  },
+  {
+    "n": 78,
+    "side": 9.0,
+    "side_expr": "9",
+    "proven_optimal": false,
+    "source": "https://kingbird.myphotos.cc/packing/squares_in_squares.html"
+  },
+  {
+    "n": 79,
+    "side": 9.0,
+    "side_expr": "9",
+    "proven_optimal": true,
+    "source": "https://kingbird.myphotos.cc/packing/squares_in_squares.html"
+  },
+  {
+    "n": 80,
+    "side": 9.0,
+    "side_expr": "9",
+    "proven_optimal": true,
+    "source": "https://kingbird.myphotos.cc/packing/squares_in_squares.html"
+  },
+  {
+    "n": 81,
+    "side": 9.0,
+    "side_expr": "9",
+    "proven_optimal": true,
+    "source": "https://kingbird.myphotos.cc/packing/squares_in_squares.html"
+  },
+  {
+    "n": 82,
+    "side": 9.53553390593273,
+    "side_expr": "6 + 5*sqrt(2)/2",
+    "proven_optimal": false,
+    "source": "https://kingbird.myphotos.cc/packing/squares_in_squares.html"
+  },
+  {
+    "n": 83,
+    "side": 9.63475764863108,
+    "side_expr": null,
+    "proven_optimal": false,
+    "source": "https://kingbird.myphotos.cc/packing/squares_in_squares.html"
+  },
+  {
+    "n": 84,
+    "side": 9.70710678118654,
+    "side_expr": "9 + 1/sqrt(2)",
+    "proven_optimal": false,
+    "source": "https://kingbird.myphotos.cc/packing/squares_in_squares.html"
+  },
+  {
+    "n": 85,
+    "side": 9.74264068711928,
+    "side_expr": "11/2 + 3*sqrt(2)",
+    "proven_optimal": false,
+    "source": "https://kingbird.myphotos.cc/packing/squares_in_squares.html"
+  },
+  {
+    "n": 86,
+    "side": 9.82287565553229,
+    "side_expr": "(17 + sqrt(7))/2",
+    "proven_optimal": false,
+    "source": "https://kingbird.myphotos.cc/packing/squares_in_squares.html"
+  },
+  {
+    "n": 87,
+    "side": 9.83881526994826,
+    "side_expr": null,
+    "proven_optimal": false,
+    "source": "https://kingbird.myphotos.cc/packing/squares_in_squares.html"
+  },
+  {
+    "n": 88,
+    "side": 9.88815305375857,
+    "side_expr": null,
+    "proven_optimal": false,
+    "source": "https://kingbird.myphotos.cc/packing/squares_in_squares.html"
+  },
+  {
+    "n": 89,
+    "side": 9.94974746830583,
+    "side_expr": "5 + 7*sqrt(2)/2",
+    "proven_optimal": false,
+    "source": "https://kingbird.myphotos.cc/packing/squares_in_squares.html"
+  },
+  {
+    "n": 90,
+    "side": 10.0,
+    "side_expr": "10",
+    "proven_optimal": false,
+    "source": "https://kingbird.myphotos.cc/packing/squares_in_squares.html"
+  },
+  {
+    "n": 91,
+    "side": 10.0,
+    "side_expr": "10",
+    "proven_optimal": false,
+    "source": "https://kingbird.myphotos.cc/packing/squares_in_squares.html"
+  },
+  {
+    "n": 92,
+    "side": 10.0,
+    "side_expr": "10",
+    "proven_optimal": false,
+    "source": "https://kingbird.myphotos.cc/packing/squares_in_squares.html"
+  },
+  {
+    "n": 93,
+    "side": 10.0,
+    "side_expr": "10",
+    "proven_optimal": false,
+    "source": "https://kingbird.myphotos.cc/packing/squares_in_squares.html"
+  },
+  {
+    "n": 94,
+    "side": 10.0,
+    "side_expr": "10",
+    "proven_optimal": false,
+    "source": "https://kingbird.myphotos.cc/packing/squares_in_squares.html"
+  },
+  {
+    "n": 95,
+    "side": 10.0,
+    "side_expr": "10",
+    "proven_optimal": false,
+    "source": "https://kingbird.myphotos.cc/packing/squares_in_squares.html"
+  },
+  {
+    "n": 96,
+    "side": 10.0,
+    "side_expr": "10",
+    "proven_optimal": false,
+    "source": "https://kingbird.myphotos.cc/packing/squares_in_squares.html"
+  },
+  {
+    "n": 97,
+    "side": 10.0,
+    "side_expr": "10",
+    "proven_optimal": false,
+    "source": "https://kingbird.myphotos.cc/packing/squares_in_squares.html"
+  },
+  {
+    "n": 98,
+    "side": 10.0,
+    "side_expr": "10",
+    "proven_optimal": true,
+    "source": "https://kingbird.myphotos.cc/packing/squares_in_squares.html"
+  },
+  {
+    "n": 99,
+    "side": 10.0,
+    "side_expr": "10",
+    "proven_optimal": true,
+    "source": "https://kingbird.myphotos.cc/packing/squares_in_squares.html"
+  },
+  {
+    "n": 100,
+    "side": 10.0,
+    "side_expr": "10",
+    "proven_optimal": true,
+    "source": "https://kingbird.myphotos.cc/packing/squares_in_squares.html"
+  }
 ]

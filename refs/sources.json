@@ -1,0 +1,15 @@
+[
+ {"id":"friedman-survey-2009","url":"https://doi.org/10.37236/28"},
+ {"id":"stromquist-2003","url":"https://doi.org/10.37236/1701","pdf":"https://www.combinatorics.org/ojs/index.php/eljc/article/download/v10i1r8/pdf/"},
+ {"id":"nagamochi-2005","url":"https://doi.org/10.37236/1934","pdf":"https://www.combinatorics.org/ojs/index.php/eljc/article/download/v12i1r37/pdf/"},
+ {"id":"bentz-13-46-2010","url":"https://doi.org/10.37236/398","pdf":"https://www.combinatorics.org/ojs/index.php/eljc/article/download/v17i1r126/pdf/"},
+ {"id":"bentz-22-33-2016","url":"https://arxiv.org/abs/1606.03746","pdf":"https://arxiv.org/pdf/1606.03746"},
+ {"id":"gensane-ryckelynck-2005","url":"https://doi.org/10.1007/s00454-004-1129-z"},
+ {"id":"erdos-graham-1975","url":"https://doi.org/10.1016/0097-3165(75)90099-0"},
+ {"id":"roth-vaughan-1978","url":"https://doi.org/10.1016/0097-3165(78)90005-5"},
+ {"id":"chung-graham-2009","url":"https://doi.org/10.1016/j.jcta.2009.02.005"},
+ {"id":"wang-dong-li-2016","url":"https://arxiv.org/abs/1603.02368","pdf":"https://arxiv.org/pdf/1603.02368"},
+ {"id":"mcclenagan-2024","url":"https://doi.org/10.24124/2024/59553"},
+ {"id":"brass-moser-pach-2005","url":"https://doi.org/10.1007/0-387-29929-7"},
+ {"id":"abrahamsen-stade-2024","url":"https://arxiv.org/abs/2404.09835","pdf":"https://arxiv.org/pdf/2404.09835"}
+]

@@ -1,3 +1,4 @@
+mod game;
 mod api;
 mod leaderboard;
 
@@ -28,7 +29,7 @@ fn switch(route: Route) -> Html {
     match route {
         Route::Home => html! { <Home /> },
         Route::Play { n } if (1..=MAX_N).contains(&n) => {
-            html! { <p>{ format!("Game board for {n} squares goes here.") }</p> }
+            html! { <game::Game n={n} /> }
         }
         Route::Leaderboard => html! { <Leaderboard /> },
         Route::LeaderboardN { n } => html! { <LeaderboardN {n} /> },
