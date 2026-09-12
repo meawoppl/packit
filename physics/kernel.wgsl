@@ -40,7 +40,9 @@ fn step(@builtin(global_invocation_id) id:vec3<u32>) {
  if(me.p.x>side-h){force.x-=params.b.z*(me.p.x-side+h)+12.0*me.v.x;}
  if(me.p.y>side-h){force.y-=params.b.z*(me.p.y-side+h)+12.0*me.v.y;}
  if(i==u32(params.mouse.z) && params.mouse.w>0.0){
-  force+=(params.mouse.xy-me.p.xy)*100.0-me.v.xy*14.0;
+  let delta=params.mouse.xy-me.p.xy;
+  let gain=100.0*min(1.0,0.4/max(0.0001,length(delta)));
+  force+=delta*gain-me.v.xy*14.0;
  }
  var vel=(me.v.xy+force*dt)*exp(-params.b.y*dt);
  vel=clamp(vel,vec2<f32>(-15.0),vec2<f32>(15.0));

@@ -1,7 +1,7 @@
 // Unit squares, bottom-left origin, radians. The GPU computes all pair forces.
 export class PackingPhysics {
   constructor(n, side) {
-    this.n=n; this.side=side; this.data=new Float32Array(n*8);
+    this.n=n; this.side=side; this.targetSide=side; this.bandTension=0; this.bandVelocity=0; this.data=new Float32Array(n*8);
     this.gravity=false; this.attraction=false; this.damping=3; this.stiffness=900;
     this.mouse={x:0,y:0,index:-1,down:false}; this.mode='CPU fallback';
     this.paused=false; this.disposed=false; this.revision=0; this.reset();
@@ -46,6 +46,7 @@ export class PackingPhysics {
         else for(let i=0;i<this.data.length;i++)if(this.data[i]===initial[i])this.data[i]=computed[i];
       }
       this.readback.unmap();
+      if(revision===this.revision)for(let s=0;s<steps;s++)this.stepBand(1/120);
     }catch(e){if(!this.disposed){this.mode='CPU fallback';this.device=null;console.info('GPU step failed',e);}}
   }
   cpuStep(dt) {
@@ -63,14 +64,27 @@ export class PackingPhysics {
       const h=radius(a,1,0);
       if(x<h)fx+=this.stiffness*(h-x)-12*vx;if(y<h)fy+=this.stiffness*(h-y)-12*vy;
       if(x>side-h)fx-=this.stiffness*(x-side+h)+12*vx;if(y>side-h)fy-=this.stiffness*(y-side+h)+12*vy;
-      if(this.mouse.down&&this.mouse.index===i){fx+=(this.mouse.x-x)*100-vx*14;fy+=(this.mouse.y-y)*100-vy*14;}
+      if(this.mouse.down&&this.mouse.index===i){const dx=this.mouse.x-x,dy=this.mouse.y-y,gain=100*Math.min(1,.4/Math.max(.0001,Math.hypot(dx,dy)));fx+=dx*gain-vx*14;fy+=dy*gain-vy*14;}
       const clamp=v=>Math.max(-15,Math.min(15,v));next[k+4]=clamp((vx+fx*dt)*Math.exp(-this.damping*dt));next[k+5]=clamp((vy+fy*dt)*Math.exp(-this.damping*dt));next[k+6]=Math.max(-8,Math.min(8,(old[k+6]+torque*dt)*Math.exp(-(this.damping+3)*dt)));
       next[k]=x+next[k+4]*dt;next[k+1]=y+next[k+5]*dt;next[k+2]=a+next[k+6]*dt;
     }
     this.data=next;
+    this.stepBand(dt);
+  }
+  // The top and right edges share a spring coordinate; left/bottom stay anchored.
+  stepBand(dt){
+    if(!this.bandTension){this.bandVelocity=0;return;}
+    let reaction=0;
+    for(let i=0;i<this.n;i++){
+      const k=i*8,h=.5*(Math.abs(Math.cos(this.data[k+2]))+Math.abs(Math.sin(this.data[k+2])));
+      reaction+=this.stiffness*(Math.max(0,this.data[k]+h-this.side)+Math.max(0,this.data[k+1]+h-this.side));
+    }
+    const force=reaction-this.n*this.bandTension*(this.side-this.targetSide);
+    this.bandVelocity=Math.max(-1,Math.min(1,(this.bandVelocity+force*dt/(2*this.n))*Math.exp(-8*dt)));
+    this.side=Math.max(Math.sqrt(this.n),Math.min(1000,this.side+this.bandVelocity*dt));
   }
   arrangement(){return {n:this.n,side:this.side,squares:Array.from({length:this.n},(_,i)=>({cx:this.data[i*8],cy:this.data[i*8+1],theta:this.data[i*8+2]}))};}
-  load(a){if(a.n!==this.n)throw Error('Square count mismatch');this.side=a.side;a.squares.forEach((s,i)=>{this.data[i*8]=s.cx;this.data[i*8+1]=s.cy;this.data[i*8+2]=s.theta;this.data.fill(0,i*8+3,i*8+8);});}
+  load(a){if(a.n!==this.n)throw Error('Square count mismatch');this.side=a.side;this.targetSide=a.side;this.bandVelocity=0;a.squares.forEach((s,i)=>{this.data[i*8]=s.cx;this.data[i*8+1]=s.cy;this.data[i*8+2]=s.theta;this.data.fill(0,i*8+3,i*8+8);});}
   dispose(){this.disposed=true;this.device?.destroy();}
 }
 export function createPhysics(n,side){return new PackingPhysics(n,side);}
