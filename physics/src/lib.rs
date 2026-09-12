@@ -339,9 +339,10 @@ impl Physics {
             || !a.side.is_finite()
             || !(1.0..=1000.0).contains(&a.side)
             || a.squares.iter().any(|p| {
-                ![p.cx, p.cy, p.theta]
-                    .iter()
-                    .all(|v| v.is_finite() && v.abs() <= 1000.0)
+                !p.theta.is_finite()
+                    || ![p.cx, p.cy]
+                        .iter()
+                        .all(|v| v.is_finite() && v.abs() <= 1000.0)
             })
         {
             return;
@@ -354,7 +355,7 @@ impl Physics {
             *b = Body {
                 x: p.cx as f32,
                 y: p.cy as f32,
-                theta: p.theta as f32,
+                theta: p.theta.sin().atan2(p.theta.cos()) as f32,
                 ..Body::default()
             };
         }

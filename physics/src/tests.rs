@@ -145,3 +145,16 @@ fn rotated_overlap_and_attraction() {
     let b = p.bodies();
     assert!(b[1].x - b[0].x < 4.0);
 }
+
+#[test]
+fn finite_large_import_angles_keep_their_orientation() {
+    let p = Physics::new(1, 4.0);
+    let mut arrangement = p.arrangement();
+    arrangement.squares[0].theta = 1e100;
+    arrangement.squares[0].cx = 1.0;
+    p.load(&arrangement);
+    let b = p.bodies()[0];
+    assert_eq!(b.x, 1.0);
+    assert!(b.theta.is_finite());
+    assert!((b.theta.sin() as f64 - 1e100_f64.sin()).abs() < 1e-6);
+}
