@@ -20,10 +20,10 @@ Mathematics Subject Classifications: 05B40, 52C15
 
 ## Abstract
 
-For a positive integer <i>N</i>, let $s(N)$ be the side length of the minimum square into which <i>N</i> unit squares can be packed. This paper shows that, for given real numbers $a,b\ge 2$, no more than $ab-(a+1-\lceil a\rceil)-(b+1-\lceil b\rceil)$ unit squares can be packed in any $a'\times b'$ rectangle <i>R</i> with $a'<a$ and $b'<b$. From this, we can deduce that, for any integer $N\ge 4$,
+For a positive integer <i>N</i>, let $s(N)$ be the side length of the minimum square into which <i>N</i> unit squares can be packed. This paper shows that, for given real numbers $a,b\ge 2$, no more than $ab-(a+1-\lceil a\rceil)-(b+1-\lceil b\rceil)$ unit squares can be packed in any $a'\times b'$ rectangle <i>R</i> with $a'\lt a$ and $b'\lt b$. From this, we can deduce that, for any integer $N\ge 4$,
 
 ```math
-s(N)\ge \min\left\{\lceil\sqrt{N}\rceil,\sqrt{N-2\lfloor\sqrt{N}\rfloor+1}+1\right\}.
+s(N)\ge \min\left\lbrace \lceil\sqrt{N}\rceil,\sqrt{N-2\lfloor\sqrt{N}\rfloor+1}+1\right\rbrace .
 ```
 
 In particular, for any integer $n\ge 2$, $s(n^2)=s(n^2-1)=s(n^2-2)=n$ holds.
@@ -32,9 +32,9 @@ In particular, for any integer $n\ge 2$, $s(n^2)=s(n^2-1)=s(n^2-2)=n$ holds.
 
 Packing geometric objects such as circles and squares into another object is one of the fundamental problems in combinatorial geometry [1, 2, 4]. For a positive integer <i>N</i>, let $s(N)$ be the side length of the minimum square that can contain <i>N</i> unit squares in the plane whose interiors do not overlap. The problem of packing unit squares into a square was initiated by Erdős and Graham [2]. They prove that, for a large number <i>s</i>, unit squares can be packed into an $s\times s$ square so that the wasted area is $O(s^{7/11})$. This is surprisingly small compared with the wasted area in the ‘trivial’ packing of $N=n^2-n$ unit squares in an $n\times n$ square, where <i>n</i> is an integer more than 1.
 
-Determining or estimating $s(N)$ is posed as one of the unsolved geometric problems listed by Croft et al. [1]. We easily observe that for any positive integer <i>N</i>, $\sqrt{N}\le s(N)\le\lceil\sqrt{N}\rceil$, and that for any square number $N=n^2$, $s(N)=n$. It was conjectured that $s(n^2-n)=n$ holds for integers $n\ge 2$ (whenever <i>n</i> is small). For $n\ge 17$, $s(n^2-n)<n$ is demonstrated by an explicit construction (see [3]). Friedman [3] conjectures that, once $s(n^2-k)=n$ holds for some integers <i>n</i> and <i>k</i>, $s((n+1)^2-k)=n+1$ holds. Determining $s(N)$ for non-square numbers <i>N</i> seems rather difficult. Currently such $s(N)$ has been determined only for some limited numbers $N<100$ (see [3, 5]). These nontrivial values for $s(N)$ are based on lower bounds which are established in a particular way for each <i>N</i>.
+Determining or estimating $s(N)$ is posed as one of the unsolved geometric problems listed by Croft et al. [1]. We easily observe that for any positive integer <i>N</i>, $\sqrt{N}\le s(N)\le\lceil\sqrt{N}\rceil$, and that for any square number $N=n^2$, $s(N)=n$. It was conjectured that $s(n^2-n)=n$ holds for integers $n\ge 2$ (whenever <i>n</i> is small). For $n\ge 17$, $s(n^2-n)\lt n$ is demonstrated by an explicit construction (see [3]). Friedman [3] conjectures that, once $s(n^2-k)=n$ holds for some integers <i>n</i> and <i>k</i>, $s((n+1)^2-k)=n+1$ holds. Determining $s(N)$ for non-square numbers <i>N</i> seems rather difficult. Currently such $s(N)$ has been determined only for some limited numbers $N\lt 100$ (see [3, 5]). These nontrivial values for $s(N)$ are based on lower bounds which are established in a particular way for each <i>N</i>.
 
-In this paper, we introduce a lower bound on $s(N)$ that is systematically constructible for any integer $N\ge 4$. For two positive real numbers <i>a</i> and <i>b</i>, let $\nu(a,b)$ denote the maximum number of unit squares that can be packed into the inside of an $a'\times b'$ rectangle <i>R</i> with $a'<a$ and $b'<b$. A trivial upper bound on $\nu(a,b)$ is $\nu(a,b)<ab$. In this paper, we prove the following result.
+In this paper, we introduce a lower bound on $s(N)$ that is systematically constructible for any integer $N\ge 4$. For two positive real numbers <i>a</i> and <i>b</i>, let $\nu(a,b)$ denote the maximum number of unit squares that can be packed into the inside of an $a'\times b'$ rectangle <i>R</i> with $a'\lt a$ and $b'\lt b$. A trivial upper bound on $\nu(a,b)$ is $\nu(a,b)\lt ab$. In this paper, we prove the following result.
 
 **Theorem 1.** For real numbers $a,b\ge 2$,
 
@@ -46,8 +46,8 @@ In particular, for two integers $a\ge b\ge 2$, we see that an $a\times b$ rectan
 
 **Theorem 2.**
 
-- (i) For any positive integer <i>N</i> such that $N\in\{n^2,n^2-1,n^2-2\}$ for some integer $n\ge 1$, $s(N)=n$ holds.
-- (ii) For any integer $N\ge 4$ such that $N\notin\{n^2,n^2-1,n^2-2\mid\text{integers }n\ge 1\}$,
+- (i) For any positive integer <i>N</i> such that $N\in\lbrace n^2,n^2-1,n^2-2\rbrace $ for some integer $n\ge 1$, $s(N)=n$ holds.
+- (ii) For any integer $N\ge 4$ such that $N\notin\lbrace n^2,n^2-1,n^2-2\mid\text{integers }n\ge 1\rbrace $,
 
 ```math
 s(N)\ge\sqrt{N-2\lfloor\sqrt{N}\rfloor+1}+1>\sqrt{N}.
@@ -75,9 +75,9 @@ and inequality $\sqrt{N+2}\ge\lceil\sqrt{N}\rceil$. Now assume that $\sqrt{N}$ i
 
 Hence $\sqrt{N-2\lfloor\sqrt{N}\rfloor+1}+1\ge\lfloor\sqrt{N}\rfloor+1$ if and only if $\sqrt{N+2}\ge\lceil\sqrt{N}\rceil$. A positive integer <i>N</i> satisfies $\sqrt{N+2}\ge\lceil\sqrt{N}\rceil$ if and only if there is an integer <i>n</i> such that $\sqrt{N+2}\ge n\ge\sqrt{N}$, i.e., $n^2\ge N\ge n^2-2$. It is known that $s(1)=1$ and $s(2)=s(3)=s(4)=2$ [4]. Let $N\ge 4$.
 
-We first consider the case where $\sqrt{N+2}\ge\lceil\sqrt{N}\rceil$. Then by Theorem 1 with $a=b=\lceil\sqrt{N}\rceil\ge 2$, we have $\nu(\lceil\sqrt{N}\rceil,\lceil\sqrt{N}\rceil)<(\lceil\sqrt{N}\rceil)^2-2\le N$. This says that <i>N</i> unit squares cannot be packed in any square with side length less than $\lceil\sqrt{N}\rceil$. Thus, $s(N)\ge\lceil\sqrt{N}\rceil$. So for any integer $N\in\{n^2,n^2-1,n^2-2\}$, where $n\ge 1$ is an integer, we have $s(N)\ge n=\lceil\sqrt{N}\rceil\ge s(N)$. This proves (i).
+We first consider the case where $\sqrt{N+2}\ge\lceil\sqrt{N}\rceil$. Then by Theorem 1 with $a=b=\lceil\sqrt{N}\rceil\ge 2$, we have $\nu(\lceil\sqrt{N}\rceil,\lceil\sqrt{N}\rceil)\lt (\lceil\sqrt{N}\rceil)^2-2\le N$. This says that <i>N</i> unit squares cannot be packed in any square with side length less than $\lceil\sqrt{N}\rceil$. Thus, $s(N)\ge\lceil\sqrt{N}\rceil$. So for any integer $N\in\lbrace n^2,n^2-1,n^2-2\rbrace $, where $n\ge 1$ is an integer, we have $s(N)\ge n=\lceil\sqrt{N}\rceil\ge s(N)$. This proves (i).
 
-We next consider the case where $\sqrt{N+2}<\lceil\sqrt{N}\rceil$. Let $k=\lfloor\sqrt{N}\rfloor\ge 2$ and $\alpha=\sqrt{N-2\lfloor\sqrt{N}\rfloor+1}-\lfloor\sqrt{N}\rfloor+1$. Note that $\alpha$ is a solution to $(\alpha+k-1)^2=N-2k+1$. Note that $\alpha<1$ since $\sqrt{N+2}<\lceil\sqrt{N}\rceil$. Hence by Theorem 1 with $a=b=k+\alpha\ge 2$, we have
+We next consider the case where $\sqrt{N+2}\lt \lceil\sqrt{N}\rceil$. Let $k=\lfloor\sqrt{N}\rfloor\ge 2$ and $\alpha=\sqrt{N-2\lfloor\sqrt{N}\rfloor+1}-\lfloor\sqrt{N}\rfloor+1$. Note that $\alpha$ is a solution to $(\alpha+k-1)^2=N-2k+1$. Note that $\alpha\lt 1$ since $\sqrt{N+2}\lt \lceil\sqrt{N}\rceil$. Hence by Theorem 1 with $a=b=k+\alpha\ge 2$, we have
 
 ```math
 \begin{aligned}
@@ -98,23 +98,23 @@ This proves (ii).
 
 ## 3 Unavoidable Sets
 
-The conventional method for deriving a lower bound on $s(N)$ [3] is as follows. Suppose that we wish to show $s(N)\ge a$. Let <i>R</i> be a square with side length *less* than <i>a</i>, and <i>U</i> be a set of some points inside <i>R</i>, where <i>U</i> is called *unavoidable* if any unit square placed inside <i>R</i> must contain at least one point from <i>U</i>. If we successfully obtain an avoidable set <i>U</i> with $\lvert U\rvert<N$, then we can conclude that $\lvert U\rvert+1$ unit squares cannot be packed inside <i>R</i>, i.e., $s(N)\ge s(\lvert U\rvert+1)\ge a$. [Note avoidable.](#transcription-notes) For example, let $N=2$. Take a square <i>R</i> with side length less than $a=2$. Then we easily see that <i>U</i> consisting of the center of <i>R</i> is unavoidable, and thereby we need a square <i>R</i> with side length at least $a=2$ to pack two unit squares, i.e., $s(2)\ge 2$. An unavoidable set <i>U</i> with $\lvert U\rvert<N$ over a smaller square <i>R</i> provides a better lower bound on $s(N)$. Only for few integers $N<100$, have such unavoidable sets been constructed to obtain nontrivial lower bounds on $s(N)$. However, these constructions are not systematic in terms of <i>N</i>, providing no general lower bound on $s(N)$ for large <i>N</i>.
+The conventional method for deriving a lower bound on $s(N)$ [3] is as follows. Suppose that we wish to show $s(N)\ge a$. Let <i>R</i> be a square with side length *less* than <i>a</i>, and <i>U</i> be a set of some points inside <i>R</i>, where <i>U</i> is called *unavoidable* if any unit square placed inside <i>R</i> must contain at least one point from <i>U</i>. If we successfully obtain an avoidable set <i>U</i> with $\lvert U\rvert\lt N$, then we can conclude that $\lvert U\rvert+1$ unit squares cannot be packed inside <i>R</i>, i.e., $s(N)\ge s(\lvert U\rvert+1)\ge a$. [Note avoidable.](#transcription-notes) For example, let $N=2$. Take a square <i>R</i> with side length less than $a=2$. Then we easily see that <i>U</i> consisting of the center of <i>R</i> is unavoidable, and thereby we need a square <i>R</i> with side length at least $a=2$ to pack two unit squares, i.e., $s(2)\ge 2$. An unavoidable set <i>U</i> with $\lvert U\rvert\lt N$ over a smaller square <i>R</i> provides a better lower bound on $s(N)$. Only for few integers $N\lt 100$, have such unavoidable sets been constructed to obtain nontrivial lower bounds on $s(N)$. However, these constructions are not systematic in terms of <i>N</i>, providing no general lower bound on $s(N)$ for large <i>N</i>.
 
 In this paper, we use not only points but also other geometric objects such as line segments and rectangles to define our unavoidable set <i>U</i>. Recall that the trivial lower bound $s(N)\ge\sqrt{N}$ follows from the fact that each unit square consumes at least area 1 from the entire square <i>R</i>, where <i>R</i> can be regarded as an unavoidable set from which unit square takes score 1.
 
 In the $xy$-plane, a line segment <i>L</i> connecting two points $p_1=(x_1,y_1)$ and $p_2=(x_2,y_2)$ is denoted by $L=[p_1,p_2]$ or $L=[(x_1,y_1),(x_2,y_2)]$. A rectangle $R'$ with edges parallel with <i>x</i>-, <i>y</i>-axes may be written as $[x_1,x_2]\times[y_1,y_2]$ if the four corners of $R'$ are given by $(x_1,y_1)$, $(x_1,y_2)$, $(x_2,y_1)$ and $(x_2,y_2)$ for real numbers $x_1\le x_2$ and $y_1\le y_2$.
 
-To prove $\nu(a,b)<ab-(a+1-\lceil a\rceil)-(b+1-\lceil b\rceil)$ for given real numbers $a,b\ge 2$, we consider a rectangle $R=[0,a]\times[0,b]$ in the $xy$-plane. Let <i>U</i> consist of a rectangle $R^{\ast}$, four lines $L_i$ ($i=1,2,3,4$), a set <i>Q</i> of eight points, and a set <i>P</i> of $2\lceil a\rceil+2\lceil b\rceil-12$ points, such that
+To prove $\nu(a,b)\lt ab-(a+1-\lceil a\rceil)-(b+1-\lceil b\rceil)$ for given real numbers $a,b\ge 2$, we consider a rectangle $R=[0,a]\times[0,b]$ in the $xy$-plane. Let <i>U</i> consist of a rectangle $R^{\ast}$, four lines $L_i$ ($i=1,2,3,4$), a set <i>Q</i> of eight points, and a set <i>P</i> of $2\lceil a\rceil+2\lceil b\rceil-12$ points, such that
 
 ```math
 \begin{aligned}
 R^{\ast}&=[1,a-1]\times[1,b-1],\\
 L_1&=[(0.9,1),(a-0.9,1)],& L_2&=[(0.9,b-1),(a-0.9,b-1)],\\
 L_3&=[(1,0.9),(1,b-0.9)],& L_4&=[(a-1,0.9),(a-1,b-0.9)],\\
-Q&=\{(0.9,1),(a-0.9,1),(0.9,b-1),(a-0.9,b-1),\\
-&\qquad (1,0.9),(1,b-0.9),(a-1,0.9),(a-1,b-0.9)\},\\
-P&=\{(i,0.9),(i,a-0.9)\mid i=2,3,\ldots,\lceil a\rceil-2\}\\
-&\quad\cup\{(0.9,j),(b-0.9,j)\mid j=2,3,\ldots,\lceil b\rceil-2\}.
+Q&=\lbrace (0.9,1),(a-0.9,1),(0.9,b-1),(a-0.9,b-1),\\
+&\qquad (1,0.9),(1,b-0.9),(a-1,0.9),(a-1,b-0.9)\rbrace ,\\
+P&=\lbrace (i,0.9),(i,a-0.9)\mid i=2,3,\ldots,\lceil a\rceil-2\rbrace \\
+&\quad\cup\lbrace (0.9,j),(b-0.9,j)\mid j=2,3,\ldots,\lceil b\rceil-2\rbrace .
 \end{aligned}
 ```
 
@@ -124,7 +124,7 @@ See Fig. 1. [Note coordinates.](#transcription-notes)
 
 Let $\lambda>1$. We say that <i>R</i> and <i>U</i> are *shrunken* toward the origin $(0,0)$ by factor $\lambda^{-1}$ if we map each point $(x,y)$ in <i>R</i> and <i>U</i> to a new point $(\lambda^{-1}x,\lambda^{-1}y)$. Let $\lambda^{-1}R$ and $\lambda^{-1}U$ respectively denote such <i>R</i> and <i>U</i> shrunken by factor $\lambda^{-1}$.
 
-For a given unit square <i>S</i> inside $\lambda^{-1}R$ and an object $K\in\{Q,P,L_1,L_2,L_3,L_4,R^{\ast}\}$, we define *score* $\sigma(S;K)$ of <i>S</i> by <i>K</i> as follows.
+For a given unit square <i>S</i> inside $\lambda^{-1}R$ and an object $K\in\lbrace Q,P,L_1,L_2,L_3,L_4,R^{\ast}\rbrace $, we define *score* $\sigma(S;K)$ of <i>S</i> by <i>K</i> as follows.
 
 - $\sigma(S;R^{\ast})$ = (the area of the intersection of <i>S</i> and $R^{\ast}$) $\times\lambda^2$,
 - $\sigma(S;L_i)$ = (the sum of length of the intersection of <i>S</i> and line segment $L_i$) $\times 0.5\times\lambda$,
@@ -141,7 +141,7 @@ Note that the total score from $L_i$ ($i=1,2,3,4$) and <i>Q</i> is $2(a-1.8)\tim
 
 **Lemma 1.** Any unit square <i>S</i> inside $\lambda^{-1}R$ satisfies $\sigma(S)>1$.
 
-We show that Theorem 1 follows from Lemma 1. Assume that $N'$ unit squares are packed inside $\lambda^{-1}R$. Each of the $N'$ unit squares has $\sigma(S)>1$ by Lemma 1 and the total score of <i>U</i> is $ab-(a+1-\lceil a\rceil)-(b+1-\lceil b\rceil)$. Then we have $N'<ab-(a+1-\lceil a\rceil)-(b+1-\lceil b\rceil)$ for any factor $\lambda^{-1}<1$, i.e., $\nu(a,b)<ab-(a+1-\lceil a\rceil)-(b+1-\lceil b\rceil)$, as required.
+We show that Theorem 1 follows from Lemma 1. Assume that $N'$ unit squares are packed inside $\lambda^{-1}R$. Each of the $N'$ unit squares has $\sigma(S)>1$ by Lemma 1 and the total score of <i>U</i> is $ab-(a+1-\lceil a\rceil)-(b+1-\lceil b\rceil)$. Then we have $N'\lt ab-(a+1-\lceil a\rceil)-(b+1-\lceil b\rceil)$ for any factor $\lambda^{-1}\lt 1$, i.e., $\nu(a,b)\lt ab-(a+1-\lceil a\rceil)-(b+1-\lceil b\rceil)$, as required.
 
 A square <i>S</i> with side length $\lambda$ is called a $\lambda\times\lambda$ square. For a notational convenience to prove Lemma 1, we consider packing $\lambda\times\lambda$ squares with $\lambda>1$ into the original rectangle $R=[0,a]\times[0,b]$, instead of considering $\lambda^{-1}R$ and $\lambda^{-1}U$. In this case, each $L_i$ contributes to $\sigma(S)$ by 0.5 per length and $R^{\ast}$ by 1 per area while each point in <i>Q</i> (resp., <i>P</i>) contributes to $\sigma(S)$ by 0.45 (resp., 0.5). It suffices to show that any $\lambda\times\lambda$ square <i>S</i> with $\lambda\in(1,1.01]$ has $\sigma(S)>1$ over the original <i>R</i> and <i>U</i>.
 
@@ -151,7 +151,7 @@ In this section, we prepare some technical lemmas in order to establish a proof 
 
 **Lemma 2.** Let <i>S</i> be a $\lambda\times\lambda$ square with $\lambda\in[1,1.01]$. For a line <i>L</i> with distance $h\in[0,(\sqrt{2}-1)/2)$ from the center of <i>S</i>, let <i>c</i> be the length of the intersection of <i>S</i> and <i>L</i> (see Fig. 2(a)). Then $c\ge\lambda$ or $c>1$.
 
-**Proof:** Let <i>L</i> intersect edges $e_1$ and $e_2$ of <i>S</i>. If $e_1$ and $e_2$ are not adjacent, then $c\ge\lambda$. We consider the case where $e_1$ and $e_2$ are adjacent. We can assume that $\lambda=1$ to estimate the minimum <i>c</i>. Let $\theta$ denote the angle made by <i>L</i> and $e_2$, where $0<\theta\le\pi/4$ is assumed without loss of generality. Let $t=\tan(\theta/2)$, where $0<t=\tan(\theta/2)\le\sqrt{2}-1$ for $\theta\in(0,\pi/4]$. Then we have
+**Proof:** Let <i>L</i> intersect edges $e_1$ and $e_2$ of <i>S</i>. If $e_1$ and $e_2$ are not adjacent, then $c\ge\lambda$. We consider the case where $e_1$ and $e_2$ are adjacent. We can assume that $\lambda=1$ to estimate the minimum <i>c</i>. Let $\theta$ denote the angle made by <i>L</i> and $e_2$, where $0\lt \theta\le\pi/4$ is assumed without loss of generality. Let $t=\tan(\theta/2)$, where $0\lt t=\tan(\theta/2)\le\sqrt{2}-1$ for $\theta\in(0,\pi/4]$. Then we have
 
 ```math
 c=-h\frac{(1+t^2)^2}{2t(1-t^2)}+\frac{(1+t^2)(1+2t-t^2)}{4t(1-t^2)},
@@ -163,13 +163,13 @@ which is a decreasing function of <i>h</i> for a fixed <i>t</i>. Hence it suffic
 f\left(\frac{\sqrt{2}-1}{2},t\right)=(t+1-\sqrt{2})^2\left(-\sqrt{2}t^2+(2+2\sqrt{2})t+2+\sqrt{2}\right).
 ```
 
-By the concavity of $g(t)=-\sqrt{2}t^2+(2+2\sqrt{2})t+2+\sqrt{2}$, $g(0)>0$ and $g(\sqrt{2}-1)>0$ mean $g(t)>0$ ($0<t\le\sqrt{2}-1$). Hence $f((\sqrt{2}-1)/2,t)\ge 0$ and $c>1$.
+By the concavity of $g(t)=-\sqrt{2}t^2+(2+2\sqrt{2})t+2+\sqrt{2}$, $g(0)>0$ and $g(\sqrt{2}-1)>0$ mean $g(t)>0$ ($0\lt t\le\sqrt{2}-1$). Hence $f((\sqrt{2}-1)/2,t)\ge 0$ and $c>1$.
 
 **Lemma 3.** Let <i>S</i> be a $\lambda\times\lambda$ square with $\lambda\in[1,1.01]$ such that one corner of <i>S</i> touches the <i>x</i>-axis and <i>S</i> is entirely above the <i>x</i>-axis. For a line $L:y=h$ with $h\in(0.5,\sqrt{2}-0.5)$, let <i>c</i> be the length of the intersection of <i>S</i> and <i>L</i> (see Fig. 2(b)). Then $c\ge\lambda$ or $c>1$.
 
 **Figure 2:** (a) Illustration for Lemma 2; (b) Illustration for Lemma 3. [View the diagrams (PDF, p. 6).](../downloads/nagamochi-2005.pdf#page=6)
 
-**Proof:** Let <i>L</i> intersect edges $e_1$ and $e_2$ of <i>S</i>. We consider the case where $e_1$ and $e_2$ are adjacent (otherwise $c\ge\lambda$). By $h>0.5$, both $e_1$ and $e_2$ are not touching the <i>x</i>-axis. We can assume that $\lambda=1$ to estimate the minimum <i>c</i>. Let $\theta$ be angle made by <i>L</i> and $e_2$, where $0<\theta\le\pi/4$ is assumed without loss of generality. Let $t=\tan(\theta/2)$, where $0<t=\tan(\theta/2)\le\sqrt{2}-1)$ for $\theta\in(0,\pi/4]$. [Note parenthesis.](#transcription-notes) Then we have
+**Proof:** Let <i>L</i> intersect edges $e_1$ and $e_2$ of <i>S</i>. We consider the case where $e_1$ and $e_2$ are adjacent (otherwise $c\ge\lambda$). By $h>0.5$, both $e_1$ and $e_2$ are not touching the <i>x</i>-axis. We can assume that $\lambda=1$ to estimate the minimum <i>c</i>. Let $\theta$ be angle made by <i>L</i> and $e_2$, where $0\lt \theta\le\pi/4$ is assumed without loss of generality. Let $t=\tan(\theta/2)$, where $0\lt t=\tan(\theta/2)\le\sqrt{2}-1)$ for $\theta\in(0,\pi/4]$. [Note parenthesis.](#transcription-notes) Then we have
 
 ```math
 c=-(h-1)\frac{(1+t^2)^2}{2t(1-t^2)}+\frac{2t(1-t+t^2-t^3)}{2t(1-t^2)},
@@ -181,7 +181,7 @@ which is a decreasing function of <i>h</i> for a fixed <i>t</i>. To prove the le
 f(\sqrt{2}-0.5,t)=(t+1-\sqrt{2})^2\left(-(1+2\sqrt{2})t^2+(2\sqrt{2}+2)t+1\right).
 ```
 
-By the concavity of $g(t)=-(1+2\sqrt{2})t^2+(2\sqrt{2}+2)t+1$, $g(0)>0$ and $g(\sqrt{2}-1)>0$ mean $g(t)>0$ ($0<t<\sqrt{2}-1$). Therefore $f(\sqrt{2}-0.5,t)\ge 0$ and $c>1$. [Note factorization.](#transcription-notes)
+By the concavity of $g(t)=-(1+2\sqrt{2})t^2+(2\sqrt{2}+2)t+1$, $g(0)>0$ and $g(\sqrt{2}-1)>0$ mean $g(t)>0$ ($0\lt t\lt \sqrt{2}-1$). Therefore $f(\sqrt{2}-0.5,t)\ge 0$ and $c>1$. [Note factorization.](#transcription-notes)
 
 **Lemma 4.** Let <i>S</i> be a $\lambda\times\lambda$ square with $\lambda\in[1,1.01]$, and $e_1$ and $e_2$ be two adjacent edges of <i>S</i> that meet at a corner <i>v</i> of <i>S</i>. For a point $p_1$ on $e_1$ and a point $p_2$ on $e_2$ with $p_1\ne v\ne p_2$, let <i>c</i> be the length of the line segment $L=[p_1,p_2]$, and <i>d</i> be the area of the triangle enclosed by <i>L</i> and line segments $[p_1,v]$ and $[v,p_2]$ (see Fig. 3). Then $0.5c>d$.
 
@@ -197,25 +197,23 @@ By the concavity of $g(t)=-(1+2\sqrt{2})t^2+(2\sqrt{2}+2)t+1$, $g(0)>0$ and $g(\
 d=(\bar c+x)^2\times\frac{t(1-t^2)}{(1+t^2)^2}=\bar d+(2\bar c+x^2)\times\frac{t(1-t^2)}{(1+t^2)^2}
 ```
 
-for some number $x>0$. Then
+for some number $x>0$. [Note expansion.](#transcription-notes) Then
 
 ```math
 d+0.5c=\bar d+0.5\bar c+0.5x+(2\bar c+x^2)\times\frac{t(1-t^2)}{(1+t^2)^2}\ge\bar d+0.5\bar c>0.5.
 ```
 
- [Note expansion.](#transcription-notes)
-
 **Figure 4:** (a) Illustration for Lemma 5; (b) Illustration for Lemma 6. [View the diagrams (PDF, p. 7).](../downloads/nagamochi-2005.pdf#page=7)
 
 **Lemma 6.** Let <i>S</i> be a $\lambda\times\lambda$ square with $\lambda\in[1,1.01]$ such that one corner of <i>S</i> touches the <i>x</i>-axis and <i>S</i> is entirely above the <i>x</i>-axis. Assume that two adjacent edges $e_1$ and $e_2$ of <i>S</i> intersect line $L:y=1$, point $(1,1)$ is not in <i>S</i>, point $(2,0.9)$ is on an edge $e_2$ of <i>S</i>. Let <i>c</i> be the length of the intersection of <i>S</i> and <i>L</i>, <i>d</i> be the area of the triangle enclosed by <i>S</i> and <i>L</i>, and $p'=(1,1-c')$ be the crossing point of $e_1$ and line $x=1$ (see Fig. 4(b)). Then $d+0.5c+0.5-0.5c'>1$ holds.
 
-**Proof:** For values <i>d</i>, <i>c</i>, $-c'$ for a $\lambda\times\lambda$ square <i>S</i> with $\lambda>1$, we can get smaller <i>d</i>, <i>c</i>, $-c'$ choosing a $\lambda'\times\lambda'$ square <i>S</i> with $1\le\lambda'<\lambda$. Then we only consider the case of $\lambda=1$. Let $\theta\in(0,\pi/2]$ be the angle made by $e_1$ and $L:y=1$. By calculation, we have $d=t(1-t)/(1+t)$, $c=(t+t^2)/(1+t)$, and $c'=2t(t(1-t)^2-0.2t)/(1-t^2)^2$. To have $c'>0$ (i.e., to keep $(1,1)$ outside <i>S</i>), $t(1-t)^2-0.2t>0$ (i.e., $t<1-\sqrt{0.2}$) must hold. Note that $c=1-d$ holds. [Note lemma6.](#transcription-notes) To prove $d+0.5c+0.5-0.5c'>1$, it suffices to show that $d>c'$, i.e.,
+**Proof:** For values <i>d</i>, <i>c</i>, $-c'$ for a $\lambda\times\lambda$ square <i>S</i> with $\lambda>1$, we can get smaller <i>d</i>, <i>c</i>, $-c'$ choosing a $\lambda'\times\lambda'$ square <i>S</i> with $1\le\lambda'\lt \lambda$. Then we only consider the case of $\lambda=1$. Let $\theta\in(0,\pi/2]$ be the angle made by $e_1$ and $L:y=1$. By calculation, we have $d=t(1-t)/(1+t)$, $c=(t+t^2)/(1+t)$, and $c'=2t(t(1-t)^2-0.2t)/(1-t^2)^2$. To have $c'>0$ (i.e., to keep $(1,1)$ outside <i>S</i>), $t(1-t)^2-0.2t>0$ (i.e., $t\lt 1-\sqrt{0.2}$) must hold. Note that $c=1-d$ holds. [Note lemma6.](#transcription-notes) To prove $d+0.5c+0.5-0.5c'>1$, it suffices to show that $d>c'$, i.e.,
 
 ```math
 \frac{t(1-t)}{1+t}>\frac{2t(t(1-t)^2-0.2t)}{(1-t^2)^2},\qquad(0<t<1-\sqrt{0.2}).
 ```
 
-For this, we show $f(t)=(1-t)^2(1-t^2)-2(t(1-t)^2-0.2t)\ge 0$. We have $f(t)=(1-t)^2(2-(1+t)^2)+0.4t$, which is positive for $0<t\le\sqrt{2}-1$. On the other hand, for $0.41<\sqrt{2}-1<t<1-\sqrt{0.2}<0.56$, we have $(1-0.41)^2(2-(1+0.56)^2)+0.4\cdot0.41>0$. This completes the proof of the lemma.
+For this, we show $f(t)=(1-t)^2(1-t^2)-2(t(1-t)^2-0.2t)\ge 0$. We have $f(t)=(1-t)^2(2-(1+t)^2)+0.4t$, which is positive for $0\lt t\le\sqrt{2}-1$. On the other hand, for $0.41\lt \sqrt{2}-1\lt t\lt 1-\sqrt{0.2}\lt 0.56$, we have $(1-0.41)^2(2-(1+0.56)^2)+0.4\cdot0.41>0$. This completes the proof of the lemma.
 
 ## 5 Proof of Lemma 1
 
@@ -276,7 +274,7 @@ We first assume that <i>S</i> contains a point in <i>P</i> and none of points $(
 
 We next consider the case where <i>S</i> contains a point in <i>P</i> and at least one of points $(0.9,1),(a-0.9,1)\in Q$ (say $`(0.9,1)`$). Then <i>S</i> contains line segment $[(0.9,1),(1,1)]$ and hence $\sigma(S)\ge\sigma(S;R^{\ast})+0.5+0.45+0.05>1$.
 
-We now consider the case where <i>S</i> contains no point in <i>P</i>. Then, by Lemma 7(iii), <i>S</i> contains at least one of points $(1,0.9),(a-1,0.9)\in Q$. Assume that <i>S</i> contains $(1,0.9)$ (the case that <i>S</i> contains $(a-1,0.9)$ can be treated analogously). If <i>S</i> contains point $(0.9,1)$, then it contains line segments $[(0.9,1),(1,1)]$ and $[(1,0.9),(1,1)]$, and $\sigma(S)\ge\sigma(S;R^{\ast})+(0.45+0.1\times 0.5)\times 2>1$ holds. Similarly if <i>S</i> contains $(a-1,0.9)$, then we can show that <i>S</i> contains line segments $[(a-1,0.9),(a-1,1)]$ and $[(a-0.9,1),(a-1,1)]$, implying $\sigma(S)\ge 1$. Then assume that <i>S</i> contains none of points $(0.9,1)$ and $(a-1,0.9)$. If <i>S</i> contains point $(\min\{2,a-1\},0.9)$ then $\sigma(S)\ge 0.45\times 2+d+0.5c>1$ by Lemma 5. Assume further that <i>S</i> does not contain point $(\min\{2,a-1\},0.9)$; $a\ge 3$ is assumed (the case of $a<3$ can be treated analogously). To estimate the minimum $\sigma(S)$ in this case, we can assume that one corner of <i>S</i> touches the <i>x</i>-axis and point $(2,0.9)$ is on an edge of <i>S</i>. If point $(1,1)$ is in <i>S</i>, then $\sigma(S;L_3)+\sigma(S;Q)\ge 0.5$ and $\sigma(S)\ge d+0.5c+0.5>1$ by Lemma 5. Assume that $(1,1)$ is not in <i>S</i>. Let $p'=(1,1-c')$ be the crossing point of line segment $[(1,0.9),(1,1)]$ and an edge of <i>S</i>, where line segment $[p',(1,1)]$ is not covered by <i>S</i>. Note that $\sigma(S;L_1)=0.5c$ and $\sigma(S;L_3)+\sigma(S;Q)=0.5-0.5c'$. Then $\sigma(S)\ge d+0.5c+0.5-0.5c'$, which is greater than 1 by Lemma 6.
+We now consider the case where <i>S</i> contains no point in <i>P</i>. Then, by Lemma 7(iii), <i>S</i> contains at least one of points $(1,0.9),(a-1,0.9)\in Q$. Assume that <i>S</i> contains $(1,0.9)$ (the case that <i>S</i> contains $(a-1,0.9)$ can be treated analogously). If <i>S</i> contains point $(0.9,1)$, then it contains line segments $[(0.9,1),(1,1)]$ and $[(1,0.9),(1,1)]$, and $\sigma(S)\ge\sigma(S;R^{\ast})+(0.45+0.1\times 0.5)\times 2>1$ holds. Similarly if <i>S</i> contains $(a-1,0.9)$, then we can show that <i>S</i> contains line segments $[(a-1,0.9),(a-1,1)]$ and $[(a-0.9,1),(a-1,1)]$, implying $\sigma(S)\ge 1$. Then assume that <i>S</i> contains none of points $(0.9,1)$ and $(a-1,0.9)$. If <i>S</i> contains point $(\min\lbrace 2,a-1\rbrace ,0.9)$ then $\sigma(S)\ge 0.45\times 2+d+0.5c>1$ by Lemma 5. Assume further that <i>S</i> does not contain point $(\min\lbrace 2,a-1\rbrace ,0.9)$; $a\ge 3$ is assumed (the case of $a\lt 3$ can be treated analogously). To estimate the minimum $\sigma(S)$ in this case, we can assume that one corner of <i>S</i> touches the <i>x</i>-axis and point $(2,0.9)$ is on an edge of <i>S</i>. If point $(1,1)$ is in <i>S</i>, then $\sigma(S;L_3)+\sigma(S;Q)\ge 0.5$ and $\sigma(S)\ge d+0.5c+0.5>1$ by Lemma 5. Assume that $(1,1)$ is not in <i>S</i>. Let $p'=(1,1-c')$ be the crossing point of line segment $[(1,0.9),(1,1)]$ and an edge of <i>S</i>, where line segment $[p',(1,1)]$ is not covered by <i>S</i>. Note that $\sigma(S;L_1)=0.5c$ and $\sigma(S;L_3)+\sigma(S;Q)=0.5-0.5c'$. Then $\sigma(S)\ge d+0.5c+0.5-0.5c'$, which is greater than 1 by Lemma 6.
 
 ### 5.6 Case-7
 
@@ -284,9 +282,9 @@ Finally we consider the case where the center of <i>S</i> belongs to the rectang
 
 We next consider the case where <i>S</i> contains one of $(0.9,1),(a-0.9,1)\in Q$. If <i>S</i> contains both $(0.9,1)$ and $(a-0.9,1)$, then $L_1$ is entirely contained in <i>S</i>, implying $\sigma(S)\ge\sigma(S;R^{\ast})+(0.45+0.05)\times 2>1$. Assume that <i>S</i> contains $(0.9,1)$ but not $(a-0.9,1)$ (the other case can be treated analogously). By Lemma 7(iii), <i>S</i> contains $(2,0.9)$ or $(1,0.9)$. In any case, <i>S</i> contains line segment $[(0.9,1),(1,1)]$ and point $(2,0.9)$ (or line segment $[(1,0.9),(1,1)]$), indicating $\sigma(S)\ge\sigma(S;R^{\ast})+0.5+0.5>1$.
 
-We finally consider the case where $L'$ is contained in $L_1$ and <i>S</i> contains no point in <i>P</i>. Then by Lemma 7(iii) <i>S</i> contains $(1,0.9)$ or $(a-1,0.9)$; We assume that $(1,0.9)$ is in <i>S</i> (the other case can be treated analogously). If <i>S</i> contains $(1,1)$, then it also contains line segment $[(1,0.9),(1,1)]$ and satisfies $\sigma(S)\ge 0.5c+0.5>1$. Hence the remaining case is that <i>S</i> contains $(1,0.9)$ but none of $(1,1)$ and $(\min\{2,a-1\},0.9)$ (see Fig. 6). To estimate the minimum $\sigma(S)$ in this case, we can assume that <i>S</i> touches the <i>x</i>-axis (allowing it to violate the condition that $y=1$ intersects two nonadjacent edges of <i>S</i>). Now $y=1$ intersects two adjacent edges of <i>S</i> and this case has already been discussed in Case-6.
+We finally consider the case where $L'$ is contained in $L_1$ and <i>S</i> contains no point in <i>P</i>. Then by Lemma 7(iii) <i>S</i> contains $(1,0.9)$ or $(a-1,0.9)$; We assume that $(1,0.9)$ is in <i>S</i> (the other case can be treated analogously). If <i>S</i> contains $(1,1)$, then it also contains line segment $[(1,0.9),(1,1)]$ and satisfies $\sigma(S)\ge 0.5c+0.5>1$. Hence the remaining case is that <i>S</i> contains $(1,0.9)$ but none of $(1,1)$ and $(\min\lbrace 2,a-1\rbrace ,0.9)$ (see Fig. 6). To estimate the minimum $\sigma(S)$ in this case, we can assume that <i>S</i> touches the <i>x</i>-axis (allowing it to violate the condition that $y=1$ intersects two nonadjacent edges of <i>S</i>). Now $y=1$ intersects two adjacent edges of <i>S</i> and this case has already been discussed in Case-6.
 
-**Figure 6:** Illustration for the case where <i>S</i> contains $(1,0.9)$ but none of $(1,1)$ and $(\min\{2,a-1\},0.9)$ in Case-7. [View the diagram (PDF, p. 12).](../downloads/nagamochi-2005.pdf#page=12)
+**Figure 6:** Illustration for the case where <i>S</i> contains $(1,0.9)$ but none of $(1,1)$ and $(\min\lbrace 2,a-1\rbrace ,0.9)$ in Case-7. [View the diagram (PDF, p. 12).](../downloads/nagamochi-2005.pdf#page=12)
 
 This completes the proof of Lemma 1.
 
@@ -326,3 +324,5 @@ These notes distinguish apparent source errors from extraction errors. The state
 **Note lemma6.** The proof of Lemma 6 on PDF p. 8 uses <i>t</i> without introducing it there, and prints $c=(t+t^2)/(1+t)$ followed by $c=1-d$. With the printed $d=t(1-t)/(1+t)$ these identities do not agree in general. Both are retained, rather than replacing them with an inferred correction.
 
 **Note reference.** The proof of Lemma 7(iii) on PDF p. 10 refers to “(i) and (iii)” as printed, including the self-reference.
+
+**Note strictness.** Page 11 prints $\sigma(S)\ge 1$ in the symmetric subcase, although the surrounding argument seeks a strict bound. The printed inequality is retained.

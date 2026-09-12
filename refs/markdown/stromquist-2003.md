@@ -50,7 +50,7 @@ Figure 4: The nonavoidance lemmas. [View the diagram.](../downloads/stromquist-2
 
 We use Lemma 3 mainly in the case of $a=2\sqrt2-2\approx.828$, $b=1$, as shown in Figure 4. The other extreme is $a=1$, $b=\sqrt2-\frac12\approx.914$.
 
-We need some preparation for Lemma 4. When $2\sqrt2-2<a<1$, define $f(a)$ by
+We need some preparation for Lemma 4. When $2\sqrt2-2\lt a\lt 1$, define $f(a)$ by
 
 **Equation (1).**
 
@@ -66,9 +66,9 @@ where $\theta^{\ast}$ is the smallest positive value of $\theta$ that satisfies
 2\cos^3\theta-(2a+2)\cos^2\theta+(a^2-2a+3)\cos\theta-(1-a^2)=0.
 ```
 
-For values of $a$ in the domain of $f$ we always have $0<\theta^{\ast}<45^\circ$ and $0<f(a)<1$.
+For values of $a$ in the domain of $f$ we always have $0\lt \theta^{\ast}\lt 45^\circ$ and $0\lt f(a)\lt 1$.
 
-**Lemma 4.** Let $a$ and $b$ satisfy $2\sqrt2-2<a<1$, $0<b<1$, $(a,b)$ within 1 of $(0,1)$, and $b\le f(a)$. Then any box whose center is in the quadrilateral with vertices $(0,0)$, $(0,1)$, $(a,0)$, and $(a,b)$ must intersect the $x$-axis, the point $(0,1)$, or the point $(a,b)$.
+**Lemma 4.** Let $a$ and $b$ satisfy $2\sqrt2-2\lt a\lt 1$, $0\lt b\lt 1$, $(a,b)$ within 1 of $(0,1)$, and $b\le f(a)$. Then any box whose center is in the quadrilateral with vertices $(0,0)$, $(0,1)$, $(a,0)$, and $(a,b)$ must intersect the $x$-axis, the point $(0,1)$, or the point $(a,b)$.
 
 We rely on these cases of Lemma 4:
 
@@ -88,7 +88,7 @@ Figure 5: Proof of Lemma 4. [View the diagram.](../downloads/stromquist-2003.pdf
 b^{\ast}=\frac{\cos\theta}{1+\cos\theta}+\frac{1-a\cos\theta}{\sin\theta}.
 ```
 
-If we fix $a$ in the range $2\sqrt2-2<a<1$ and limit $\theta$ to the first quadrant, then the right side of (3) has a unique minimum, which occurs when $\theta<45^\circ$ and $b^{\ast}<1$. (To verify this, note that $b^{\ast}$ is large when $\theta\approx0$, below 1 when $\theta=45^\circ$, and decreasing to 1 when $\theta=90^\circ$, and that the derivative doesn’t have enough roots for there to be multiple minima below $45^\circ$.) Setting $db^{\ast}/d\theta=0$ leads to equation (2) above. Therefore $f(a)$ is the minimum value of $b^{\ast}$.
+If we fix $a$ in the range $2\sqrt2-2\lt a\lt 1$ and limit $\theta$ to the first quadrant, then the right side of (3) has a unique minimum, which occurs when $\theta\lt 45^\circ$ and $b^{\ast}\lt 1$. (To verify this, note that $b^{\ast}$ is large when $\theta\approx0$, below 1 when $\theta=45^\circ$, and decreasing to 1 when $\theta=90^\circ$, and that the derivative doesn’t have enough roots for there to be multiple minima below $45^\circ$.) Setting $db^{\ast}/d\theta=0$ leads to equation (2) above. Therefore $f(a)$ is the minimum value of $b^{\ast}$.
 
 If $(a,b)$ is within 1 of $(0,1)$ but below $(a,f(a))$—and hence below $(a,b^{\ast})$ whatever the value of $\theta$—then $(a,b)$ is clearly inside the box. $\square$
 
@@ -114,7 +114,7 @@ x>1+\frac{.212}{1.2}+.828>2.004,
 
 forcing the point $(2,1)$ to be inside the box.
 
-If $\tan^{-1}(1.2)<\theta\le\sin^{-1}(.9)\approx64.2^\circ$, then the box contains the point $(2.12,.9)$. To see this, we compute the $x$-coordinate of the point at which the box’s upper-right boundary intersects the line $y=.9$. We obtain
+If $\tan^{-1}(1.2)\lt \theta\le\sin^{-1}(.9)\approx64.2^\circ$, then the box contains the point $(2.12,.9)$. To see this, we compute the $x$-coordinate of the point at which the box’s upper-right boundary intersects the line $y=.9$. We obtain
 
 **Equation (5).**
 
@@ -124,7 +124,7 @@ x=1+\frac{.112}{\tan\theta}+\frac{\sin\theta+\cos\theta-.9}{\sin\theta\cos\theta
 
 This function reaches its minimum at $\theta\approx52.6^\circ$, when $x=2.1256$, so the box’s right boundary always passes to the right of $(2.12,.9)$.
 
-If $\sin^{-1}(.9)<\theta$ we need to calculate the coordinates $(x,y)$ of the box’s rightmost vertex:
+If $\sin^{-1}(.9)\lt \theta$ we need to calculate the coordinates $(x,y)$ of the box’s rightmost vertex:
 
 ```math
 \begin{aligned}
@@ -133,7 +133,7 @@ y&=\sin\theta.
 \end{aligned}
 ```
 
-Since $.9<y<1$, the vertex is to the right of the critical segment if $(x-2)/(1-y)>1.2$. Some calculation shows that
+Since $.9\lt y\lt 1$, the vertex is to the right of the critical segment if $(x-2)/(1-y)>1.2$. Some calculation shows that
 
 ```math
 \frac{x-2}{1-y}=\frac{1-\cos\theta}{\sin\theta}+.212\frac{1+\sin\theta}{\sin\theta\cos\theta}.
@@ -152,7 +152,7 @@ D(\theta)&=\frac1{\sin\theta}+\frac1{\cos\theta}-\frac1{\sin\theta\cos\theta}\\
 \end{aligned}
 ```
 
-Let $\theta_0=\frac12\sin^{-1}(5-2\sqrt5)\approx15.9^\circ$; then $D(\theta_0)=a$. If $\theta<\theta_0$ or $\theta>\frac\pi2-\theta_0$ then $D(\theta)>a$ and the box must intersect $(1,1)$ or $(1+a,1)$. We can therefore assume that $\theta_0\le\theta\le\frac\pi2-\theta_0$. In this case $\cos\theta+\sin\theta>1.12$, so the box includes a point above $y=1.12$. We may assume that the box touches the point $(1+a,1)$ and has its apex to the right of the line $x=1+\frac12a$, as shown in the figure. Now the $y$ coordinate at which the top of the box intersects the line $x=1+\frac12a$ is given by
+Let $\theta_0=\frac12\sin^{-1}(5-2\sqrt5)\approx15.9^\circ$; then $D(\theta_0)=a$. If $\theta\lt \theta_0$ or $\theta>\frac\pi2-\theta_0$ then $D(\theta)>a$ and the box must intersect $(1,1)$ or $(1+a,1)$. We can therefore assume that $\theta_0\le\theta\le\frac\pi2-\theta_0$. In this case $\cos\theta+\sin\theta>1.12$, so the box includes a point above $y=1.12$. We may assume that the box touches the point $(1+a,1)$ and has its apex to the right of the line $x=1+\frac12a$, as shown in the figure. Now the $y$ coordinate at which the top of the box intersects the line $x=1+\frac12a$ is given by
 
 ```math
 1+\left(D(\theta)-\sqrt{\frac15}\right)\tan\theta,
@@ -182,7 +182,7 @@ Figure 11: H-box must touch segment. [View the diagram.](../downloads/stromquist
 
 Figure 12: No room for I-box and J-box. [View the diagram.](../downloads/stromquist-2003.pdf#page=8)
 
-2. If, now, $A$ is replaced by the two points $A'=(1,s-2.92)$ and $A''=(1.2,1)$, the points remain unavoidable (Figure 9). It follows that the A-box must contain at least one of the points $A'$, $A''$. Note that $s-2.92<.788$.
+2. If, now, $A$ is replaced by the two points $A'=(1,s-2.92)$ and $A''=(1.2,1)$, the points remain unavoidable (Figure 9). It follows that the A-box must contain at least one of the points $A'$, $A''$. Note that $s-2.92\lt .788$.
 
 3. If the A-box contains $A''=(1.2,1)$, then the points $A$, $A''$, $B'$, $C$ through $G$, $I$, $J$, and $(2,1)$ form an unavoidable set (Figure 10). All of these are denied to the H-box except for $(2,1)$, so the H-box contains $(2,1)$. (This step uses Lemma 3.)
 
