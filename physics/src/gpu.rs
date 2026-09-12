@@ -196,7 +196,9 @@ impl Gpu {
         }
         let mapped = self.readback.slice(..).get_mapped_range().ok()?;
         let result = bytemuck::cast_slice::<u8, f32>(&mapped)
-            .chunks_exact(8)
+            .as_chunks::<8>()
+            .0
+            .iter()
             .map(|v| Body {
                 x: v[0],
                 y: v[1],
