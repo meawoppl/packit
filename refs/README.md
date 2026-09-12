@@ -64,11 +64,9 @@ whether that candidate is a feasible score.
 
 A small residual neither proves that all inequalities hold nor establishes a
 global minimum. The exported equations and numerical root provide a starting
-point for exact elimination/interval certification. For up to 25 squares with rotations near multiples of pi/4, exact Gaussian
-elimination over Q(sqrt(2)) recovers a rational/quadratic side polynomial.
-These snapped orientations are listed as explicit assumptions. General-purpose
-minimal-polynomial elimination for arbitrary rotations and rigorous root
-certification are not yet implemented. Recognized simple side expressions are explicitly labeled
+point for exact elimination/interval certification. Automatic general-purpose
+minimal-polynomial elimination and rigorous root certification are not yet
+implemented. Recognized simple side expressions are explicitly labeled
 numerical candidates. Do not label a gameplay submission a mathematical record
 without independent high-precision verification and comparison with updated
 construction data.
