@@ -158,3 +158,151 @@ fn finite_large_import_angles_keep_their_orientation() {
     assert!(b.theta.is_finite());
     assert!((b.theta.sin() as f64 - 1e100_f64.sin()).abs() < 1e-6);
 }
+
+#[test]
+fn edge_attraction_closes_gaps_and_aligns_faces() {
+    let p = Physics::new(2, 8.0);
+    p.set_pose(0, 3.0, 4.0, 0.2);
+    p.set_pose(1, 4.4, 4.0, 0.0);
+    p.set_params(Params {
+        edge_attraction: 30.0,
+        ..p.params()
+    });
+    advance(&p, 1);
+    let b = p.bodies();
+    assert!(b[0].vx > 0.0 && b[1].vx < 0.0);
+    assert!((b[0].vx + b[1].vx).abs() < 1e-5);
+    assert!(
+        b[0].omega - b[1].omega < 0.0,
+        "facing edges turn toward alignment: {b:?}"
+    );
+    advance(&p, 600);
+    let b = p.bodies();
+    assert!(b[1].x - b[0].x < 1.3);
+    let far = Physics::new(2, 10.0);
+    far.set_pose(0, 3.0, 5.0, 0.0);
+    far.set_pose(1, 6.0, 5.0, 0.0);
+    far.set_params(p.params());
+    advance(&far, 1);
+    assert_eq!(far.motion(), 0.0);
+}
+#[test]
+fn edge_attraction_includes_each_wall_and_reacts_on_band() {
+    for (x, y, component, direction) in [
+        (0.8, 3.0, 0, -1.0),
+        (5.2, 3.0, 0, 1.0),
+        (3.0, 0.8, 1, -1.0),
+        (3.0, 5.2, 1, 1.0),
+    ] {
+        let p = Physics::new(1, 6.0);
+        p.set_pose(0, x, y, 0.0);
+        p.set_params(Params {
+            edge_attraction: 30.0,
+            ..p.params()
+        });
+        advance(&p, 1);
+        let b = p.bodies()[0];
+        assert!([b.vx, b.vy][component] * direction > 0.0);
+        assert!(b.omega.abs() < 1e-6);
+    }
+    let p = Physics::new(1, 6.0);
+    p.set_pose(0, 5.2, 3.0, 0.0);
+    p.set_params(Params {
+        edge_attraction: 30.0,
+        band_tension: 20.0,
+        ..p.params()
+    });
+    advance(&p, 1);
+    assert!(
+        p.band_velocity() < 0.0,
+        "square pulls movable right wall inward"
+    );
+}
+#[test]
+fn off_center_bumps_and_wall_corners_impart_torque() {
+    let p = Physics::new(2, 8.0);
+    p.set_pose(0, 3.0, 4.0, 0.2);
+    p.set_pose(1, 4.0, 4.0, 0.0);
+    advance(&p, 1);
+    let b = p.bodies();
+    assert!(
+        b[0].omega < -0.1 && b[1].omega > 0.1,
+        "corner hits turn both bodies: {b:?}"
+    );
+    let p = Physics::new(2, 8.0);
+    p.set_pose(0, 3.0, 4.0, 0.0);
+    p.set_pose(1, 3.9, 4.0, 0.0);
+    advance(&p, 1);
+    assert!(
+        p.bodies().iter().all(|b| b.omega.abs() < 1e-5),
+        "centered face hits don't add spin"
+    );
+    let p = Physics::new(1, 4.0);
+    p.set_pose(0, 3.55, 2.0, 0.2);
+    advance(&p, 1);
+    assert!(
+        p.bodies()[0].omega < -0.1,
+        "wall applies torque at support corner"
+    );
+    let p = Physics::new(1, 4.0);
+    for omega in [-100.0, 100.0] {
+        p.set_pose(0, 2.0, 2.0, 0.2);
+        p.state.borrow_mut().bodies[0].omega = omega;
+        advance(&p, 1);
+        assert_eq!(p.bodies()[0].omega, omega.signum() * 8.0);
+    }
+}
+#[test]
+fn gravity_grids_settle_with_and_without_edge_attraction() {
+    for edge_attraction in [0.0, 30.0] {
+        let p = Physics::new(9, 3.5);
+        p.set_params(Params {
+            gravity: true,
+            edge_attraction,
+            ..p.params()
+        });
+        advance(&p, 960);
+        assert!(
+            p.motion() < 0.002 * 9.0,
+            "edge={edge_attraction}, motion={}",
+            p.motion()
+        );
+    }
+}
+
+#[test]
+fn anneal_kicks_scale_deterministically() {
+    let full = Physics::new(4, 3.0);
+    let cool = Physics::new(4, 3.0);
+    full.shake(42);
+    cool.shake_scaled(42, 0.25);
+    for (a, b) in full.bodies().iter().zip(cool.bodies()) {
+        assert_eq!(a.vx * 0.25, b.vx);
+        assert_eq!(a.vy * 0.25, b.vy);
+        assert_eq!(a.omega * 0.25, b.omega);
+        assert_eq!((a.x, a.y, a.theta), (b.x, b.y, b.theta));
+    }
+    cool.shake_scaled(42, 0.0);
+    assert_eq!(cool.motion(), 0.0);
+    cool.shake_scaled(42, f32::NAN);
+    assert_eq!(cool.motion(), 0.0);
+}
+
+#[test]
+fn wall_equilibrium_depth_is_independent_of_orientation() {
+    // Hold orientation fixed and solve vertical equilibrium under gravity.
+    for theta in [0.0_f32, 0.001, 0.2, std::f32::consts::FRAC_PI_4] {
+        let mut b = Body {
+            theta,
+            ..Body::default()
+        };
+        let h = 0.5 * (theta.cos().abs() + theta.sin().abs());
+        b.y = h + 0.1;
+        for _ in 0..960 {
+            let f = contacts::wall(&b, (0.0, 1.0), h - b.y, 900.0);
+            b.vy += (f[1] - 9.0) / 120.0;
+            b.y += b.vy / 120.0;
+        }
+        assert!((h - b.y - 0.01).abs() < 1e-5, "theta={theta}, body={b:?}");
+    }
+}
