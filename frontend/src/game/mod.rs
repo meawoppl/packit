@@ -945,7 +945,11 @@ impl Game {
             let mut params = self.physics.params();
             params.band_tension = 0.0;
             self.physics.set_params(params);
-            self.set_status("Anneal stopped.", false);
+            let stopped = match self.run_kind {
+                RunKind::Anneal => "Anneal stopped.",
+                RunKind::Squeeze => "Gentle squeeze stopped.",
+            };
+            self.set_status(stopped, false);
         }
     }
 
