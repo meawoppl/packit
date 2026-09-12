@@ -326,8 +326,9 @@ async fn size_slider_animates_pressure_and_wakes_a_paused_scene() {
     root.remove();
 }
 
-/// Set a range input's value and fire `input` like a user drag.
-fn slide(root: &Element, selector: &str, value: &str) {
+/// Set a range input's value and fire `input` like a user drag. Returns the
+/// value the input actually holds, since range inputs clamp to min/max.
+fn slide(root: &Element, selector: &str, value: &str) -> f64 {
     let slider: HtmlInputElement = root
         .query_selector(selector)
         .unwrap()
@@ -340,33 +341,35 @@ fn slide(root: &Element, selector: &str, value: &str) {
     slider
         .dispatch_event(&Event::new_with_event_init_dict("input", &init).unwrap())
         .unwrap();
+    slider.value().parse().unwrap()
 }
 
 #[wasm_bindgen_test]
 async fn size_scrub_reach_follows_band_pressure() {
     let _gpu = NoWebGpu::install();
     let (handle, root, physics) = mount().await;
-    // Two squares side by side hold the container near 2.0, so a 1.2 request
-    // can never be reached; the target may only lead the side by the reach.
-    slide(&root, "#pg-size", "1.2");
+    // Two squares side by side hold the container near 2.0, so the smallest
+    // request the slider allows (sqrt(2)) can't be reached at tension 30; the
+    // target may only lead the side by the 0.3 reach.
+    let desired = slide(&root, "#pg-size", "1.2");
     for _ in 0..40 {
         sleep(50).await;
         let (target, side) = (physics.params().target_side, physics.side());
         assert!(
-            (target - (side - 0.3)).abs() < 0.03,
-            "tension 30 reach: target {target}, side {side}"
+            (target - desired.max(side - 0.3)).abs() < 0.03,
+            "tension 30 reach: target {target}, side {side}, desired {desired}"
         );
     }
     assert!(physics.params().target_side > 1.5, "squares push back");
 
-    // Full pressure lets the target run a whole unit ahead.
+    // Full pressure lets the target run a whole unit ahead, down to the request.
     slide(&root, "#pg-band", "100");
     sleep(100).await;
     let (target, side) = (physics.params().target_side, physics.side());
     assert_eq!(physics.params().band_tension, 100.0);
     assert!(
-        (target - (side - 1.0)).abs() < 0.03 || (target - 1.2).abs() < 1e-9,
-        "tension 100 reach: target {target}, side {side}"
+        (target - desired.max(side - 1.0)).abs() < 0.03,
+        "tension 100 reach: target {target}, side {side}, desired {desired}"
     );
     handle.destroy();
     root.remove();
