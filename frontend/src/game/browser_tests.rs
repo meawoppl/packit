@@ -134,3 +134,108 @@ async fn drag_wakes_a_paused_scene_and_pushes_the_neighbor() {
     handle.destroy();
     root.remove();
 }
+
+/// A force-panel button whose label starts with `label`.
+fn force_button(root: &Element, label: &str) -> HtmlElement {
+    let buttons = root.query_selector_all(".pg-force-actions button").unwrap();
+    (0..buttons.length())
+        .filter_map(|i| buttons.item(i))
+        .filter_map(|b| b.dyn_into::<HtmlElement>().ok())
+        .find(|b| b.text_content().unwrap_or_default().starts_with(label))
+        .unwrap_or_else(|| panic!("{label} button rendered"))
+}
+
+#[wasm_bindgen_test]
+async fn play_screen_shows_benchmark_bubble() {
+    let _gpu = NoWebGpu::install();
+    let (handle, root, _) = mount().await;
+    assert!(root
+        .query_selector(".pg-top .pg-benchmark")
+        .unwrap()
+        .is_some());
+    handle.destroy();
+    root.remove();
+}
+
+#[wasm_bindgen_test]
+async fn anneal_tightens_the_band_and_a_drag_cancels_it() {
+    let _gpu = NoWebGpu::install();
+    let (handle, root, physics) = mount().await;
+    let canvas: HtmlCanvasElement = root
+        .query_selector("canvas")
+        .unwrap()
+        .unwrap()
+        .dyn_into()
+        .unwrap();
+    let start_side = physics.side();
+
+    force_button(&root, "Anneal").click();
+    sleep(1500).await;
+    let params = physics.params();
+    assert_eq!(params.band_tension, 30.0);
+    assert!(params.target_side < start_side, "{}", params.target_side);
+    force_button(&root, "Stop");
+
+    let b = physics.bodies()[0];
+    pointer(
+        &canvas,
+        "pointerdown",
+        (b.x as f64, b.y as f64),
+        physics.side(),
+    );
+    sleep(50).await;
+    pointer(
+        &canvas,
+        "pointerup",
+        (b.x as f64, b.y as f64),
+        physics.side(),
+    );
+    force_button(&root, "Anneal");
+    assert_eq!(
+        physics.params().band_tension,
+        0.0,
+        "cancel releases the band"
+    );
+    let frozen = physics.params().target_side;
+    sleep(500).await;
+    assert_eq!(
+        physics.params().target_side,
+        frozen,
+        "no more schedule updates"
+    );
+    handle.destroy();
+    root.remove();
+}
+
+#[wasm_bindgen_test]
+async fn pause_cancels_anneal() {
+    let _gpu = NoWebGpu::install();
+    let (handle, root, physics) = mount().await;
+    force_button(&root, "Anneal").click();
+    sleep(300).await;
+    force_button(&root, "Pause").click();
+    sleep(50).await;
+    assert!(physics.paused());
+    force_button(&root, "Anneal");
+    assert_eq!(
+        physics.params().band_tension,
+        0.0,
+        "cancel releases the band"
+    );
+    handle.destroy();
+    root.remove();
+}
+
+#[wasm_bindgen_test]
+async fn finished_anneal_measures_and_releases_the_band() {
+    let _gpu = NoWebGpu::install();
+    let (handle, root, physics) = mount().await;
+    force_button(&root, "Anneal").click();
+    sleep(21_500).await;
+    assert_eq!(physics.params().band_tension, 0.0, "band released");
+    assert!(physics.paused(), "measuring pauses the scene");
+    force_button(&root, "Anneal");
+    assert!(!text(&root, ".pg-status").starts_with("Annealing"));
+    handle.destroy();
+    root.remove();
+}
