@@ -15,7 +15,6 @@ export class PackingPhysics {
       if(!navigator.gpu) return;
       const adapter=await navigator.gpu.requestAdapter(); if(!adapter)return;
       const device=await adapter.requestDevice(); if(this.disposed){device.destroy();return;}
-      this.device=device;
       const module=device.createShaderModule({code:shader});
       this.pipeline=await device.createComputePipelineAsync({layout:'auto',compute:{module,entryPoint:'step'}});
       const size=this.data.byteLength;
@@ -23,6 +22,8 @@ export class PackingPhysics {
       this.uniform=device.createBuffer({size:48,usage:GPUBufferUsage.UNIFORM|GPUBufferUsage.COPY_DST});
       this.readback=device.createBuffer({size,usage:GPUBufferUsage.MAP_READ|GPUBufferUsage.COPY_DST});
       this.groups=this.buffers.map((b,i)=>device.createBindGroup({layout:this.pipeline.getBindGroupLayout(0),entries:[{binding:0,resource:{buffer:b}},{binding:1,resource:{buffer:this.buffers[1-i]}},{binding:2,resource:{buffer:this.uniform}}]}));
+      if(this.disposed){device.destroy();return;}
+      this.device=device;
       this.mode='WebGPU compute';
       device.lost.then(()=>{this.mode='CPU fallback';this.device=null;});
     } catch(e) {this.mode='CPU fallback';this.device?.destroy();this.device=null;console.info('WebGPU unavailable',e);}

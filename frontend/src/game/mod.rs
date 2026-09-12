@@ -14,6 +14,7 @@ extern "C" {
         engine: JsValue,
         shader: &str,
         refine: &js_sys::Function,
+        submit: &js_sys::Function,
     ) -> JsValue;
     #[wasm_bindgen(js_name = unmountGame)]
     fn unmount_game(handle: &JsValue);
@@ -32,6 +33,7 @@ pub fn game(props: &GameProps) -> Html {
         use_effect_with(n, move |n| {
             let mut handle = None;
             let mut callback = None;
+            let mut submit_callback = None;
             if (1..=shared::MAX_N).contains(n) {
                 if let Some(element) = root.cast::<web_sys::Element>() {
                     let refine = Closure::<dyn Fn(String) -> String>::new(|input: String| {
@@ -43,13 +45,28 @@ pub fn game(props: &GameProps) -> Html {
                             Err(e) => serde_json::json!({"error":e.to_string()}).to_string(),
                         }
                     });
+                    let submit =
+                        Closure::<dyn Fn(String) -> js_sys::Promise>::new(|input: String| {
+                            wasm_bindgen_futures::future_to_promise(async move {
+                                let body = serde_json::from_str::<shared::SubmitScore>(&input)
+                                    .map_err(|e| JsValue::from_str(&e.to_string()))?;
+                                let result = crate::api::submit_score(body)
+                                    .await
+                                    .map_err(|e| JsValue::from_str(&e))?;
+                                serde_json::to_string(&result)
+                                    .map(|s| JsValue::from_str(&s))
+                                    .map_err(|e| JsValue::from_str(&e.to_string()))
+                            })
+                        });
                     handle = Some(mount_game(
                         element,
                         create_physics(*n, (*n as f64).sqrt().ceil() + 0.5),
                         physics::GPU_KERNEL,
                         refine.as_ref().unchecked_ref(),
+                        submit.as_ref().unchecked_ref(),
                     ));
                     callback = Some(refine);
+                    submit_callback = Some(submit);
                 }
             }
             move || {
@@ -57,6 +74,7 @@ pub fn game(props: &GameProps) -> Html {
                     unmount_game(&h);
                 }
                 drop(callback);
+                drop(submit_callback);
             }
         });
     }
