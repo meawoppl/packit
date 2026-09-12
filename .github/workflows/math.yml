@@ -1,0 +1,28 @@
+name: Reference math
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  math:
+    name: GitHub Math Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check GitHub math rendering hazards
+        uses: CosmicFrontierLabs/github-math-lint@e10771b2289108830ee9687fa292c9e8c0bbbf4e # v1
+        with:
+          paths: |-
+            refs/**/*.md
+          report-path: github-math-lint-report.json
+      - name: Save complete math report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: github-math-lint-report
+          path: github-math-lint-report.json
