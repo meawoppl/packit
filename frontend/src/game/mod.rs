@@ -144,7 +144,7 @@ impl Component for Game {
         });
         ctx.link()
             .send_future(async { Msg::Records(api::known_records().await) });
-        Self {
+        let mut game = Self {
             physics,
             canvas: NodeRef::default(),
             file_input: NodeRef::default(),
@@ -174,7 +174,10 @@ impl Component for Game {
             submit_after_measure: false,
             pending_import: None,
             readout: Readout::default(),
-        }
+        };
+        // Fill the sidebar before the first view; later frames only re-render on change.
+        game.refresh_readout();
+        game
     }
 
     fn rendered(&mut self, ctx: &Context<Self>, first_render: bool) {
@@ -210,7 +213,6 @@ impl Component for Game {
                 },
             ));
         }
-        self.refresh_readout();
         self.schedule_frame(ctx);
     }
 
