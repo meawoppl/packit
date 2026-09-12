@@ -1,5 +1,5 @@
 //! WebGPU owns body integration; only the scalar band coordinate stays on CPU.
-use super::{Body, Mouse, Params, Rotation, FIXED_STEP, GPU_KERNEL};
+use super::{Body, Feature, Glue, Mouse, Params, Rotation, FIXED_STEP, GPU_KERNEL};
 use std::{
     borrow::Cow,
     sync::{
@@ -14,6 +14,7 @@ pub(super) struct Gpu {
     pipeline: wgpu::ComputePipeline,
     buffers: [wgpu::Buffer; 2],
     uniform: wgpu::Buffer,
+    glues: wgpu::Buffer,
     readback: wgpu::Buffer,
     groups: [wgpu::BindGroup; 2],
     lost: Arc<AtomicBool>,
@@ -70,8 +71,14 @@ impl Gpu {
         });
         let uniform = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("packing parameters"),
-            size: 64,
+            size: 80,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let glues = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("glue inputs"),
+            size: (super::MAX_GLUES * 32) as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
         let readback = device.create_buffer(&wgpu::BufferDescriptor {
@@ -86,6 +93,10 @@ impl Gpu {
                 label: None,
                 layout: &layout,
                 entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 3,
+                        resource: glues.as_entire_binding(),
+                    },
                     wgpu::BindGroupEntry {
                         binding: 0,
                         resource: buffers[i].as_entire_binding(),
@@ -108,6 +119,7 @@ impl Gpu {
             pipeline,
             buffers,
             uniform,
+            glues,
             readback,
             groups,
             lost,
@@ -134,13 +146,29 @@ impl Gpu {
         initial: &[Body],
         p: Params,
         side: f64,
-        controls: (Mouse, Rotation),
+        controls: (Mouse, Rotation, &[Glue], f32),
         steps: u32,
     ) -> Option<(Vec<Body>, Vec<[f32; 2]>)> {
         if !self.alive() {
             return None;
         }
-        let (mouse, rotation) = controls;
+        let (mouse, rotation, glues, band_velocity) = controls;
+        let encode = |f: Feature| -> [u32; 4] {
+            match f {
+                Feature::Edge { square, edge } => [0, square as u32, edge as u32, 0],
+                Feature::Corner { square, corner } => [1, square as u32, corner as u32, 0],
+                Feature::Midpoint { square, edge } => [2, square as u32, edge as u32, 0],
+                Feature::Wall(w) => [3, u32::MAX, w as u32, 0],
+            }
+        };
+        let links: Vec<u32> = glues
+            .iter()
+            .flat_map(|g| encode(g.a).into_iter().chain(encode(g.b)))
+            .collect();
+        if !links.is_empty() {
+            self.queue
+                .write_buffer(&self.glues, 0, bytemuck::cast_slice(&links));
+        }
         let data: Vec<f32> = initial
             .iter()
             .flat_map(|b| [b.x, b.y, b.theta, 0.0, b.vx, b.vy, b.omega, 0.0])
@@ -149,7 +177,7 @@ impl Gpu {
             initial.len() as f32,
             FIXED_STEP as f32,
             side as f32,
-            u32::from(p.gravity) as f32,
+            0.0,
             u32::from(p.attraction) as f32 * 1.8,
             p.damping,
             p.stiffness,
@@ -165,6 +193,10 @@ impl Gpu {
             rotation.target,
             rotation.index.unwrap_or(0) as f32,
             rotation.remaining,
+            0.0,
+            glues.len() as f32,
+            band_velocity,
+            0.0,
             0.0,
         ];
         self.queue

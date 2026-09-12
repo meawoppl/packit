@@ -16,7 +16,7 @@ impl State {
         );
         let mut next = self.bodies.clone();
         for (i, b) in self.bodies.iter().enumerate() {
-            let (mut fx, mut fy, mut torque) = (0.0, if p.gravity { -9.0 } else { 0.0 }, 0.0);
+            let (mut fx, mut fy, mut torque) = (0.0, 0.0, 0.0);
             let mut contact = [0.0; 2];
             for (j, other) in self.bodies.iter().enumerate() {
                 if i == j {

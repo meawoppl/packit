@@ -8,7 +8,6 @@ async fn gpu_matches_cpu_and_keeps_direct_edits() {
     let cpu = Physics::new(4, 4.0);
     for p in [&gpu, &cpu] {
         p.set_params(Params {
-            gravity: true,
             attraction: true,
             edge_attraction: 25.0,
             ..p.params()
@@ -109,10 +108,7 @@ async fn device_loss_and_cancelled_readback_recover() {
     let p = Physics::new(1, 4.0);
     p.init_gpu().await;
     assert_eq!(p.mode(), Backend::Gpu);
-    p.set_params(Params {
-        gravity: true,
-        ..p.params()
-    });
+    p.set_mouse(2.0, 0.0, Some(0), true);
     {
         let mut pending = std::pin::pin!(p.step(2));
         assert!(matches!(
@@ -143,10 +139,7 @@ async fn missing_webgpu_uses_cpu() {
     // Restore browser capability before assertions so subsequent tests can use it.
     js_sys::Reflect::delete_property(navigator.as_ref(), &"gpu".into()).unwrap();
     assert_eq!(p.mode(), Backend::Cpu);
-    p.set_params(Params {
-        gravity: true,
-        ..p.params()
-    });
+    p.set_mouse(2.0, 0.0, Some(0), true);
     let y = p.bodies()[0].y;
     p.step(6).await;
     assert!(p.bodies()[0].y < y);
@@ -170,8 +163,9 @@ async fn gpu_torque_clamp_and_resting_grids() {
         p.init_gpu().await;
         assert_eq!(p.mode(), Backend::Gpu);
         p.set_params(Params {
-            gravity: true,
             edge_attraction,
+            band_tension: 30.0,
+            target_side: 3.0,
             ..p.params()
         });
         for _ in 0..160 {
@@ -217,4 +211,58 @@ async fn gpu_turn_pushes_neighbors_and_resists_a_wedge() {
     );
     assert_eq!(wedged.state.borrow().revision, 1);
     wedged.dispose();
+}
+
+#[wasm_bindgen_test(async)]
+async fn glue_pairs_match_cpu_in_both_orders() {
+    let gpu = Physics::new(2, 4.0);
+    let cpu = Physics::new(2, 4.0);
+    gpu.init_gpu().await;
+    assert_eq!(gpu.mode(), Backend::Gpu);
+    let features0 = [
+        Feature::Edge { square: 0, edge: 0 },
+        Feature::Corner {
+            square: 0,
+            corner: 3,
+        },
+        Feature::Midpoint { square: 0, edge: 0 },
+    ];
+    let features1 = [
+        Feature::Edge { square: 1, edge: 2 },
+        Feature::Corner {
+            square: 1,
+            corner: 0,
+        },
+        Feature::Midpoint { square: 1, edge: 2 },
+        Feature::Wall(2),
+    ];
+    for a in features0 {
+        for b in features1 {
+            for reversed in [false, true] {
+                let g = if reversed {
+                    Glue { a: b, b: a }
+                } else {
+                    Glue { a, b }
+                };
+                for p in [&gpu, &cpu] {
+                    p.reset();
+                    p.set_pose(0, 1.1, 1.1, 0.13);
+                    p.set_pose(1, 2.35, 1.3, -0.17);
+                    p.set_glues(&[g]).unwrap();
+                }
+                gpu.step(1).await;
+                cpu.step(1).await;
+                assert_eq!(gpu.mode(), Backend::Gpu);
+                for (a, b) in gpu.bodies().iter().zip(cpu.bodies()) {
+                    for (x, y) in [a.x, a.y, a.theta, a.vx, a.vy, a.omega]
+                        .into_iter()
+                        .zip([b.x, b.y, b.theta, b.vx, b.vy, b.omega])
+                    {
+                        assert!((x - y).abs() < 0.002, "{g:?}: GPU={x}, CPU={y}");
+                    }
+                }
+            }
+        }
+    }
+    gpu.dispose();
 }

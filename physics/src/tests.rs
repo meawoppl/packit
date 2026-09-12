@@ -5,11 +5,12 @@ fn advance(p: &Physics, n: usize) {
     }
 }
 #[test]
-fn gravity_and_stiff_contacts_stay_bounded() {
+fn pressure_and_stiff_contacts_stay_bounded() {
     let p = Physics::new(16, 4.5);
     p.set_params(Params {
-        gravity: true,
         attraction: true,
+        band_tension: 40.0,
+        target_side: 4.0,
         stiffness: 1600.0,
         damping: 0.3,
         ..p.params()
@@ -97,7 +98,7 @@ fn pause_dispose_and_step_budget() {
     };
     let p = Physics::new(4, 3.0);
     p.set_params(Params {
-        gravity: true,
+        attraction: true,
         ..p.params()
     });
     p.set_paused(true);
@@ -253,12 +254,13 @@ fn off_center_bumps_and_wall_corners_impart_torque() {
     }
 }
 #[test]
-fn gravity_grids_settle_with_and_without_edge_attraction() {
+fn pressure_grids_settle_with_and_without_edge_attraction() {
     for edge_attraction in [0.0, 30.0] {
         let p = Physics::new(9, 3.5);
         p.set_params(Params {
-            gravity: true,
             edge_attraction,
+            band_tension: 30.0,
+            target_side: 3.0,
             ..p.params()
         });
         advance(&p, 960);
@@ -290,7 +292,7 @@ fn anneal_kicks_scale_deterministically() {
 
 #[test]
 fn wall_equilibrium_depth_is_independent_of_orientation() {
-    // Hold orientation fixed and solve vertical equilibrium under gravity.
+    // Hold orientation fixed and solve vertical equilibrium under a constant external pressure.
     for theta in [0.0_f32, 0.001, 0.2, std::f32::consts::FRAC_PI_4] {
         let mut b = Body {
             theta,

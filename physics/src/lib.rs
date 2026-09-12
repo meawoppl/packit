@@ -32,7 +32,6 @@ pub enum Backend {
 }
 #[derive(Clone, Copy, Debug)]
 pub struct Params {
-    pub gravity: bool,
     pub attraction: bool,
     pub edge_attraction: f32,
     pub damping: f32,
@@ -88,7 +87,6 @@ impl Physics {
                 contact_forces: vec![[0.0; 2]; n as usize],
                 side,
                 params: Params {
-                    gravity: false,
                     attraction: false,
                     edge_attraction: 0.0,
                     damping: 3.0,
@@ -171,19 +169,38 @@ impl Physics {
                         s.mouse,
                         s.rotation,
                         s.revision,
+                        s.glues.clone(),
+                        s.band_velocity,
                     ))
                 } else {
                     s.gpu = None;
                     None
                 }
             };
-            if let Some((gpu, initial, params, side, mouse, rotation, revision)) = snapshot {
+            if let Some((
+                gpu,
+                initial,
+                params,
+                side,
+                mouse,
+                rotation,
+                revision,
+                glues,
+                band_velocity,
+            )) = snapshot
+            {
                 let _guard = BusyGuard {
                     state: Rc::downgrade(&self.state),
                     initializing: false,
                 };
                 let result = gpu
-                    .step(&initial, params, side, (mouse, rotation), steps)
+                    .step(
+                        &initial,
+                        params,
+                        side,
+                        (mouse, rotation, &glues, band_velocity),
+                        steps,
+                    )
                     .await;
                 let mut s = self.state.borrow_mut();
                 if s.disposed {
@@ -273,7 +290,7 @@ impl Physics {
             s.rotation = Rotation::default();
         }
     }
-    /// Net collision and edge forces from the last substep, excluding gravity,
+    /// Net collision and edge forces from the last substep, excluding
     /// center attraction, and the mouse spring. Output-only visualization data.
     pub fn contact_forces(&self) -> Vec<[f32; 2]> {
         self.state.borrow().contact_forces.clone()

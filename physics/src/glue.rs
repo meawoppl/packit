@@ -308,6 +308,52 @@ mod tests {
         assert!(f[0][0] > 0. && f[0][1] > 0.);
     }
     #[test]
+    fn glued_edges_close_and_point_line_retains_sliding() {
+        let p = Physics::new(2, 5.0);
+        p.set_pose(0, 1.5, 2.0, 0.0);
+        p.set_pose(1, 3.0, 2.2, 0.0);
+        p.set_glues(&[Glue {
+            a: Feature::Edge { square: 0, edge: 0 },
+            b: Feature::Edge { square: 1, edge: 2 },
+        }])
+        .unwrap();
+        for _ in 0..960 {
+            p.state.borrow_mut().cpu_step();
+        }
+        let b = p.bodies();
+        let n = [b[0].theta.cos(), b[0].theta.sin()];
+        let d = [b[1].x - b[0].x, b[1].y - b[0].y];
+        assert!((dot(d, n) - 1.0).abs() < 0.002, "{b:?}");
+        assert!((b[0].theta - b[1].theta).abs() < 0.002);
+        assert!(
+            dot(d, tangent(n)).abs() > 0.05,
+            "glue must not weld midpoints together"
+        );
+        assert!(p.motion() < 0.004, "{}", p.motion());
+        let bodies = [
+            Body {
+                x: 1.5,
+                y: 1.2,
+                ..Body::default()
+            },
+            Body {
+                x: 2.7,
+                y: 1.4,
+                ..Body::default()
+            },
+        ];
+        let g = Glue {
+            a: Feature::Midpoint { square: 0, edge: 0 },
+            b: Feature::Edge { square: 1, edge: 2 },
+        };
+        let (f, _) = forces(&[g], &bodies, 5., 0., 900.);
+        assert_eq!(f[0][1], 0.0);
+        let mut outside = bodies;
+        outside[0].y = 3.0;
+        let (f, _) = forces(&[g], &outside, 5., 0., 900.);
+        assert!(f[0][1] < 0., "outside segment pulls toward endpoint");
+    }
+    #[test]
     fn wall_glue_has_opposite_band_reaction() {
         let bodies = [Body {
             x: 2.3,
