@@ -69,7 +69,6 @@ pub enum Msg {
     SetCount(String),
     TargetSide(f64),
     BandTension(f32),
-    Gravity(bool),
     Attraction(bool),
     EdgeAttraction(f32),
     Damping(f32),
@@ -487,14 +486,6 @@ impl Component for Game {
                 self.set_pause(false);
                 true
             }
-            Msg::Gravity(on) => {
-                self.stop_anneal();
-                let mut params = self.physics.params();
-                params.gravity = on;
-                self.physics.set_params(params);
-                self.invalidate();
-                true
-            }
             Msg::Attraction(on) => {
                 self.stop_anneal();
                 let mut params = self.physics.params();
@@ -783,11 +774,6 @@ impl Component for Game {
                             <input id="pg-band" type="range" min="0" max="100" step="1" value={params.band_tension.to_string()}
                                 oninput={link.callback(|e: InputEvent| Msg::BandTension(input_value(&e).parse().unwrap_or(0.0)))} />
                             <p class="pg-help">{ "Changing container size animates the band with live pressure. Squares push back, and higher pressure lets the size target run further ahead of the container. Zero holds the current size; moving the size slider re-engages pressure at 30." }</p>
-                            <label class="pg-row">
-                                { "Gravity " }
-                                <input type="checkbox" checked={params.gravity}
-                                    onchange={link.callback(|e: Event| Msg::Gravity(e.target_unchecked_into::<HtmlInputElement>().checked()))} />
-                            </label>
                             <label class="pg-row">
                                 { "Square attraction " }
                                 <input type="checkbox" checked={params.attraction}
