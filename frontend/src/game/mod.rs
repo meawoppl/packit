@@ -37,6 +37,16 @@ const MAX_SUBSTEPS: u32 = 6;
 const SETTLE_FRAMES: u32 = 150;
 const NUDGE: f32 = 0.025;
 const ROTATE_STEP: f32 = 0.04;
+/// How far the effective size target may lead the actual container at full
+/// band tension (100); lower tension shortens the reach proportionally.
+const MAX_SCRUB: f64 = 1.0;
+
+/// The band's size target for a requested `desired` side: it can only run
+/// ahead of the actual `side` as far as the band pressure reaches.
+fn scrub_target(desired: f64, side: f64, tension: f32) -> f64 {
+    let reach = MAX_SCRUB * tension as f64 / 100.0;
+    desired.clamp(side - reach, side + reach)
+}
 
 #[derive(Properties, PartialEq)]
 pub struct GameProps {
@@ -121,6 +131,9 @@ pub struct Game {
     submit_after_measure: bool,
     pending_import: Option<Arrangement>,
     anneal: Option<Anneal>,
+    /// Container side requested with the size slider; the band's target
+    /// follows it only as far as the band pressure reaches.
+    desired_side: Option<f64>,
     readout: Readout,
 }
 
@@ -192,6 +205,7 @@ impl Component for Game {
             submit_after_measure: false,
             pending_import: None,
             anneal: None,
+            desired_side: None,
             readout: Readout::default(),
         };
         // Fill the sidebar before the first view; later frames only re-render on change.
@@ -386,12 +400,13 @@ impl Component for Game {
             Msg::TargetSide(side) => {
                 self.stop_anneal();
                 let mut params = self.physics.params();
-                params.target_side = side;
                 // A size edit is a spring target, never a teleport. Enable
                 // pressure if it was off, retaining any chosen nonzero strength.
                 if params.band_tension == 0.0 {
                     params.band_tension = 30.0;
                 }
+                self.desired_side = Some(side);
+                params.target_side = scrub_target(side, self.physics.side(), params.band_tension);
                 self.physics.set_params(params);
                 self.set_pause(false);
                 self.refresh_readout();
@@ -401,6 +416,9 @@ impl Component for Game {
                 self.stop_anneal();
                 let mut params = self.physics.params();
                 params.band_tension = tension;
+                if let Some(desired) = self.desired_side {
+                    params.target_side = scrub_target(desired, self.physics.side(), tension);
+                }
                 self.physics.set_params(params);
                 self.invalidate();
                 self.set_pause(false);
@@ -461,6 +479,7 @@ impl Component for Game {
             }
             Msg::Reset => {
                 self.stop_anneal();
+                self.desired_side = None;
                 let side = initial_side(n);
                 self.physics.set_side(side);
                 let mut params = self.physics.params();
@@ -481,6 +500,8 @@ impl Component for Game {
                 if self.busy {
                     return false;
                 }
+                // The run drives the band target itself.
+                self.desired_side = None;
                 let seed = (js_sys::Math::random() * u64::MAX as f64) as u64;
                 let floor = (n as f64).sqrt();
                 self.anneal = Some(Anneal::new(
@@ -690,7 +711,7 @@ impl Component for Game {
                             </label>
                             <input id="pg-band" type="range" min="0" max="100" step="1" value={params.band_tension.to_string()}
                                 oninput={link.callback(|e: InputEvent| Msg::BandTension(input_value(&e).parse().unwrap_or(0.0)))} />
-                            <p class="pg-help">{ "Changing container size animates the band with live pressure. Squares push back. Zero holds the current size; moving the size slider re-engages pressure at 30." }</p>
+                            <p class="pg-help">{ "Changing container size animates the band with live pressure. Squares push back, and higher pressure lets the size target run further ahead of the container. Zero holds the current size; moving the size slider re-engages pressure at 30." }</p>
                             <label class="pg-row">
                                 { "Gravity " }
                                 <input type="checkbox" checked={params.gravity}
@@ -834,6 +855,7 @@ impl Game {
     /// Draw, check for a settled scene, and queue the next frame. Returns
     /// whether the sidebar needs a re-render.
     fn after_frame(&mut self, ctx: &Context<Self>) -> bool {
+        self.apply_scrub();
         self.draw();
         self.check_settled(ctx);
         self.schedule_frame(ctx);
@@ -980,7 +1002,26 @@ impl Game {
         self.status_error = error;
     }
 
+    /// Let the band's target catch up with the requested size as far as the
+    /// band pressure reaches, as the squares yield or push back.
+    fn apply_scrub(&mut self) {
+        let Some(desired) = self.desired_side else {
+            return;
+        };
+        let mut params = self.physics.params();
+        // Zero tension holds the current size.
+        if params.band_tension == 0.0 {
+            return;
+        }
+        let target = scrub_target(desired, self.physics.side(), params.band_tension);
+        if target != params.target_side {
+            params.target_side = target;
+            self.physics.set_params(params);
+        }
+    }
+
     fn apply_import(&mut self, a: &Arrangement) {
+        self.desired_side = None;
         self.physics.load(a);
         self.view_side.set(self.physics.side());
         self.invalidate();
@@ -998,6 +1039,8 @@ impl Game {
                     100.0 * (side / report.lower_bound - 1.0)
                 );
                 if report.valid {
+                    // Settle at the measured packing; don't resume squeezing.
+                    self.desired_side = None;
                     self.physics.load(&report.arrangement);
                     self.view_side.set(self.physics.side());
                     let exact = report
@@ -1048,5 +1091,22 @@ impl Game {
                 .await,
             )
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn scrub_reach_scales_with_band_pressure() {
+        // At tension 30 the target may lead a 3.0 container by 0.3 either way.
+        assert!((scrub_target(1.0, 3.0, 30.0) - 2.7).abs() < 1e-12);
+        assert!((scrub_target(5.0, 3.0, 30.0) - 3.3).abs() < 1e-12);
+        // Full pressure reaches a whole unit; zero pressure holds the side.
+        assert!((scrub_target(1.0, 3.0, 100.0) - 2.0).abs() < 1e-12);
+        assert_eq!(scrub_target(1.0, 3.0, 0.0), 3.0);
+        // Within reach, the request is used as-is.
+        assert_eq!(scrub_target(2.9, 3.0, 30.0), 2.9);
     }
 }

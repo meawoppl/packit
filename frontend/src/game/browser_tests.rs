@@ -264,8 +264,16 @@ async fn size_slider_animates_pressure_and_wakes_a_paused_scene() {
         .unwrap();
     sleep(50).await;
     assert!(!physics.paused());
-    assert_eq!(physics.params().target_side, 1.8);
-    assert_eq!(text(&root, "label[for=pg-size] output"), "1.800");
+    // The request (1.8) is beyond the 0.3 reach at tension 30, so the band's
+    // target leads the actual side by that reach and the readout shows it.
+    let target = physics.params().target_side;
+    assert!(
+        target > 1.8 && (target - (physics.side() - 0.3)).abs() < 0.02,
+        "target {target} leads side {} by the reach",
+        physics.side()
+    );
+    let shown: f64 = text(&root, "label[for=pg-size] output").parse().unwrap();
+    assert!((shown - target).abs() < 0.02, "readout {shown} vs {target}");
     assert_eq!(physics.params().band_tension, 30.0);
     assert!(physics.side() > start - 0.2, "no instant resize");
     // Allow slow/headless animation scheduling while requiring real movement.
@@ -313,6 +321,55 @@ async fn size_slider_animates_pressure_and_wakes_a_paused_scene() {
         physics.side() > before + 0.05,
         "pressure expands the band: {}",
         physics.side()
+    );
+    handle.destroy();
+    root.remove();
+}
+
+/// Set a range input's value and fire `input` like a user drag. Returns the
+/// value the input actually holds, since range inputs clamp to min/max.
+fn slide(root: &Element, selector: &str, value: &str) -> f64 {
+    let slider: HtmlInputElement = root
+        .query_selector(selector)
+        .unwrap()
+        .unwrap()
+        .dyn_into()
+        .unwrap();
+    slider.set_value(value);
+    let init = web_sys::EventInit::new();
+    init.set_bubbles(true);
+    slider
+        .dispatch_event(&Event::new_with_event_init_dict("input", &init).unwrap())
+        .unwrap();
+    slider.value().parse().unwrap()
+}
+
+#[wasm_bindgen_test]
+async fn size_scrub_reach_follows_band_pressure() {
+    let _gpu = NoWebGpu::install();
+    let (handle, root, physics) = mount().await;
+    // Two squares side by side hold the container near 2.0, so the smallest
+    // request the slider allows (sqrt(2)) can't be reached at tension 30; the
+    // target may only lead the side by the 0.3 reach.
+    let desired = slide(&root, "#pg-size", "1.2");
+    for _ in 0..40 {
+        sleep(50).await;
+        let (target, side) = (physics.params().target_side, physics.side());
+        assert!(
+            (target - desired.max(side - 0.3)).abs() < 0.03,
+            "tension 30 reach: target {target}, side {side}, desired {desired}"
+        );
+    }
+    assert!(physics.params().target_side > 1.5, "squares push back");
+
+    // Full pressure lets the target run a whole unit ahead, down to the request.
+    slide(&root, "#pg-band", "100");
+    sleep(100).await;
+    let (target, side) = (physics.params().target_side, physics.side());
+    assert_eq!(physics.params().band_tension, 100.0);
+    assert!(
+        (target - desired.max(side - 1.0)).abs() < 0.03,
+        "tension 100 reach: target {target}, side {side}, desired {desired}"
     );
     handle.destroy();
     root.remove();
