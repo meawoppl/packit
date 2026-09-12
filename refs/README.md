@@ -74,18 +74,32 @@ EJC terms: https://www.combinatorics.org/ojs/index.php/eljc/about/submissions
 here as research references with full attribution; follow the original links
 above for the canonical versions.
 
-`markdown/*.md` were machine-converted from the PDFs with
-[pymupdf4llm](https://pypi.org/project/pymupdf4llm/) for searching and quoting.
-Each starts with its source and license. Formulas, figures, and tables are
-often garbled, so check the PDF before relying on any statement. To regenerate
-one, keep its existing `> **Source:** ... > **License:** ...` header block and
-replace everything below it with the output of:
+## Typeset transcriptions
+
+The six papers in [`markdown/`](markdown/) started as PDF extractions with
+[pymupdf4llm](https://pypi.org/project/pymupdf4llm/). Their mathematics is being
+restored against the committed PDFs, using GitHub inline math and fenced
+`math` displays. Each file keeps its source and license header. Historical
+claims remain as printed; separate transcription notes identify apparent
+source errors rather than silently changing the mathematics. Figure captions
+link to the PDF diagrams where the extracted image text was unusable.
+
+Do not overwrite a checked transcription with fresh extraction output. To
+compare a newer PDF, extract into a scratch file, retain the source/license
+header, and review changes against rendered PDF pages. The extraction command
+emits only a draft body:
 
 ```sh
-uv run --with pymupdf4llm python -c "import pymupdf4llm,sys; print(pymupdf4llm.to_markdown(sys.argv[1]))" downloads/<id>.pdf
+uv run --with pymupdf4llm python -c "import pymupdf4llm,sys; print(pymupdf4llm.to_markdown(sys.argv[1]))" downloads/<id>.pdf > /tmp/paper-draft.md
 ```
 
-The command emits only the converted body, not the header.
+[The reference math workflow](../.github/workflows/math.yml) runs
+[CosmicFrontierLabs/github-math-lint](https://github.com/CosmicFrontierLabs/github-math-lint)
+on `refs/**/*.md` and pull-request text. It is pinned to a reviewed commit and
+uploads the full report. This detects GitHub Markdown/math rendering hazards;
+it does not verify a theorem or catch every incorrectly transcribed symbol.
+Changes still need comparison with the source PDF and inspection of GitHub's
+rendered Markdown, including fractions, radicals, subscripts and equation tags.
 
 ## Solver interpretation
 
