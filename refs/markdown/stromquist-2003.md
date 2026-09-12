@@ -186,7 +186,7 @@ Figure 12: No room for I-box and J-box. [View the diagram.](../downloads/stromqu
 
 3. If the A-box contains $A''=(1.2,1)$, then the points $A$, $A''$, $B'$, $C$ through $G$, $I$, $J$, and $(2,1)$ form an unavoidable set (Figure 10). All of these are denied to the H-box except for $(2,1)$, so the H-box contains $(2,1)$. (This step uses Lemma 3.)
 
-4. If the A-box contains $A'=(1,s-2.92)$, then the entire segment from $A'$ to $A$ (which includes the segment from $(1,.788)$ to $(1,1)$) is denied to the H-box, as are points $B$ through $G$, $I$, and $J$. Figure 11 shows a partition of $S$ in which Lemma 5 applies to one of the regions. From this figure, we see that the H-box must touch the segment from $(2,1)$ to $(2.12,.9)$.
+4. If the A-box contains $A'=(1,s-2.92)$, then the entire segment from $A'$ to $A$ (which includes the segment from $(1,.788)$ to $`(1,1)`$) is denied to the H-box, as are points $B$ through $G$, $I$, and $J$. Figure 11 shows a partition of $S$ in which Lemma 5 applies to one of the regions. From this figure, we see that the H-box must touch the segment from $(2,1)$ to $(2.12,.9)$.
 
 In either case, the H-box must contain some point on the indicated segment. In Figure 12 the point of intersection is marked with an asterisk. Seven other asterisks mark other points which must be contained in the B-, D-, F-, and H-boxes by symmetrical arguments. We do not know the locations of these points exactly, but we can tell that each asterisk is within 1 of the center of the square and within 1 of each of the two asterisks nearest to it. Each of the heavy line segments connects two asterisks that must be in the same box.
 
