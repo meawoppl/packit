@@ -287,3 +287,22 @@ fn anneal_kicks_scale_deterministically() {
     cool.shake_scaled(42, f32::NAN);
     assert_eq!(cool.motion(), 0.0);
 }
+
+#[test]
+fn wall_equilibrium_depth_is_independent_of_orientation() {
+    // Hold orientation fixed and solve vertical equilibrium under gravity.
+    for theta in [0.0_f32, 0.001, 0.2, std::f32::consts::FRAC_PI_4] {
+        let mut b = Body {
+            theta,
+            ..Body::default()
+        };
+        let h = 0.5 * (theta.cos().abs() + theta.sin().abs());
+        b.y = h + 0.1;
+        for _ in 0..960 {
+            let f = contacts::wall(&b, (0.0, 1.0), h - b.y, 900.0);
+            b.vy += (f[1] - 9.0) / 120.0;
+            b.y += b.vy / 120.0;
+        }
+        assert!((h - b.y - 0.01).abs() < 1e-5, "theta={theta}, body={b:?}");
+    }
+}
