@@ -47,7 +47,7 @@ export function mountGame(root,engine,shader,refine,submit){
     await new Promise(r=>setTimeout(r,25));if(stopped)return null;
     try{const report=JSON.parse(refine(JSON.stringify(engine.arrangement())));if(report.error)throw Error(report.error);lastReport=report;$('.pg-bound').textContent=`Lower bound ${report.lower_bound.toFixed(6)} · gap ${(100*(report.arrangement.side/report.lower_bound-1)).toFixed(3)}%`;if(report.valid){
       // Preserve f64 refined coordinates separately: the GPU's f32 state is for play.
-      engine.load(report.arrangement);status(`Ready · ${report.arrangement.side.toFixed(9)} side · contact residual ${report.contacts.max_residual.toExponential(1)}. ${report.candidate_expression||'Numerical local solution.'}`);
+      engine.load(report.arrangement);status(`Ready · ${report.arrangement.side.toFixed(9)} side · contact residual ${report.contacts.max_residual.toExponential(1)}. ${report.algebraic?'Branch-exact side '+report.algebraic.side_expression+' (assumed rotations).':report.candidate_expression||'Numerical local solution.'}`);
     }else status(report.status,true);return report;}catch(e){status(e.message||String(e),true);return null;}finally{busy=false;$('.pg-refine').disabled=false;}
   }
   on($('.pg-refine'),'click',()=>measure());
