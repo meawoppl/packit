@@ -46,8 +46,8 @@ In particular, for two integers $a\ge b\ge 2$, we see that an $a\times b$ rectan
 
 **Theorem 2.**
 
-- (i) For any positive integer <i>N</i> such that $N\in\lbrace n^2,n^2-1,n^2-2\rbrace $ for some integer $n\ge 1$, $s(N)=n$ holds.
-- (ii) For any integer $N\ge 4$ such that $N\notin\lbrace n^2,n^2-1,n^2-2\mid\text{integers }n\ge 1\rbrace $,
+- (i) For any positive integer <i>N</i> such that $N\in\lbrace n^2,n^2-1,n^2-2\rbrace$ for some integer $n\ge 1$, $s(N)=n$ holds.
+- (ii) For any integer $N\ge 4$ such that $N\notin\lbrace n^2,n^2-1,n^2-2\mid\text{integers }n\ge 1\rbrace$,
 
 ```math
 s(N)\ge\sqrt{N-2\lfloor\sqrt{N}\rfloor+1}+1>\sqrt{N}.
@@ -75,7 +75,7 @@ and inequality $\sqrt{N+2}\ge\lceil\sqrt{N}\rceil$. Now assume that $\sqrt{N}$ i
 
 Hence $\sqrt{N-2\lfloor\sqrt{N}\rfloor+1}+1\ge\lfloor\sqrt{N}\rfloor+1$ if and only if $\sqrt{N+2}\ge\lceil\sqrt{N}\rceil$. A positive integer <i>N</i> satisfies $\sqrt{N+2}\ge\lceil\sqrt{N}\rceil$ if and only if there is an integer <i>n</i> such that $\sqrt{N+2}\ge n\ge\sqrt{N}$, i.e., $n^2\ge N\ge n^2-2$. It is known that $s(1)=1$ and $s(2)=s(3)=s(4)=2$ [4]. Let $N\ge 4$.
 
-We first consider the case where $\sqrt{N+2}\ge\lceil\sqrt{N}\rceil$. Then by Theorem 1 with $a=b=\lceil\sqrt{N}\rceil\ge 2$, we have $\nu(\lceil\sqrt{N}\rceil,\lceil\sqrt{N}\rceil)\lt (\lceil\sqrt{N}\rceil)^2-2\le N$. This says that <i>N</i> unit squares cannot be packed in any square with side length less than $\lceil\sqrt{N}\rceil$. Thus, $s(N)\ge\lceil\sqrt{N}\rceil$. So for any integer $N\in\lbrace n^2,n^2-1,n^2-2\rbrace $, where $n\ge 1$ is an integer, we have $s(N)\ge n=\lceil\sqrt{N}\rceil\ge s(N)$. This proves (i).
+We first consider the case where $\sqrt{N+2}\ge\lceil\sqrt{N}\rceil$. Then by Theorem 1 with $a=b=\lceil\sqrt{N}\rceil\ge 2$, we have $\nu(\lceil\sqrt{N}\rceil,\lceil\sqrt{N}\rceil)\lt (\lceil\sqrt{N}\rceil)^2-2\le N$. This says that <i>N</i> unit squares cannot be packed in any square with side length less than $\lceil\sqrt{N}\rceil$. Thus, $s(N)\ge\lceil\sqrt{N}\rceil$. So for any integer $N\in\lbrace n^2,n^2-1,n^2-2\rbrace$, where $n\ge 1$ is an integer, we have $s(N)\ge n=\lceil\sqrt{N}\rceil\ge s(N)$. This proves (i).
 
 We next consider the case where $\sqrt{N+2}\lt \lceil\sqrt{N}\rceil$. Let $k=\lfloor\sqrt{N}\rfloor\ge 2$ and $\alpha=\sqrt{N-2\lfloor\sqrt{N}\rfloor+1}-\lfloor\sqrt{N}\rfloor+1$. Note that $\alpha$ is a solution to $(\alpha+k-1)^2=N-2k+1$. Note that $\alpha\lt 1$ since $\sqrt{N+2}\lt \lceil\sqrt{N}\rceil$. Hence by Theorem 1 with $a=b=k+\alpha\ge 2$, we have
 
@@ -124,7 +124,7 @@ See Fig. 1. [Note coordinates.](#transcription-notes)
 
 Let $\lambda>1$. We say that <i>R</i> and <i>U</i> are *shrunken* toward the origin $(0,0)$ by factor $\lambda^{-1}$ if we map each point $(x,y)$ in <i>R</i> and <i>U</i> to a new point $(\lambda^{-1}x,\lambda^{-1}y)$. Let $\lambda^{-1}R$ and $\lambda^{-1}U$ respectively denote such <i>R</i> and <i>U</i> shrunken by factor $\lambda^{-1}$.
 
-For a given unit square <i>S</i> inside $\lambda^{-1}R$ and an object $K\in\lbrace Q,P,L_1,L_2,L_3,L_4,R^{\ast}\rbrace $, we define *score* $\sigma(S;K)$ of <i>S</i> by <i>K</i> as follows.
+For a given unit square <i>S</i> inside $\lambda^{-1}R$ and an object $K\in\lbrace Q,P,L_1,L_2,L_3,L_4,R^{\ast}\rbrace$, we define *score* $\sigma(S;K)$ of <i>S</i> by <i>K</i> as follows.
 
 - $\sigma(S;R^{\ast})$ = (the area of the intersection of <i>S</i> and $R^{\ast}$) $\times\lambda^2$,
 - $\sigma(S;L_i)$ = (the sum of length of the intersection of <i>S</i> and line segment $L_i$) $\times 0.5\times\lambda$,
