@@ -4,6 +4,7 @@
 mod browser_tests;
 mod canvas;
 mod files;
+mod share;
 
 use crate::anneal::{Anneal, Command, Schedule};
 use crate::benchmark::Benchmark;
@@ -81,6 +82,9 @@ pub enum Msg {
     Submit,
     Submitted(Result<ScoreEntry, String>),
     Export,
+    Share,
+    /// Clipboard result for a share link; `Err` if it could not be copied.
+    Shared(Result<(), ()>),
     ImportPick,
     ImportFile(Event),
     Imported(Result<String, String>),
@@ -141,6 +145,12 @@ fn initial_side(n: u32) -> f64 {
     (n as f64).sqrt().ceil() + 0.5
 }
 
+/// Query string of `/play/:n`; `s` carries a share code.
+#[derive(serde::Deserialize)]
+struct PlayQuery {
+    s: Option<String>,
+}
+
 fn input_value(e: &Event) -> String {
     e.target_unchecked_into::<HtmlInputElement>().value()
 }
@@ -156,6 +166,25 @@ fn focus_without_scroll(canvas: &HtmlCanvasElement) {
             let _ = focus.call1(canvas, &options);
         }
     }
+}
+
+/// `navigator.clipboard.writeText(text)` via `Reflect`: `cargo add` rejects
+/// web-sys's `Clipboard` feature in this workspace, and the lookup also
+/// covers the API being absent at runtime (e.g. an insecure context), in
+/// which case the returned promise is rejected.
+fn write_clipboard(window: &web_sys::Window, text: &str) -> js_sys::Promise {
+    let write = || -> Option<js_sys::Promise> {
+        let navigator = js_sys::Reflect::get(window, &"navigator".into()).ok()?;
+        let clipboard = js_sys::Reflect::get(&navigator, &"clipboard".into()).ok()?;
+        let write_text = js_sys::Reflect::get(&clipboard, &"writeText".into()).ok()?;
+        let write_text = write_text.dyn_ref::<js_sys::Function>()?;
+        write_text
+            .call1(&clipboard, &text.into())
+            .ok()?
+            .dyn_into()
+            .ok()
+    };
+    write().unwrap_or_else(|| js_sys::Promise::reject(&wasm_bindgen::JsValue::UNDEFINED))
 }
 
 impl Component for Game {
@@ -208,6 +237,27 @@ impl Component for Game {
             desired_side: None,
             readout: Readout::default(),
         };
+        // A shared packing opens paused and unvalidated, even if it was
+        // validated when shared; it has to be measured again here.
+        let code = ctx
+            .link()
+            .location()
+            .and_then(|l| l.query::<PlayQuery>().ok())
+            .and_then(|q| q.s);
+        if let Some(code) = code {
+            match share::decode(&code, n) {
+                Ok(a) => {
+                    game.physics.load(&a);
+                    game.physics.set_paused(true);
+                    game.view_side.set(game.physics.side());
+                    game.set_status(
+                        "Shared packing loaded, not yet validated. Settle & measure to check it.",
+                        false,
+                    );
+                }
+                Err(e) => game.set_status(&format!("Share link: {e}"), true),
+            }
+        }
         // Fill the sidebar before the first view; later frames only re-render on change.
         game.refresh_readout();
         game
@@ -583,6 +633,45 @@ impl Component for Game {
                 }
                 false
             }
+            Msg::Share => {
+                let arrangement = match &self.last_report {
+                    Some(r) if r.valid => r.arrangement.clone(),
+                    _ => self.physics.arrangement(),
+                };
+                let Some(window) = web_sys::window() else {
+                    return false;
+                };
+                let path = format!("/play/{n}?s={}", share::encode(&arrangement));
+                // Put the link in the address bar too, so it survives a failed copy.
+                if let Ok(history) = window.history() {
+                    let _ = history.replace_state_with_url(
+                        &wasm_bindgen::JsValue::NULL,
+                        "",
+                        Some(&path),
+                    );
+                }
+                let url = format!("{}{path}", window.location().origin().unwrap_or_default());
+                let copy = write_clipboard(&window, &url);
+                ctx.link().send_future(async move {
+                    Msg::Shared(
+                        wasm_bindgen_futures::JsFuture::from(copy)
+                            .await
+                            .map(|_| ())
+                            .map_err(|_| ()),
+                    )
+                });
+                false
+            }
+            Msg::Shared(copied) => {
+                match copied {
+                    Ok(()) => self.set_status("Share link copied to the clipboard.", false),
+                    Err(()) => self.set_status(
+                        "Couldn't copy automatically; the share link is in the address bar.",
+                        false,
+                    ),
+                }
+                true
+            }
             Msg::ImportPick => {
                 if let Some(input) = self.file_input.cast::<HtmlInputElement>() {
                     input.click();
@@ -756,6 +845,7 @@ impl Component for Game {
                                     { "Settle & measure" }
                                 </button>
                                 <button onclick={link.callback(|_| Msg::Export)}>{ "Export" }</button>
+                                <button onclick={link.callback(|_| Msg::Share)}>{ "Share" }</button>
                                 <button onclick={link.callback(|_| Msg::ImportPick)}>{ "Import" }</button>
                                 <input ref={self.file_input.clone()} type="file" accept="application/json,.json" hidden=true
                                     onchange={link.callback(Msg::ImportFile)} />

@@ -453,3 +453,96 @@ async fn wheel_and_keys_wake_physics_and_turn_without_teleporting() {
     handle.destroy();
     root.remove();
 }
+
+/// Point the page at `?{query}` for the duration of a test.
+struct PageQuery(String);
+impl PageQuery {
+    fn set(query: &str) -> Self {
+        let window = web_sys::window().unwrap();
+        let original = window.location().href().unwrap();
+        window
+            .history()
+            .unwrap()
+            .replace_state_with_url(&wasm_bindgen::JsValue::NULL, "", Some(&format!("?{query}")))
+            .unwrap();
+        Self(original)
+    }
+}
+impl Drop for PageQuery {
+    fn drop(&mut self) {
+        let _ = web_sys::window()
+            .unwrap()
+            .history()
+            .unwrap()
+            .replace_state_with_url(&wasm_bindgen::JsValue::NULL, "", Some(&self.0));
+    }
+}
+
+fn two_squares() -> Arrangement {
+    let sq = |cx| shared::Placement {
+        cx,
+        cy: 0.75,
+        theta: 0.125,
+    };
+    Arrangement {
+        n: 2,
+        side: 2.5,
+        squares: vec![sq(0.75), sq(1.875)],
+    }
+}
+
+#[wasm_bindgen_test]
+async fn share_link_loads_paused_and_unvalidated() {
+    let _gpu = NoWebGpu::install();
+    let _query = PageQuery::set(&format!("s={}", share::encode(&two_squares())));
+    let (handle, root, physics) = mount().await;
+    assert!(physics.paused(), "shared packings open paused");
+    assert_eq!(physics.arrangement(), two_squares());
+    assert!(text(&root, ".pg-status").starts_with("Shared packing loaded"));
+    assert!(
+        text(&root, ".pg-benchmark").contains("unchecked")
+            || text(&root, ".pg-benchmark").contains("No reference")
+    );
+    handle.destroy();
+    root.remove();
+}
+
+#[wasm_bindgen_test]
+async fn bad_share_link_reports_an_error() {
+    let _gpu = NoWebGpu::install();
+    let _query = PageQuery::set("s=zz");
+    let (handle, root, physics) = mount().await;
+    assert!(text(&root, ".pg-status").starts_with("Share link:"));
+    assert_eq!(physics.side(), 2.5, "nothing was loaded");
+    handle.destroy();
+    root.remove();
+}
+
+#[wasm_bindgen_test]
+async fn share_button_writes_a_decodable_link() {
+    let _gpu = NoWebGpu::install();
+    let _query = PageQuery::set("");
+    let (handle, root, physics) = mount().await;
+    force_button(&root, "Pause").click();
+    sleep(30).await;
+    let buttons = root.query_selector_all(".pg-submit button").unwrap();
+    let share: HtmlElement = (0..buttons.length())
+        .filter_map(|i| buttons.item(i))
+        .filter_map(|b| b.dyn_into::<HtmlElement>().ok())
+        .find(|b| b.text_content().unwrap_or_default() == "Share")
+        .unwrap();
+    share.click();
+    sleep(100).await;
+    let search = web_sys::window().unwrap().location().search().unwrap();
+    let code = search
+        .strip_prefix("?s=")
+        .expect("share code in the address bar");
+    assert_eq!(share::decode(code, 2).unwrap(), physics.arrangement());
+    let status = text(&root, ".pg-status");
+    assert!(
+        status.starts_with("Share link copied") || status.contains("address bar"),
+        "{status}"
+    );
+    handle.destroy();
+    root.remove();
+}

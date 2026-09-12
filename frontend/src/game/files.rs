@@ -39,10 +39,17 @@ pub fn download_json(name: &str, value: &serde_json::Value) -> Result<(), String
 /// Parse an exported file (a bare `Arrangement` or an object with an
 /// `arrangement` field) and check it fits the current `n`.
 pub fn parse_arrangement(text: &str, n: u32) -> Result<Arrangement, String> {
-    let expected = || format!("Expected {n} squares with finite coordinates");
     let value: serde_json::Value = serde_json::from_str(text).map_err(|e| e.to_string())?;
     let inner = value.get("arrangement").unwrap_or(&value).clone();
-    let arr: Arrangement = serde_json::from_value(inner).map_err(|_| expected())?;
+    let arr: Arrangement = serde_json::from_value(inner)
+        .map_err(|_| format!("Expected {n} squares with finite coordinates"))?;
+    check_arrangement(&arr, n)?;
+    Ok(arr)
+}
+
+/// Limits every loaded arrangement must meet (JSON import and share links):
+/// `n` squares, a finite side in `[1, 1000]`, and finite bounded coordinates.
+pub fn check_arrangement(arr: &Arrangement, n: u32) -> Result<(), String> {
     let in_range = |v: f64| v.is_finite() && v.abs() <= MAX_COORD;
     let ok = arr.n == n
         && arr.squares.len() == n as usize
@@ -53,9 +60,9 @@ pub fn parse_arrangement(text: &str, n: u32) -> Result<Arrangement, String> {
             .iter()
             .all(|p| in_range(p.cx) && in_range(p.cy) && p.theta.is_finite());
     if ok {
-        Ok(arr)
+        Ok(())
     } else {
-        Err(expected())
+        Err(format!("Expected {n} squares with finite coordinates"))
     }
 }
 
