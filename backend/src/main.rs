@@ -28,6 +28,8 @@ struct Args {
 pub struct AppState {
     pub dev_mode: bool,
     pub db_pool: DbPool,
+    /// Origin for absolute link-preview URLs; see `Config::public_url`.
+    pub public_url: String,
 }
 
 /// Build the full application router from shared state.
@@ -59,6 +61,8 @@ pub fn build_app(state: Arc<AppState>) -> Router {
             get(handlers::scores::list).post(handlers::scores::submit),
         )
         .route("/api/scores/:id", get(handlers::scores::detail))
+        .route("/api/preview.png", get(handlers::preview::preview_png))
+        .route("/play/:n", get(handlers::preview::play))
         .with_state(state)
         .route(shared::AppSocket::PATH, handlers::websocket::handler())
         .merge(frontend)
@@ -128,6 +132,7 @@ async fn main() -> anyhow::Result<()> {
     let app_state = Arc::new(AppState {
         dev_mode: args.dev_mode,
         db_pool: pool,
+        public_url: config.public_url.clone(),
     });
 
     let app = build_app(app_state);
@@ -185,8 +190,11 @@ mod tests {
         Arc::new(AppState {
             dev_mode: true,
             db_pool,
+            public_url: TEST_URL.to_string(),
         })
     }
+
+    const TEST_URL: &str = "https://packit.test";
 
     #[tokio::test]
     async fn health_returns_ok_json() {
@@ -291,6 +299,127 @@ mod tests {
         }
     }
 
+    async fn fetch(req: Request<Body>) -> (StatusCode, header::HeaderMap, Vec<u8>) {
+        let resp = build_app(test_state()).oneshot(req).await.unwrap();
+        let (parts, body) = resp.into_parts();
+        let bytes = axum::body::to_bytes(body, usize::MAX).await.unwrap();
+        (parts.status, parts.headers, bytes.to_vec())
+    }
+
+    async fn fetch_uri(uri: &str) -> (StatusCode, header::HeaderMap, Vec<u8>) {
+        fetch(Request::get(uri).body(Body::empty()).unwrap()).await
+    }
+
+    /// The built page with `tags` inserted before `</head>` and nothing else
+    /// changed, so hashed scripts and SRI stay intact.
+    fn assert_page_with_tags(html: &str) -> &str {
+        let page = include_str!("../../frontend/dist/index.html");
+        let head_end = page.find("</head>").unwrap();
+        assert!(html.starts_with(&page[..head_end]), "{html}");
+        assert!(html.ends_with(&page[head_end..]), "{html}");
+        &html[head_end..html.len() - (page.len() - head_end)]
+    }
+
+    #[tokio::test]
+    async fn shared_play_page_describes_the_packing() {
+        let code = shared::share::encode(&two_squares("", 2.0).arrangement);
+        let req = Request::get(format!("/play/2?s={code}"))
+            .header(header::HOST, "evil.example")
+            .header("x-forwarded-host", "evil.example")
+            .body(Body::empty())
+            .unwrap();
+        let (status, headers, body) = fetch(req).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(headers[header::CONTENT_TYPE]
+            .to_str()
+            .unwrap()
+            .contains("html"));
+        let html = String::from_utf8(body).unwrap();
+        let tags = assert_page_with_tags(&html);
+        for expected in [
+            format!(r#"<meta property="og:url" content="{TEST_URL}/play/2?s={code}">"#),
+            format!(
+                r#"<meta property="og:image" content="{TEST_URL}/api/preview.png?n=2&amp;s={code}">"#
+            ),
+            format!(
+                r#"<meta name="twitter:image" content="{TEST_URL}/api/preview.png?n=2&amp;s={code}">"#
+            ),
+            r#"<meta name="twitter:card" content="summary_large_image">"#.to_string(),
+            r#"<meta property="og:title" content="2 squares in a 2.0000 box">"#.to_string(),
+        ] {
+            assert!(tags.contains(&expected), "missing {expected} in {tags}");
+        }
+        assert!(tags.contains("A valid packing of 2 unit squares"), "{tags}");
+        assert!(!tags.contains("evil.example"));
+    }
+
+    #[tokio::test]
+    async fn play_page_without_a_valid_code_is_generic() {
+        for (uri, url) in [
+            ("/play/2", format!("{TEST_URL}/play/2")),
+            ("/play/2?s=zz", format!("{TEST_URL}/play/2")),
+            ("/play/2?s=%3Cscript%3E", format!("{TEST_URL}/play/2")),
+            ("/play/abc", format!("{TEST_URL}/")),
+            ("/play/0", format!("{TEST_URL}/")),
+        ] {
+            let (status, _, body) = fetch_uri(uri).await;
+            assert_eq!(status, StatusCode::OK, "{uri}");
+            let html = String::from_utf8(body).unwrap();
+            let tags = assert_page_with_tags(&html);
+            assert!(
+                tags.contains(&format!(r#"<meta property="og:url" content="{url}">"#)),
+                "{uri}: {tags}"
+            );
+            assert!(!tags.contains("og:image"), "{uri}: {tags}");
+            assert!(!tags.contains("<script"), "{uri}: {tags}");
+            assert!(tags.contains(r#"content="summary""#), "{uri}: {tags}");
+        }
+    }
+
+    #[tokio::test]
+    async fn preview_png_draws_each_packing() {
+        let a = two_squares("", 2.0).arrangement;
+        let mut b = a.clone();
+        b.side = 2.5;
+        b.squares[1].theta = 0.3;
+        let mut pngs = Vec::new();
+        for arrangement in [&a, &b] {
+            let code = shared::share::encode(arrangement);
+            let (status, headers, png) = fetch_uri(&format!("/api/preview.png?n=2&s={code}")).await;
+            assert_eq!(status, StatusCode::OK);
+            assert_eq!(headers[header::CONTENT_TYPE], "image/png");
+            assert_eq!(
+                headers[header::CACHE_CONTROL],
+                "public, max-age=31536000, immutable"
+            );
+            assert!(png.starts_with(b"\x89PNG\r\n\x1a\n"));
+            // IHDR width and height.
+            assert_eq!(png[16..20], 1200u32.to_be_bytes());
+            assert_eq!(png[20..24], 630u32.to_be_bytes());
+            pngs.push(png);
+        }
+        assert_ne!(
+            pngs[0], pngs[1],
+            "distinct packings must preview differently"
+        );
+    }
+
+    #[tokio::test]
+    async fn preview_png_rejects_invalid_codes() {
+        let code = shared::share::encode(&two_squares("", 2.0).arrangement);
+        for uri in [
+            "/api/preview.png".to_string(),
+            "/api/preview.png?n=2".to_string(),
+            "/api/preview.png?n=2&s=zz".to_string(),
+            format!("/api/preview.png?n=3&s={code}"),
+            format!("/api/preview.png?n=-2&s={code}"),
+        ] {
+            let (status, headers, _) = fetch_uri(&uri).await;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "{uri}");
+            assert_eq!(headers[header::CACHE_CONTROL], "no-store", "{uri}");
+        }
+    }
+
     #[tokio::test]
     async fn records_served_from_refs() {
         let (status, records): (_, Vec<shared::KnownRecord>) = call(
@@ -323,6 +452,7 @@ mod tests {
         let app = build_app(Arc::new(AppState {
             dev_mode: true,
             db_pool,
+            public_url: TEST_URL.to_string(),
         }));
 
         let (status, loose): (_, shared::ScoreEntry) =
@@ -416,6 +546,7 @@ mod tests {
         let app = build_app(Arc::new(AppState {
             dev_mode: true,
             db_pool,
+            public_url: TEST_URL.to_string(),
         }));
         let mut ranks = Vec::new();
         for id in ids {
