@@ -16,8 +16,8 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use ws_bridge::WsEndpoint;
 
 #[derive(Parser, Debug, Clone)]
-#[command(name = "backend")]
-#[command(about = "Backend server")]
+#[command(name = "packit")]
+#[command(about = "packit game server")]
 struct Args {
     /// Enable development mode (relaxed config requirements)
     #[arg(long)]
