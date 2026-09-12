@@ -136,12 +136,13 @@ pub fn draw(canvas: &HtmlCanvasElement, scene: &Scene) {
         ctx.set_stroke_style_str(if selected { "#fff" } else { "#ffffff45" });
         ctx.set_line_width(if selected { 3.0 } else { 1.0 });
         ctx.stroke_rect(-half + 1.0, -half + 1.0, scale - 2.0, scale - 2.0);
+        ctx.restore();
+        // Labels stay upright however the square is turned.
         ctx.set_fill_style_str("#172431");
         ctx.set_font(&format!("600 {}px system-ui", (scale * 0.16).max(10.0)));
         ctx.set_text_align("center");
         ctx.set_text_baseline("middle");
-        let _ = ctx.fill_text(&(i + 1).to_string(), 0.0, 0.0);
-        ctx.restore();
+        let _ = ctx.fill_text(&(i + 1).to_string(), sx(b.x as f64), sy(b.y as f64));
     }
 
     if let Some(forces) = scene.forces {
