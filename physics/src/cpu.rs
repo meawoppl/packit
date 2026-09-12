@@ -91,6 +91,11 @@ impl State {
                 fx += dx * gain - b.vx * 14.0;
                 fy += dy * gain - b.vy * 14.0;
             }
+            if self.rotation.index == Some(i) && self.rotation.remaining > 0.0 {
+                let error = self.rotation.target - b.theta;
+                let error = error.sin().atan2(error.cos());
+                torque += (60.0 * error - 8.0 * b.omega).clamp(-30.0, 30.0);
+            }
             let n = &mut next[i];
             n.vx = ((b.vx + fx * dt) * (-p.damping * dt).exp()).clamp(-15.0, 15.0);
             n.vy = ((b.vy + fy * dt) * (-p.damping * dt).exp()).clamp(-15.0, 15.0);
@@ -99,6 +104,7 @@ impl State {
             n.y = b.y + n.vy * dt;
             n.theta = b.theta + n.omega * dt;
         }
+        self.rotation.remaining = (self.rotation.remaining - dt).max(0.0);
         self.bodies = next;
         self.step_band();
     }

@@ -45,12 +45,19 @@ struct Mouse {
     index: Option<usize>,
     down: bool,
 }
+#[derive(Clone, Copy, Default)]
+struct Rotation {
+    index: Option<usize>,
+    target: f32,
+    remaining: f32,
+}
 struct State {
     bodies: Vec<Body>,
     contact_forces: Vec<[f32; 2]>,
     side: f64,
     params: Params,
     mouse: Mouse,
+    rotation: Rotation,
     band_velocity: f32,
     paused: bool,
     disposed: bool,
@@ -86,6 +93,7 @@ impl Physics {
                     target_side: side,
                 },
                 mouse: Mouse::default(),
+                rotation: Rotation::default(),
                 band_velocity: 0.0,
                 paused: false,
                 disposed: false,
@@ -151,24 +159,36 @@ impl Physics {
                 }
                 if let Some(gpu) = s.gpu.clone().filter(|g| g.alive()) {
                     s.stepping = true;
-                    Some((gpu, s.bodies.clone(), s.params, s.side, s.mouse, s.revision))
+                    Some((
+                        gpu,
+                        s.bodies.clone(),
+                        s.params,
+                        s.side,
+                        s.mouse,
+                        s.rotation,
+                        s.revision,
+                    ))
                 } else {
                     s.gpu = None;
                     None
                 }
             };
-            if let Some((gpu, initial, params, side, mouse, revision)) = snapshot {
+            if let Some((gpu, initial, params, side, mouse, rotation, revision)) = snapshot {
                 let _guard = BusyGuard {
                     state: Rc::downgrade(&self.state),
                     initializing: false,
                 };
-                let result = gpu.step(&initial, params, side, mouse, steps).await;
+                let result = gpu
+                    .step(&initial, params, side, (mouse, rotation), steps)
+                    .await;
                 let mut s = self.state.borrow_mut();
                 if s.disposed {
                     return;
                 }
                 if let Some((result, forces)) = result {
                     s.merge_readback(&initial, &result, revision);
+                    s.rotation.remaining =
+                        (s.rotation.remaining - steps as f32 * FIXED_STEP as f32).max(0.0);
                     // Telemetry is output only; never merge it into edited poses.
                     if s.revision == revision {
                         s.contact_forces = forces;
@@ -243,7 +263,11 @@ impl Physics {
         self.state.borrow().paused
     }
     pub fn set_paused(&self, paused: bool) {
-        self.state.borrow_mut().paused = paused;
+        let mut s = self.state.borrow_mut();
+        s.paused = paused;
+        if paused {
+            s.rotation = Rotation::default();
+        }
     }
     /// Net collision and edge forces from the last substep, excluding gravity,
     /// center attraction, and the mouse spring. Output-only visualization data.
@@ -295,16 +319,31 @@ impl Physics {
             s.revision += 1;
         }
     }
-    pub fn rotate(&self, i: usize, dtheta: f32) {
-        if !dtheta.is_finite() {
+    /// Request a short, bounded angular spring instead of editing the pose.
+    /// Repeated inputs retain at most 0.35 radians of target lead, so a blocked
+    /// square cannot accumulate a large hidden turn or discard GPU readbacks.
+    pub fn turn(&self, i: usize, delta: f32) {
+        if !delta.is_finite() {
             return;
         }
         let mut s = self.state.borrow_mut();
-        if let Some(b) = s.bodies.get_mut(i) {
-            b.theta += dtheta;
-            s.contact_forces.fill([0.0; 2]);
-            s.revision += 1;
+        if s.disposed {
+            return;
         }
+        let Some(b) = s.bodies.get(i) else {
+            return;
+        };
+        let lead = if s.rotation.index == Some(i) && s.rotation.remaining > 0.0 {
+            let error = s.rotation.target - b.theta;
+            error.sin().atan2(error.cos())
+        } else {
+            0.0
+        };
+        s.rotation = Rotation {
+            index: Some(i),
+            target: b.theta + (lead + delta).clamp(-0.35, 0.35),
+            remaining: 0.5,
+        };
     }
     pub fn nudge(&self, i: usize, dx: f32, dy: f32) {
         if !dx.is_finite() || !dy.is_finite() {
@@ -353,6 +392,7 @@ impl Physics {
         }
         s.band_velocity = 0.0;
         s.mouse.down = false;
+        s.rotation = Rotation::default();
         s.contact_forces.fill([0.0; 2]);
         s.revision += 1;
     }
@@ -392,6 +432,7 @@ impl Physics {
         s.params.target_side = a.side;
         s.band_velocity = 0.0;
         s.mouse.down = false;
+        s.rotation = Rotation::default();
         for (b, p) in s.bodies.iter_mut().zip(&a.squares) {
             *b = Body {
                 x: p.cx as f32,
@@ -406,6 +447,7 @@ impl Physics {
     pub fn dispose(&self) {
         let mut s = self.state.borrow_mut();
         s.disposed = true;
+        s.rotation = Rotation::default();
         #[cfg(target_arch = "wasm32")]
         if let Some(gpu) = s.gpu.take() {
             gpu.destroy();
