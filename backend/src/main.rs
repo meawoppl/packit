@@ -240,6 +240,22 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::OK);
     }
 
+    /// Pool for `TEST_DATABASE_URL`, migrated exactly once per test process so
+    /// parallel DB tests don't race to create the schema.
+    fn test_db() -> Option<DbPool> {
+        static POOL: std::sync::OnceLock<Option<DbPool>> = std::sync::OnceLock::new();
+        POOL.get_or_init(|| {
+            let url = std::env::var("TEST_DATABASE_URL").ok()?;
+            let pool = Pool::builder()
+                .max_size(4)
+                .build(ConnectionManager::<PgConnection>::new(url))
+                .unwrap();
+            db::run_migrations(&pool).unwrap();
+            Some(pool)
+        })
+        .clone()
+    }
+
     async fn call<T: serde::de::DeserializeOwned>(
         app: &Router,
         req: Request<Body>,
@@ -300,15 +316,10 @@ mod tests {
     /// TEST_DATABASE_URL is set; CI provides one.
     #[tokio::test]
     async fn scores_roundtrip_against_postgres() {
-        let Ok(url) = std::env::var("TEST_DATABASE_URL") else {
+        let Some(db_pool) = test_db() else {
             eprintln!("TEST_DATABASE_URL not set; skipping");
             return;
         };
-        let db_pool = Pool::builder()
-            .max_size(2)
-            .build(ConnectionManager::<PgConnection>::new(url))
-            .unwrap();
-        db::run_migrations(&db_pool).unwrap();
         let app = build_app(Arc::new(AppState {
             dev_mode: true,
             db_pool,
@@ -369,15 +380,10 @@ mod tests {
         use crate::schema::scores;
         use diesel::prelude::*;
 
-        let Ok(url) = std::env::var("TEST_DATABASE_URL") else {
+        let Some(db_pool) = test_db() else {
             eprintln!("TEST_DATABASE_URL not set; skipping");
             return;
         };
-        let db_pool = Pool::builder()
-            .max_size(2)
-            .build(ConnectionManager::<PgConnection>::new(url))
-            .unwrap();
-        db::run_migrations(&db_pool).unwrap();
 
         // A side no other run will reuse, so only our two rows tie.
         let side = 50.0 + (uuid::Uuid::new_v4().as_u128() % 1_000_000) as f64 * 1e-6;
