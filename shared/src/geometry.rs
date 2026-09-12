@@ -15,6 +15,10 @@ pub enum Violation {
     CountMismatch { expected: u32, actual: usize },
     /// A coordinate or the side length is NaN or infinite.
     NonFinite { index: Option<usize> },
+    /// The container side is zero or negative.
+    NonPositiveSide { side: f64 },
+    /// The tolerance passed to [`validate`] is negative or not finite.
+    InvalidTolerance { tol: f64 },
     /// A square pokes outside the container by `depth`.
     OutOfBounds { index: usize, depth: f64 },
     /// Two squares overlap with penetration `depth` along the best separating axis.
@@ -29,6 +33,8 @@ impl std::fmt::Display for Violation {
             }
             Violation::NonFinite { index: Some(i) } => write!(f, "square {i} is not finite"),
             Violation::NonFinite { index: None } => write!(f, "side length is not finite"),
+            Violation::NonPositiveSide { side } => write!(f, "side length {side} is not positive"),
+            Violation::InvalidTolerance { tol } => write!(f, "tolerance {tol} is invalid"),
             Violation::OutOfBounds { index, depth } => {
                 write!(f, "square {index} is outside the container by {depth:.3e}")
             }
@@ -99,6 +105,9 @@ pub fn protrusion(p: &Placement, side: f64) -> f64 {
 /// Check that every square lies in the container and no two squares overlap,
 /// allowing violations up to `tol`.
 pub fn validate(arr: &Arrangement, tol: f64) -> Result<(), Violation> {
+    if !(tol.is_finite() && tol >= 0.0) {
+        return Err(Violation::InvalidTolerance { tol });
+    }
     if arr.squares.len() != arr.n as usize {
         return Err(Violation::CountMismatch {
             expected: arr.n,
@@ -107,6 +116,9 @@ pub fn validate(arr: &Arrangement, tol: f64) -> Result<(), Violation> {
     }
     if !arr.side.is_finite() {
         return Err(Violation::NonFinite { index: None });
+    }
+    if arr.side <= 0.0 {
+        return Err(Violation::NonPositiveSide { side: arr.side });
     }
     for (i, p) in arr.squares.iter().enumerate() {
         if !p.is_finite() {
@@ -245,6 +257,25 @@ mod tests {
             validate(&arr, 1e-9),
             Err(Violation::NonFinite { index: Some(0) })
         ));
+    }
+
+    #[test]
+    fn rejects_bad_side_and_tolerance() {
+        let empty = Arrangement {
+            n: 0,
+            side: 0.0,
+            squares: vec![],
+        };
+        assert!(matches!(
+            validate(&empty, 1e-9),
+            Err(Violation::NonPositiveSide { .. })
+        ));
+        for tol in [-1e-9, f64::NAN, f64::INFINITY] {
+            assert!(matches!(
+                validate(&grid(2), tol),
+                Err(Violation::InvalidTolerance { .. })
+            ));
+        }
     }
 
     #[test]

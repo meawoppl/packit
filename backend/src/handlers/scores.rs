@@ -57,15 +57,21 @@ where
     Ok(result)
 }
 
-/// Rank of a score among all scores with the same `n`: smaller side first,
-/// earlier submission breaks ties.
+/// Rank of a score among all scores with the same `n`. Ordering is
+/// `(side, submitted_at, id)`, matching [`list`], so ranks are unique.
 fn rank_of(conn: &mut PgConnection, score: &Score) -> QueryResult<u32> {
     let better: i64 = scores::table
         .filter(scores::n.eq(score.n))
         .filter(
-            scores::side.lt(score.side).or(scores::side
-                .eq(score.side)
-                .and(scores::submitted_at.lt(score.submitted_at))),
+            scores::side
+                .lt(score.side)
+                .or(scores::side.eq(score.side).and(
+                    scores::submitted_at
+                        .lt(score.submitted_at)
+                        .or(scores::submitted_at
+                            .eq(score.submitted_at)
+                            .and(scores::id.lt(score.id))),
+                )),
         )
         .count()
         .get_result(conn)?;
@@ -145,7 +151,11 @@ pub async fn list(
         Some(n) => {
             let rows: Vec<Score> = scores::table
                 .filter(scores::n.eq(n as i32))
-                .order((scores::side.asc(), scores::submitted_at.asc()))
+                .order((
+                    scores::side.asc(),
+                    scores::submitted_at.asc(),
+                    scores::id.asc(),
+                ))
                 .limit(limit)
                 .select(Score::as_select())
                 .load(conn)?;
@@ -162,6 +172,7 @@ pub async fn list(
                     scores::n.asc(),
                     scores::side.asc(),
                     scores::submitted_at.asc(),
+                    scores::id.asc(),
                 ))
                 .limit(limit)
                 .select(Score::as_select())

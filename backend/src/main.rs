@@ -361,4 +361,81 @@ mod tests {
         .await;
         assert_eq!(status, StatusCode::NOT_FOUND);
     }
+
+    /// Scores with identical side and timestamp still get distinct ranks, and
+    /// `detail` agrees with the order `list` returns them in.
+    #[tokio::test]
+    async fn equal_side_and_timestamp_ranks_are_unique() {
+        use crate::schema::scores;
+        use diesel::prelude::*;
+
+        let Ok(url) = std::env::var("TEST_DATABASE_URL") else {
+            eprintln!("TEST_DATABASE_URL not set; skipping");
+            return;
+        };
+        let db_pool = Pool::builder()
+            .max_size(2)
+            .build(ConnectionManager::<PgConnection>::new(url))
+            .unwrap();
+        db::run_migrations(&db_pool).unwrap();
+
+        // A side no other run will reuse, so only our two rows tie.
+        let side = 50.0 + (uuid::Uuid::new_v4().as_u128() % 1_000_000) as f64 * 1e-6;
+        let at = chrono::DateTime::from_timestamp(1_700_000_000, 0)
+            .unwrap()
+            .naive_utc();
+        let ids = [uuid::Uuid::new_v4(), uuid::Uuid::new_v4()];
+        let arrangement = serde_json::to_value(shared::Arrangement {
+            n: 97,
+            side,
+            squares: vec![],
+        })
+        .unwrap();
+        let mut conn = db_pool.get().unwrap();
+        for id in ids {
+            diesel::insert_into(scores::table)
+                .values((
+                    scores::id.eq(id),
+                    scores::player.eq("tie"),
+                    scores::n.eq(97),
+                    scores::side.eq(side),
+                    scores::arrangement.eq(&arrangement),
+                    scores::submitted_at.eq(at),
+                ))
+                .execute(&mut conn)
+                .unwrap();
+        }
+        drop(conn);
+
+        let app = build_app(Arc::new(AppState {
+            dev_mode: true,
+            db_pool,
+        }));
+        let mut ranks = Vec::new();
+        for id in ids {
+            let (status, detail): (_, shared::ScoreDetail) = call(
+                &app,
+                Request::get(format!("/api/scores/{id}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK);
+            ranks.push(detail.entry.rank);
+        }
+        assert_eq!(ranks[0].abs_diff(ranks[1]), 1);
+
+        let (_, board): (_, Vec<shared::ScoreEntry>) = call(
+            &app,
+            Request::get("/api/scores?n=97&limit=200")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+        for (id, rank) in ids.iter().zip(&ranks) {
+            if let Some(e) = board.iter().find(|e| e.id == *id) {
+                assert_eq!(e.rank, *rank);
+            }
+        }
+    }
 }
