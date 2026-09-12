@@ -15,6 +15,11 @@ pub struct Scene<'a> {
     /// Side length the viewport is scaled to; the band may contract inside it.
     pub view_side: f64,
     pub band_on: bool,
+    pub band_tension: f32,
+    pub target_side: f64,
+    /// Net contact/edge forces during direct manipulation.
+    pub forces: Option<&'a [[f32; 2]]>,
+    pub mouse_force: Option<(usize, [f32; 2])>,
     pub selected: Option<usize>,
     /// Mouse-spring target while a square is being dragged.
     pub tether: Option<(f64, f64)>,
@@ -90,6 +95,34 @@ pub fn draw(canvas: &HtmlCanvasElement, scene: &Scene) {
     ctx.set_line_width(if scene.band_on { 3.0 } else { 2.0 });
     ctx.stroke_rect(pad, sy(side), side * scale, side * scale);
 
+    // Draw the spring's rest boundary and inward pressure marks. The solid
+    // boundary always remains the actual collision square.
+    if scene.band_on {
+        let stress = band_stress(side, scene.target_side, scene.band_tension);
+        ctx.save();
+        ctx.set_stroke_style_str("#c7f36b");
+        ctx.set_global_alpha(0.15 + 0.55 * stress);
+        ctx.set_line_width(4.0 + 10.0 * stress);
+        ctx.stroke_rect(pad, sy(side), side * scale, side * scale);
+        ctx.set_line_width(1.0);
+        let target = scene.target_side.min(scene.view_side.max(side));
+        let _ = ctx.set_line_dash(&js_sys::Array::of2(&4.into(), &6.into()));
+        ctx.stroke_rect(pad, sy(target), target * scale, target * scale);
+        let _ = ctx.set_line_dash(&JsValue::from(js_sys::Array::new()));
+        if stress > 0.01 {
+            let inward = if side > scene.target_side { 1.0 } else { -1.0 };
+            ctx.set_global_alpha(0.4 + 0.6 * stress);
+            ctx.set_line_width(2.0);
+            for k in 1..=5 {
+                let at = side * k as f64 / 6.0;
+                let length = (8.0 + 16.0 * stress) * dpr;
+                arrow(&ctx, (sx(at), sy(side)), (0.0, inward * length));
+                arrow(&ctx, (sx(side), sy(at)), (-inward * length, 0.0));
+            }
+        }
+        ctx.restore();
+    }
+
     let half = scale / 2.0;
     for (i, b) in scene.bodies.iter().enumerate() {
         ctx.save();
@@ -111,6 +144,27 @@ pub fn draw(canvas: &HtmlCanvasElement, scene: &Scene) {
         ctx.restore();
     }
 
+    if let Some(forces) = scene.forces {
+        ctx.save();
+        ctx.set_stroke_style_str("#7dcfff");
+        ctx.set_line_width(2.5 * dpr);
+        for (b, force) in scene.bodies.iter().zip(forces) {
+            if let Some(vector) = force_vector(*force, scale) {
+                arrow(&ctx, (sx(b.x as f64), sy(b.y as f64)), vector);
+            }
+        }
+        ctx.restore();
+    }
+    if let Some((i, force)) = scene.mouse_force {
+        if let (Some(b), Some(vector)) = (scene.bodies.get(i), force_vector(force, scale)) {
+            ctx.save();
+            ctx.set_stroke_style_str("#f9d878");
+            ctx.set_line_width(3.0 * dpr);
+            arrow(&ctx, (sx(b.x as f64), sy(b.y as f64)), vector);
+            ctx.restore();
+        }
+    }
+
     if let (Some(i), Some(target)) = (scene.selected, scene.tether) {
         if let Some(b) = scene.bodies.get(i) {
             ctx.set_stroke_style_str("#ffffffaa");
@@ -124,6 +178,43 @@ pub fn draw(canvas: &HtmlCanvasElement, scene: &Scene) {
             let _ = ctx.set_line_dash(&JsValue::from(js_sys::Array::new()));
         }
     }
+}
+
+/// Log length keeps stiff penalty spikes readable without changing direction.
+fn force_vector(force: [f32; 2], scale: f64) -> Option<(f64, f64)> {
+    let magnitude = (force[0] as f64).hypot(force[1] as f64);
+    if !magnitude.is_finite() || magnitude < 0.08 {
+        return None;
+    }
+    let length = (magnitude.ln_1p() * 0.18).clamp(0.06, 0.85) * scale;
+    Some((
+        force[0] as f64 / magnitude * length,
+        -force[1] as f64 / magnitude * length,
+    ))
+}
+fn band_stress(side: f64, target: f64, tension: f32) -> f64 {
+    (((side - target).abs() * tension as f64).ln_1p() / 5.0).clamp(0.0, 1.0)
+}
+fn arrow(ctx: &CanvasRenderingContext2d, from: (f64, f64), vector: (f64, f64)) {
+    let length = vector.0.hypot(vector.1);
+    if length < 1.0 {
+        return;
+    }
+    let to = (from.0 + vector.0, from.1 + vector.1);
+    let head = (length * 0.3).clamp(3.0, 9.0);
+    let (ux, uy) = (vector.0 / length, vector.1 / length);
+    line(ctx, from, to);
+    ctx.begin_path();
+    ctx.move_to(
+        to.0 - head * ux - head * 0.5 * uy,
+        to.1 - head * uy + head * 0.5 * ux,
+    );
+    ctx.line_to(to.0, to.1);
+    ctx.line_to(
+        to.0 - head * ux + head * 0.5 * uy,
+        to.1 - head * uy - head * 0.5 * ux,
+    );
+    ctx.stroke();
 }
 
 fn line(ctx: &CanvasRenderingContext2d, from: (f64, f64), to: (f64, f64)) {
@@ -144,6 +235,19 @@ mod tests {
             theta,
             ..Body::default()
         }
+    }
+
+    #[test]
+    fn force_arrows_preserve_direction_and_bound_spikes() {
+        assert_eq!(force_vector([0.0; 2], 100.0), None);
+        assert_eq!(force_vector([f32::NAN, 1.0], 100.0), None);
+        let v = force_vector([3.0, 4.0], 100.0).unwrap();
+        assert!((v.0 / v.1 + 0.75).abs() < 1e-6);
+        let spike = force_vector([1e8, 0.0], 100.0).unwrap();
+        assert_eq!(spike, (85.0, 0.0));
+        assert_eq!(band_stress(4.0, 3.0, 0.0), 0.0);
+        assert_eq!(band_stress(3.0, 3.0, 30.0), 0.0);
+        assert!(band_stress(4.0, 3.0, 30.0) > band_stress(4.0, 3.0, 10.0));
     }
 
     #[test]

@@ -47,6 +47,7 @@ struct Mouse {
 }
 struct State {
     bodies: Vec<Body>,
+    contact_forces: Vec<[f32; 2]>,
     side: f64,
     params: Params,
     mouse: Mouse,
@@ -73,6 +74,7 @@ impl Physics {
         let physics = Self {
             state: Rc::new(RefCell::new(State {
                 bodies: vec![Body::default(); n as usize],
+                contact_forces: vec![[0.0; 2]; n as usize],
                 side,
                 params: Params {
                     gravity: false,
@@ -165,8 +167,14 @@ impl Physics {
                 if s.disposed {
                     return;
                 }
-                if let Some(result) = result {
+                if let Some((result, forces)) = result {
                     s.merge_readback(&initial, &result, revision);
+                    // Telemetry is output only; never merge it into edited poses.
+                    if s.revision == revision {
+                        s.contact_forces = forces;
+                    } else {
+                        s.contact_forces.fill([0.0; 2]);
+                    }
                     if s.revision == revision {
                         for _ in 0..steps {
                             s.step_band();
@@ -204,6 +212,7 @@ impl Physics {
         let mut s = self.state.borrow_mut();
         s.side = side;
         s.band_velocity = 0.0;
+        s.contact_forces.fill([0.0; 2]);
         s.revision += 1;
     }
     pub fn params(&self) -> Params {
@@ -235,6 +244,20 @@ impl Physics {
     }
     pub fn set_paused(&self, paused: bool) {
         self.state.borrow_mut().paused = paused;
+    }
+    /// Net collision and edge forces from the last substep, excluding gravity,
+    /// center attraction, and the mouse spring. Output-only visualization data.
+    pub fn contact_forces(&self) -> Vec<[f32; 2]> {
+        self.state.borrow().contact_forces.clone()
+    }
+    /// The current capped mouse spring, including its velocity damping.
+    pub fn mouse_force(&self) -> Option<(usize, [f32; 2])> {
+        let s = self.state.borrow();
+        let i = s.mouse.index.filter(|_| s.mouse.down)?;
+        let b = s.bodies.get(i)?;
+        let (dx, dy) = (s.mouse.x - b.x, s.mouse.y - b.y);
+        let gain = 100.0 * (0.4 / dx.hypot(dy).max(0.0001)).min(1.0);
+        Some((i, [dx * gain - b.vx * 14.0, dy * gain - b.vy * 14.0]))
     }
     pub fn band_velocity(&self) -> f32 {
         self.state.borrow().band_velocity
@@ -268,6 +291,7 @@ impl Physics {
             b.x = x;
             b.y = y;
             b.theta = theta;
+            s.contact_forces.fill([0.0; 2]);
             s.revision += 1;
         }
     }
@@ -278,6 +302,7 @@ impl Physics {
         let mut s = self.state.borrow_mut();
         if let Some(b) = s.bodies.get_mut(i) {
             b.theta += dtheta;
+            s.contact_forces.fill([0.0; 2]);
             s.revision += 1;
         }
     }
@@ -289,6 +314,7 @@ impl Physics {
         if let Some(b) = s.bodies.get_mut(i) {
             b.x += dx;
             b.y += dy;
+            s.contact_forces.fill([0.0; 2]);
             s.revision += 1;
         }
     }
@@ -311,6 +337,7 @@ impl Physics {
             b.vy = random() * 7.0 * strength;
             b.omega = random() * 3.0 * strength;
         }
+        s.contact_forces.fill([0.0; 2]);
         s.revision += 1;
     }
     pub fn reset(&self) {
@@ -326,6 +353,7 @@ impl Physics {
         }
         s.band_velocity = 0.0;
         s.mouse.down = false;
+        s.contact_forces.fill([0.0; 2]);
         s.revision += 1;
     }
     pub fn arrangement(&self) -> shared::Arrangement {
@@ -372,6 +400,7 @@ impl Physics {
                 ..Body::default()
             };
         }
+        s.contact_forces.fill([0.0; 2]);
         s.revision += 1;
     }
     pub fn dispose(&self) {

@@ -136,7 +136,7 @@ impl Gpu {
         side: f64,
         mouse: Mouse,
         steps: u32,
-    ) -> Option<Vec<Body>> {
+    ) -> Option<(Vec<Body>, Vec<[f32; 2]>)> {
         if !self.alive() {
             return None;
         }
@@ -208,8 +208,15 @@ impl Gpu {
                 omega: v[6],
             })
             .collect();
+        // p.w and v.w are output-only force telemetry; the body stride stays 32 bytes.
+        let forces = bytemuck::cast_slice::<u8, f32>(&mapped)
+            .as_chunks::<8>()
+            .0
+            .iter()
+            .map(|v| [v[3], v[7]])
+            .collect();
         drop(mapped);
-        Some(result)
+        Some((result, forces))
     }
 }
 

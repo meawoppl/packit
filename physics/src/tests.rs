@@ -306,3 +306,23 @@ fn wall_equilibrium_depth_is_independent_of_orientation() {
         assert!((h - b.y - 0.01).abs() < 1e-5, "theta={theta}, body={b:?}");
     }
 }
+
+#[test]
+fn contact_vectors_follow_pushes_and_clear_after_edits() {
+    let p = Physics::new(2, 4.0);
+    p.set_pose(0, 1.0, 2.0, 0.0);
+    p.set_pose(1, 1.95, 2.0, 0.0);
+    advance(&p, 1);
+    let f = p.contact_forces();
+    assert!(f[0][0] < -1.0 && f[1][0] > 1.0);
+    assert!((f[0][0] + f[1][0]).abs() < 0.001);
+    assert!(f.iter().all(|v| v[1].abs() < 0.001));
+    p.set_mouse(10.0, 2.0, Some(0), true);
+    assert!(p.mouse_force().unwrap().1[0] > 0.0);
+    p.set_pose(0, 0.5, 2.0, 0.0);
+    assert!(p.contact_forces().iter().all(|f| *f == [0.0; 2]));
+    p.set_mouse(10.0, 2.0, None, false);
+    assert!(p.mouse_force().is_none());
+    p.reset();
+    assert!(p.contact_forces().iter().all(|f| *f == [0.0; 2]));
+}

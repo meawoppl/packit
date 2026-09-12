@@ -72,7 +72,7 @@ fn wall_contact(me:Body,n:vec2<f32>,depth:f32)->vec3<f32>{
 fn step(@builtin(global_invocation_id) id:vec3<u32>) {
  let i=id.x; let count=u32(params.a.x); if(i>=count){return;}
  let dt=params.a.y; let side=params.a.z;
- let me=input[i]; var force=vec2<f32>(0.0,-params.a.w*9.0); var torque=0.0;
+ let me=input[i]; var force=vec2<f32>(0.0,-params.a.w*9.0); var torque=0.0; var contact=vec2<f32>(0.0);
  for(var j=0u;j<count;j++) {
   if(i==j){continue;} let other=input[j]; let delta=me.p.xy-other.p.xy;
   let d2=dot(delta,delta)+0.15;
@@ -88,15 +88,15 @@ fn step(@builtin(global_invocation_id) id:vec3<u32>) {
    let levers=contact_levers(me,other,normal,depth);
    let speed=dot(me.v.xy-other.v.xy,normal)-me.v.z*levers.x+other.v.z*levers.y;
    let strength=max(0.0,params.b.z*depth-12.0*speed);
-   force+=normal*strength;torque-=levers.x*strength*6.0;
+   force+=normal*strength;contact+=normal*strength;torque-=levers.x*strength*6.0;
    torque-=levers.z*levers.z/12.0*6.0*(params.b.z*sin(4.0*(me.p.z-other.p.z))/4.0+12.0*(me.v.z-other.v.z));
   }else if(params.b.w>0.0){
-   let pull=pair_edges(me,other,params.b.w);force+=pull.xy;torque+=pull.z;
+   let pull=pair_edges(me,other,params.b.w);force+=pull.xy;contact+=pull.xy;torque+=pull.z;
   }
  }
  let h=radius(me.p.z,vec2<f32>(1.0,0.0));
  let walls=wall_contact(me,vec2<f32>(1.0,0.0),h-me.p.x)+wall_contact(me,vec2<f32>(0.0,1.0),h-me.p.y)+wall_contact(me,vec2<f32>(-1.0,0.0),me.p.x-side+h)+wall_contact(me,vec2<f32>(0.0,-1.0),me.p.y-side+h);
- let pull=wall_edges(me,side,params.b.w);force+=walls.xy+pull.xy;torque+=walls.z+pull.z;
+ let pull=wall_edges(me,side,params.b.w);force+=walls.xy+pull.xy;contact+=walls.xy+pull.xy;torque+=walls.z+pull.z;
  if(i==u32(params.mouse.z) && params.mouse.w>0.0){
   let delta=params.mouse.xy-me.p.xy;
   let gain=100.0*min(1.0,0.4/max(0.0001,length(delta)));
@@ -105,6 +105,6 @@ fn step(@builtin(global_invocation_id) id:vec3<u32>) {
  var vel=(me.v.xy+force*dt)*exp(-params.b.y*dt);
  vel=clamp(vel,vec2<f32>(-15.0),vec2<f32>(15.0));
  let omega=clamp((me.v.z+torque*dt)*exp(-(params.b.y+3.0)*dt),-8.0,8.0);
- output[i].p=vec4<f32>(me.p.xy+vel*dt,me.p.z+omega*dt,0.0);
- output[i].v=vec4<f32>(vel,omega,0.0);
+ output[i].p=vec4<f32>(me.p.xy+vel*dt,me.p.z+omega*dt,contact.x);
+ output[i].v=vec4<f32>(vel,omega,contact.y);
 }
