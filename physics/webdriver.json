@@ -1,0 +1,1 @@
+{"goog:chromeOptions":{"binary":"/usr/bin/google-chrome","args":["--headless=new","--no-sandbox","--enable-unsafe-webgpu","--use-angle=swiftshader"]}}

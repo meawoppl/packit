@@ -126,3 +126,32 @@ jobs:
         run: cargo test --workspace --locked
         env:
           TEST_DATABASE_URL: postgresql://packit:dev_password@localhost:5432/packit_test
+
+      - name: Install Chrome and matching driver
+        uses: browser-actions/setup-chrome@v2
+        id: chrome
+        with:
+          chrome-version: stable
+          install-chromedriver: true
+
+      - name: Install WASM test runner
+        run: cargo install wasm-bindgen-cli --version 0.2.128 --locked
+
+      - name: Test Rust WebGPU physics in Chrome
+        env:
+          CHROME_BINARY: ${{ steps.chrome.outputs.chrome-path }}
+          CHROMEDRIVER: ${{ steps.chrome.outputs.chromedriver-path }}
+          WASM_BINDGEN_USE_BROWSER: "1"
+          WASM_BINDGEN_TEST_TIMEOUT: "60"
+          CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER: wasm-bindgen-test-runner
+          WASM_BINDGEN_TEST_WEBDRIVER_JSON: ${{ github.workspace }}/physics/webdriver-ci.json
+        run: |
+          python3 - <<'PYTHON'
+          import json, os
+          with open('physics/webdriver.json') as f:
+              config = json.load(f)
+          config['goog:chromeOptions']['binary'] = os.environ['CHROME_BINARY']
+          with open(os.environ['WASM_BINDGEN_TEST_WEBDRIVER_JSON'], 'w') as f:
+              json.dump(config, f)
+          PYTHON
+          cargo test -p physics --target wasm32-unknown-unknown --lib --locked
