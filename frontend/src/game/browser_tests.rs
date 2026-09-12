@@ -239,3 +239,62 @@ async fn finished_anneal_measures_and_releases_the_band() {
     handle.destroy();
     root.remove();
 }
+
+#[wasm_bindgen_test]
+async fn size_slider_animates_pressure_and_wakes_a_paused_scene() {
+    let _gpu = NoWebGpu::install();
+    let (handle, root, physics) = mount().await;
+    force_button(&root, "Pause").click();
+    sleep(30).await;
+    assert!(physics.paused());
+    assert_eq!(physics.params().band_tension, 0.0);
+    let start = physics.side();
+    let right_square = physics.bodies()[1].x;
+    let slider: HtmlInputElement = root
+        .query_selector("#pg-size")
+        .unwrap()
+        .unwrap()
+        .dyn_into()
+        .unwrap();
+    slider.set_value("1.8");
+    let init = web_sys::EventInit::new();
+    init.set_bubbles(true);
+    slider
+        .dispatch_event(&Event::new_with_event_init_dict("input", &init).unwrap())
+        .unwrap();
+    sleep(50).await;
+    assert!(!physics.paused());
+    assert_eq!(physics.params().target_side, 1.8);
+    assert_eq!(text(&root, "label[for=pg-size] output"), "1.800");
+    assert_eq!(physics.params().band_tension, 30.0);
+    assert!(physics.side() > start - 0.2, "no instant resize");
+    sleep(650).await;
+    assert!(physics.side() < start - 0.05, "pressure shrinks the band");
+    assert!(
+        physics.bodies()[1].x < right_square - 0.02,
+        "the band pushes squares"
+    );
+    assert!(
+        physics.side() > 1.8,
+        "contacts and spring resist the target"
+    );
+    let mut params = physics.params();
+    params.band_tension = 55.0;
+    physics.set_params(params);
+    let before = physics.side();
+    slider.set_value("3.2");
+    slider
+        .dispatch_event(&Event::new_with_event_init_dict("input", &init).unwrap())
+        .unwrap();
+    sleep(50).await;
+    assert_eq!(
+        physics.params().band_tension,
+        55.0,
+        "preserve chosen pressure"
+    );
+    assert!(physics.side() < before + 0.2, "expansion also animates");
+    sleep(650).await;
+    assert!(physics.side() > before + 0.05);
+    handle.destroy();
+    root.remove();
+}
