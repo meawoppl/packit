@@ -76,6 +76,7 @@ pub enum Msg {
     Shake,
     Reset,
     Anneal,
+    Squeeze,
     Measure,
     Refine,
     Player(String),
@@ -88,6 +89,13 @@ pub enum Msg {
     ImportPick,
     ImportFile(Event),
     Imported(Result<String, String>),
+}
+
+/// The scheduled runs that share one slot: shaking anneal or gentle squeeze.
+#[derive(Clone, Copy, PartialEq)]
+enum RunKind {
+    Anneal,
+    Squeeze,
 }
 
 /// Sidebar text derived from the simulation; the component only re-renders
@@ -135,6 +143,8 @@ pub struct Game {
     submit_after_measure: bool,
     pending_import: Option<Arrangement>,
     anneal: Option<Anneal>,
+    /// Which button started the active scheduled run.
+    run_kind: RunKind,
     /// Container side requested with the size slider; the band's target
     /// follows it only as far as the band pressure reaches.
     desired_side: Option<f64>,
@@ -234,6 +244,7 @@ impl Component for Game {
             submit_after_measure: false,
             pending_import: None,
             anneal: None,
+            run_kind: RunKind::Anneal,
             desired_side: None,
             readout: Readout::default(),
         };
@@ -541,30 +552,8 @@ impl Component for Game {
                 self.set_status("Fresh grid. Make it yours.", false);
                 true
             }
-            Msg::Anneal => {
-                if self.anneal.is_some() {
-                    self.stop_anneal();
-                    self.refresh_readout();
-                    return true;
-                }
-                if self.busy {
-                    return false;
-                }
-                // The run drives the band target itself.
-                self.desired_side = None;
-                let seed = (js_sys::Math::random() * u64::MAX as f64) as u64;
-                let floor = (n as f64).sqrt();
-                self.anneal = Some(Anneal::new(
-                    Schedule::default(),
-                    self.physics.side(),
-                    floor,
-                    seed,
-                ));
-                self.set_pause(false);
-                self.set_status("Annealing: gentler shakes, tighter band…", false);
-                self.refresh_readout();
-                true
-            }
+            Msg::Anneal => self.toggle_run(n, RunKind::Anneal),
+            Msg::Squeeze => self.toggle_run(n, RunKind::Squeeze),
             Msg::Measure => {
                 self.stop_anneal();
                 self.begin_measure(ctx)
@@ -832,10 +821,15 @@ impl Component for Game {
                                 </button>
                                 <button onclick={link.callback(|_| Msg::Shake)}>{ "Shake" }</button>
                                 <button onclick={link.callback(|_| Msg::Reset)}>{ "Reset" }</button>
-                                <button class={classes!(r.anneal.is_some().then_some("pg-primary"))}
-                                    onclick={link.callback(|_| Msg::Anneal)}>
-                                    { match r.anneal { Some(p) => format!("Stop · {p}%"), None => "Anneal".into() } }
-                                </button>
+                                { for [(RunKind::Anneal, "Anneal"), (RunKind::Squeeze, "Gentle squeeze")].map(|(kind, label)| {
+                                    let running = r.anneal.filter(|_| self.run_kind == kind);
+                                    html! {
+                                        <button class={classes!(running.is_some().then_some("pg-primary"))}
+                                            onclick={link.callback(move |_| match kind { RunKind::Anneal => Msg::Anneal, RunKind::Squeeze => Msg::Squeeze })}>
+                                            { match running { Some(p) => format!("Stop · {p}%"), None => label.into() } }
+                                        </button>
+                                    }
+                                }) }
                             </div>
                         </section>
                         <section class="pg-panel pg-submit">
@@ -905,6 +899,42 @@ impl Game {
                 }
             }
         }
+    }
+
+    /// Start a scheduled run of `kind`, or stop it if it is the active one.
+    /// Clicking the other run's button switches runs.
+    fn toggle_run(&mut self, n: u32, kind: RunKind) -> bool {
+        if self.anneal.is_some() {
+            let same = self.run_kind == kind;
+            self.stop_anneal();
+            if same {
+                self.refresh_readout();
+                return true;
+            }
+        }
+        if self.busy {
+            return false;
+        }
+        // The run drives the band target itself.
+        self.desired_side = None;
+        let (schedule, status) = match kind {
+            RunKind::Anneal => (
+                Schedule::default(),
+                "Annealing: gentler shakes, tighter band…",
+            ),
+            RunKind::Squeeze => (
+                Schedule::gentle(),
+                "Gently squeezing: a slow, soft band and no shakes…",
+            ),
+        };
+        let seed = (js_sys::Math::random() * u64::MAX as f64) as u64;
+        let floor = (n as f64).sqrt();
+        self.anneal = Some(Anneal::new(schedule, self.physics.side(), floor, seed));
+        self.run_kind = kind;
+        self.set_pause(false);
+        self.set_status(status, false);
+        self.refresh_readout();
+        true
     }
 
     /// Manual input takes over from an annealing run.

@@ -34,6 +34,20 @@ impl Default for Schedule {
     }
 }
 
+impl Schedule {
+    /// Gentle squeeze: no shakes, just a slow, soft tightening of the band
+    /// toward the floor, then a short settle and a measurement.
+    pub fn gentle() -> Self {
+        Self {
+            duration: 12.0,
+            heat_fraction: 0.85,
+            initial_strength: 0.0,
+            band_tension: 15.0,
+            ..Self::default()
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Command {
     /// Kick every square with random velocity scaled by `strength` (`Physics::shake_scaled`).
@@ -210,6 +224,35 @@ mod tests {
         assert_eq!(measures.len(), 1);
         assert!(measures[0] >= 20.0 && measures[0] < 20.0 + 2.0 * FRAME);
         assert_eq!(cmds.last().unwrap().1, Command::Measure);
+    }
+
+    #[test]
+    fn gentle_squeeze_never_shakes_and_measures_once() {
+        let mut a = Anneal::new(Schedule::gentle(), 4.5, 3.0, 7);
+        let mut commands = Vec::new();
+        let mut t = 0.0;
+        while !a.is_finished() {
+            t += FRAME;
+            commands.extend(a.advance(FRAME));
+            assert!(t < 20.0, "gentle squeeze must terminate");
+        }
+        assert!(!commands.iter().any(|c| matches!(c, Command::Shake { .. })));
+        let targets: Vec<(f64, f32)> = commands
+            .iter()
+            .filter_map(|c| match c {
+                Command::Band {
+                    target_side,
+                    tension,
+                } => Some((*target_side, *tension)),
+                _ => None,
+            })
+            .collect();
+        assert!(targets.iter().all(|(_, tension)| *tension == 15.0));
+        assert!(targets.windows(2).all(|w| w[1].0 <= w[0].0 + 1e-12));
+        assert!((targets.last().unwrap().0 - 3.0).abs() < 1e-12);
+        let measures = commands.iter().filter(|c| **c == Command::Measure).count();
+        assert_eq!(measures, 1);
+        assert!((t - 12.0).abs() < 2.0 * FRAME);
     }
 
     #[test]

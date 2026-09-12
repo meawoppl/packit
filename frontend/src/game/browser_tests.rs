@@ -546,3 +546,46 @@ async fn share_button_writes_a_decodable_link() {
     handle.destroy();
     root.remove();
 }
+
+#[wasm_bindgen_test]
+async fn gentle_squeeze_tightens_and_hands_over_to_anneal() {
+    let _gpu = NoWebGpu::install();
+    let (handle, root, physics) = mount().await;
+    let start_side = physics.side();
+    force_button(&root, "Gentle squeeze").click();
+    sleep(1000).await;
+    let params = physics.params();
+    assert_eq!(params.band_tension, 15.0, "soft band");
+    assert!(params.target_side < start_side, "{}", params.target_side);
+    force_button(&root, "Stop");
+    force_button(&root, "Anneal");
+
+    // The other run's button switches runs rather than stacking them.
+    force_button(&root, "Anneal").click();
+    sleep(100).await;
+    assert_eq!(physics.params().band_tension, 30.0);
+    force_button(&root, "Gentle squeeze");
+
+    force_button(&root, "Stop").click();
+    sleep(50).await;
+    assert_eq!(
+        physics.params().band_tension,
+        0.0,
+        "cancel releases the band"
+    );
+    handle.destroy();
+    root.remove();
+}
+
+#[wasm_bindgen_test]
+async fn finished_gentle_squeeze_measures_and_releases_the_band() {
+    let _gpu = NoWebGpu::install();
+    let (handle, root, physics) = mount().await;
+    force_button(&root, "Gentle squeeze").click();
+    sleep(13_500).await;
+    assert_eq!(physics.params().band_tension, 0.0, "band released");
+    assert!(physics.paused(), "measuring pauses the scene");
+    force_button(&root, "Gentle squeeze");
+    handle.destroy();
+    root.remove();
+}
