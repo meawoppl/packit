@@ -369,3 +369,71 @@ fn turn_uses_contact_physics_and_does_not_edit_the_pose() {
     crowded.reset();
     assert_eq!(crowded.state.borrow().rotation.remaining, 0.0);
 }
+
+pub(super) fn dense_corner_cluster(p: &Physics) {
+    let features = std::array::from_fn::<_, 4, _>(|i| Feature::Corner {
+        square: i,
+        corner: 3 - i as u8,
+    });
+    let mut links = Vec::new();
+    for i in 0..4 {
+        p.set_pose(i, 1.5 + (i % 2) as f32, 1.5 + (i / 2) as f32, 0.0);
+        for j in i + 1..4 {
+            links.push(Glue {
+                a: features[i],
+                b: features[j],
+            });
+        }
+    }
+    p.set_glues(&links).unwrap();
+    p.shake(123);
+}
+#[test]
+fn redundant_corner_unions_settle() {
+    let p = Physics::new(4, 5.0);
+    dense_corner_cluster(&p);
+    advance(&p, 2400);
+    assert!(
+        p.motion() < 0.008,
+        "motion={}, bodies={:?}",
+        p.motion(),
+        p.bodies()
+    );
+}
+#[test]
+fn dense_edge_midpoint_unions_settle() {
+    let p = Physics::new(9, 5.0);
+    let mut links = Vec::new();
+    for i in 0..9 {
+        p.set_pose(i, 1.0 + (i % 3) as f32, 1.0 + (i / 3) as f32, 0.0);
+        for (j, ea, eb) in [(i + 1, 0, 2), (i + 3, 1, 3)] {
+            if j >= 9 || (ea == 0 && i % 3 == 2) {
+                continue;
+            }
+            links.push(Glue {
+                a: Feature::Edge {
+                    square: i,
+                    edge: ea,
+                },
+                b: Feature::Edge {
+                    square: j,
+                    edge: eb,
+                },
+            });
+            links.push(Glue {
+                a: Feature::Midpoint {
+                    square: i,
+                    edge: ea,
+                },
+                b: Feature::Midpoint {
+                    square: j,
+                    edge: eb,
+                },
+            });
+        }
+    }
+    p.set_glues(&links).unwrap();
+    p.shake(123);
+    advance(&p, 2400);
+    assert!(p.motion() < 0.018, "motion={}", p.motion());
+}

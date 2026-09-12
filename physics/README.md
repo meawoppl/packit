@@ -17,7 +17,7 @@ handle overlaps. Attraction to moving walls also pulls on the outer band.
 `shake_scaled(seed, strength)` scales a deterministic shake from zero to full
 strength; `shake(seed)` is the full-strength version.
 
-`set_glues(&[Glue])` replaces up to 100 explicit feature contacts atomically.
+`set_glues(&[Glue])` replaces up to 4096 explicit feature contacts atomically.
 Corners and edge midpoints are points; square edges and walls are segments.
 Point–point links pull to coincidence. Point–segment links slide along the
 segment, pulling toward the endpoint if they slide off. Segment–segment links
@@ -25,6 +25,8 @@ align opposing normals and close their gap while allowing tangential sliding.
 Springs are capped at 80 force units, with an alignment couple capped at 12.
 Forces act at the features and transmit torque; moving walls receive the opposite
 reaction. Invalid indices, same-object links and reversed duplicates are rejected.
+Each link is weighted by the larger incident-body degree, bounding total
+explicit stiffness and damping even for redundant point unions.
 Inputs do not change revisions; reset, load and dispose clear links, pause keeps
 them. GPU glue input uses a separate bounded storage buffer; body stride is unchanged.
 

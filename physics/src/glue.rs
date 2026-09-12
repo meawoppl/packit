@@ -1,6 +1,9 @@
 //! Explicit feature contacts. Tangential motion is free while segments overlap.
 use crate::{Body, Physics};
-pub const MAX_GLUES: usize = crate::MAX_SQUARES;
+pub const MAX_GLUES: usize = 4096;
+/// Edge/midpoint indices are local +u, +v, -u, -v. Corner bit 0 selects
+/// +u (otherwise -u), bit 1 selects +v (otherwise -v), not cyclic order.
+/// Walls are left, bottom, right, top. Square indices follow body order.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Feature {
     Edge { square: usize, edge: u8 },
@@ -165,7 +168,22 @@ pub(super) fn forces(
 ) -> (Vec<[f32; 3]>, f32) {
     let mut out = vec![[0.; 3]; bodies.len()];
     let mut reaction = 0.;
+    let mut degrees = vec![0u32; bodies.len()];
     for g in glues {
+        for f in [g.a, g.b] {
+            if let Some(i) = f.square() {
+                degrees[i] += 1;
+            }
+        }
+    }
+    for g in glues {
+        // Bound the total explicit stiffness/damping on a body, including
+        // redundant point unions. Apply one symmetric weight to both ends.
+        let degree =
+            g.a.square()
+                .map_or(0, |i| degrees[i])
+                .max(g.b.square().map_or(0, |i| degrees[i]));
+        let weight = 1.0 / degree.max(1) as f32;
         let mut a = world(g.a, bodies, side);
         let mut b = world(g.b, bodies, side);
         if a.half > 0. && b.half == 0. {
@@ -218,7 +236,8 @@ pub(super) fn forces(
             force = mul(normal, dot(force, normal));
         }
         let len = dot(force, force).sqrt();
-        force = mul(force, (80. / len.max(0.0001)).min(1.));
+        force = mul(force, (80. / len.max(0.0001)).min(1.) * weight);
+        couple *= weight;
         for (w, p, f, c) in [(a, pa, force, couple), (b, pb, mul(force, -1.), -couple)] {
             if let Some(i) = w.owner {
                 out[i][0] += f[0];
