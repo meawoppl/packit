@@ -40,7 +40,9 @@ pub fn decode(hex: &str, n: u32) -> Result<Arrangement, String> {
     }
     let bytes = hex
         .as_bytes()
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|pair| {
             // `from_str_radix` alone would accept a leading '+' ("+1").
             pair.iter()
