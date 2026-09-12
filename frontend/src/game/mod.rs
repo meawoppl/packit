@@ -4,7 +4,9 @@
 mod browser_tests;
 mod canvas;
 mod files;
+mod glue;
 mod share;
+mod tap;
 
 use crate::anneal::{Anneal, Command, Schedule};
 use crate::benchmark::Benchmark;
