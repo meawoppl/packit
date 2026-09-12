@@ -33,6 +33,15 @@ integration remains GPU computed. Gameplay uses f32 coordinates; submissions
 must use the separately refined and validated f64 solver arrangement. The Yew
 play screen (`frontend/src/game/`) drives `Physics` directly.
 
+`contact_forces()` exposes the last substep's net collision and edge-attraction
+force per body, separately from body state. GPU output uses the two spare f32
+slots of the existing 32-byte body stride; telemetry never participates in pose
+merging and clears after direct edits. `mouse_force()` exposes the current
+capped mouse spring. The canvas uses logarithmically scaled arrows during
+interaction; zero net contact force correctly produces no arrow even when
+opposing contacts cancel. Outer-band marks depict spring effort and direction,
+with a dashed rest boundary and a solid actual boundary.
+
 ## Tests
 
 Run host physics tests with `cargo test -p physics`. Browser tests are also Rust,

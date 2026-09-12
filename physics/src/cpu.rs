@@ -10,6 +10,7 @@ impl State {
         let mut next = self.bodies.clone();
         for (i, b) in self.bodies.iter().enumerate() {
             let (mut fx, mut fy, mut torque) = (0.0, if p.gravity { -9.0 } else { 0.0 }, 0.0);
+            let mut contact = [0.0; 2];
             for (j, other) in self.bodies.iter().enumerate() {
                 if i == j {
                     continue;
@@ -44,6 +45,8 @@ impl State {
                     let force = (p.stiffness * depth - 12.0 * speed).max(0.0);
                     fx += nx * force;
                     fy += ny * force;
+                    contact[0] += nx * force;
+                    contact[1] += ny * force;
                     torque -= lever * force * 6.0;
                     // A finite face patch also distributes pressure and damping
                     // across its width; a point contact has no such couple.
@@ -56,6 +59,8 @@ impl State {
                     fx += f[0];
                     fy += f[1];
                     torque += f[2];
+                    contact[0] += f[0];
+                    contact[1] += f[1];
                 }
             }
             let h = radius(b.theta, 1.0, 0.0);
@@ -70,11 +75,16 @@ impl State {
                 fx += f[0];
                 fy += f[1];
                 torque += f[2];
+                contact[0] += f[0];
+                contact[1] += f[1];
             }
             let f = edges::walls(b, side, p.edge_attraction);
             fx += f[0];
             fy += f[1];
             torque += f[2];
+            contact[0] += f[0];
+            contact[1] += f[1];
+            self.contact_forces[i] = contact;
             if self.mouse.down && self.mouse.index == Some(i) {
                 let (dx, dy) = (self.mouse.x - b.x, self.mouse.y - b.y);
                 let gain = 100.0 * (0.4 / dx.hypot(dy).max(0.0001)).min(1.0);

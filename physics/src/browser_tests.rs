@@ -30,6 +30,14 @@ async fn gpu_matches_cpu_and_keeps_direct_edits() {
             assert!((x - y).abs() < 0.005, "GPU={x}, CPU={y}");
         }
     }
+    for (a, b) in gpu.contact_forces().iter().zip(cpu.contact_forces()) {
+        for (x, y) in a.iter().zip(b) {
+            assert!(
+                (x - y).abs() < 0.02 + 0.002 * x.abs().max(y.abs()),
+                "force GPU={x}, CPU={y}"
+            );
+        }
+    }
     // Poll once to submit, then edit while the mapping is pending.
     use std::{
         future::Future,
@@ -48,6 +56,7 @@ async fn gpu_matches_cpu_and_keeps_direct_edits() {
     pending.await;
     assert_eq!(gpu.bodies()[0].x, 3.0);
     assert_eq!(gpu.bodies()[0].y, 3.0);
+    assert!(gpu.contact_forces().iter().all(|f| *f == [0.0; 2]));
     gpu.dispose();
     assert_eq!(gpu.mode(), Backend::Cpu);
 }

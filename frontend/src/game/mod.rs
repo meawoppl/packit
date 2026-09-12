@@ -644,6 +644,7 @@ impl Component for Game {
                                 <span>{ "drag · wheel to rotate · shift-drag to spin" }</span>
                             </div>
                         </div>
+                        <p class="pg-help">{ "Force arrows: blue = net contact and edge pull · gold = mouse spring. Dashed band = target size." }</p>
                         <details class="pg-details">
                             <summary>{ "How to play & what the score means" }</summary>
                             <p>{ "Each square has side length 1. Make the container smaller while keeping every square inside and avoiding overlap. Dragging resumes physics, pushes neighbors, and resists blocked motion. Lower the container target with outer band tension enabled to squeeze the packing. Turn on forces, or use Q/E to rotate a selected square. Arrow keys nudge it. Space pauses." }</p>
@@ -832,13 +833,22 @@ impl Game {
             return;
         };
         let bodies = self.physics.bodies();
+        let params = self.physics.params();
+        let forces = self.physics.contact_forces();
+        let show_forces = self.dragging
+            || self.rotating
+            || (self.selected.is_some() && self.physics.motion() > 0.002 * bodies.len() as f32);
         canvas::draw(
             &canvas,
             &Scene {
                 bodies: &bodies,
                 side: self.physics.side(),
                 view_side: self.view_side.get(),
-                band_on: self.physics.params().band_tension > 0.0,
+                band_on: params.band_tension > 0.0,
+                band_tension: params.band_tension,
+                target_side: params.target_side,
+                forces: show_forces.then_some(&forces),
+                mouse_force: self.physics.mouse_force(),
                 selected: self.selected,
                 tether: self.dragging.then_some(self.mouse),
             },
