@@ -1,4 +1,4 @@
-use super::{State, FIXED_STEP};
+use super::{contacts, edges, State, FIXED_STEP};
 fn radius(t: f32, x: f32, y: f32) -> f32 {
     let (sin, cos) = t.sin_cos();
     0.5 * ((cos * x + sin * y).abs() + (-sin * x + cos * y).abs())
@@ -38,29 +38,43 @@ impl State {
                     }
                 }
                 if depth > 0.0 {
-                    let force = (p.stiffness * depth
-                        - 12.0 * ((b.vx - other.vx) * nx + (b.vy - other.vy) * ny))
-                        .max(0.0);
+                    let (lever, other_lever, width) = contacts::levers(b, other, (nx, ny), depth);
+                    let speed = (b.vx - other.vx) * nx + (b.vy - other.vy) * ny - b.omega * lever
+                        + other.omega * other_lever;
+                    let force = (p.stiffness * depth - 12.0 * speed).max(0.0);
                     fx += nx * force;
                     fy += ny * force;
-                    let lever = ((dx * ny - dy * nx) * 0.5).clamp(-0.5, 0.5);
-                    torque -= lever * force * 2.0;
+                    torque -= lever * force * 6.0;
+                    // A finite face patch also distributes pressure and damping
+                    // across its width; a point contact has no such couple.
+                    torque -= width * width / 12.0
+                        * 6.0
+                        * (p.stiffness * (4.0 * (b.theta - other.theta)).sin() / 4.0
+                            + 12.0 * (b.omega - other.omega));
+                } else if p.edge_attraction > 0.0 {
+                    let f = edges::pair(b, other, p.edge_attraction);
+                    fx += f[0];
+                    fy += f[1];
+                    torque += f[2];
                 }
             }
             let h = radius(b.theta, 1.0, 0.0);
             let side = self.side as f32;
-            if b.x < h {
-                fx += p.stiffness * (h - b.x) - 12.0 * b.vx;
+            for (normal, depth) in [
+                ((1.0, 0.0), h - b.x),
+                ((0.0, 1.0), h - b.y),
+                ((-1.0, 0.0), b.x - side + h),
+                ((0.0, -1.0), b.y - side + h),
+            ] {
+                let f = contacts::wall(b, normal, depth, p.stiffness);
+                fx += f[0];
+                fy += f[1];
+                torque += f[2];
             }
-            if b.y < h {
-                fy += p.stiffness * (h - b.y) - 12.0 * b.vy;
-            }
-            if b.x > side - h {
-                fx -= p.stiffness * (b.x - side + h) + 12.0 * b.vx;
-            }
-            if b.y > side - h {
-                fy -= p.stiffness * (b.y - side + h) + 12.0 * b.vy;
-            }
+            let f = edges::walls(b, side, p.edge_attraction);
+            fx += f[0];
+            fy += f[1];
+            torque += f[2];
             if self.mouse.down && self.mouse.index == Some(i) {
                 let (dx, dy) = (self.mouse.x - b.x, self.mouse.y - b.y);
                 let gain = 100.0 * (0.4 / dx.hypot(dy).max(0.0001)).min(1.0);
@@ -91,6 +105,7 @@ impl State {
                 self.params.stiffness as f64
                     * ((b.x as f64 + h - self.side).max(0.0)
                         + (b.y as f64 + h - self.side).max(0.0))
+                    + edges::walls(b, self.side as f32, self.params.edge_attraction)[3] as f64
             })
             .sum();
         let n = self.bodies.len() as f64;

@@ -56,6 +56,7 @@ pub enum Msg {
     BandTension(f32),
     Gravity(bool),
     Attraction(bool),
+    EdgeAttraction(f32),
     Damping(f32),
     Stiffness(f32),
     TogglePause,
@@ -393,6 +394,14 @@ impl Component for Game {
                 self.invalidate();
                 true
             }
+            Msg::EdgeAttraction(strength) => {
+                let mut params = self.physics.params();
+                params.edge_attraction = strength;
+                self.physics.set_params(params);
+                self.invalidate();
+                self.set_pause(false);
+                true
+            }
             Msg::Damping(damping) => {
                 let mut params = self.physics.params();
                 params.damping = damping;
@@ -634,6 +643,13 @@ impl Component for Game {
                                 <input type="checkbox" checked={params.attraction}
                                     onchange={link.callback(|e: Event| Msg::Attraction(e.target_unchecked_into::<HtmlInputElement>().checked()))} />
                             </label>
+                            <label class="pg-row" for="pg-edge-attraction">
+                                { "Edge attraction " }
+                                <output>{ if params.edge_attraction > 0.0 { format!("{}",params.edge_attraction) } else { "Off".into() } }</output>
+                            </label>
+                            <input id="pg-edge-attraction" type="range" min="0" max="40" step="1" value={params.edge_attraction.to_string()}
+                                oninput={link.callback(|e: InputEvent| Msg::EdgeAttraction(input_value(&e).parse().unwrap_or(0.0)))} />
+                            <p class="pg-help">{ "Pull nearby facing edges together and turn them toward a flush fit, including the outer band. Zero turns it off." }</p>
                             <label class="pg-row" for="pg-damping">
                                 { "Damping " }<output>{ format!("{:.1}", params.damping) }</output>
                             </label>

@@ -6,7 +6,9 @@ pub const FIXED_STEP: f64 = 1.0 / 120.0;
 pub const GPU_KERNEL: &str = include_str!("../kernel.wgsl");
 #[cfg(all(test, target_arch = "wasm32"))]
 mod browser_tests;
+mod contacts;
 mod cpu;
+mod edges;
 #[cfg(target_arch = "wasm32")]
 mod gpu;
 #[cfg(test)]
@@ -30,6 +32,7 @@ pub enum Backend {
 pub struct Params {
     pub gravity: bool,
     pub attraction: bool,
+    pub edge_attraction: f32,
     pub damping: f32,
     pub stiffness: f32,
     pub band_tension: f32,
@@ -74,6 +77,7 @@ impl Physics {
                 params: Params {
                     gravity: false,
                     attraction: false,
+                    edge_attraction: 0.0,
                     damping: 3.0,
                     stiffness: 900.0,
                     band_tension: 0.0,
@@ -206,7 +210,7 @@ impl Physics {
         self.state.borrow().params
     }
     pub fn set_params(&self, p: Params) {
-        if ![p.damping, p.stiffness, p.band_tension]
+        if ![p.damping, p.stiffness, p.band_tension, p.edge_attraction]
             .iter()
             .all(|v| v.is_finite())
             || !p.target_side.is_finite()
@@ -219,6 +223,7 @@ impl Physics {
         }
         s.params = Params {
             damping: p.damping.clamp(0.0, 12.0),
+            edge_attraction: p.edge_attraction.clamp(0.0, 40.0),
             stiffness: p.stiffness.clamp(300.0, 1600.0),
             band_tension: p.band_tension.clamp(0.0, 100.0),
             target_side: p.target_side.clamp(1.0, 1000.0),
@@ -287,16 +292,24 @@ impl Physics {
             s.revision += 1;
         }
     }
-    pub fn shake(&self, mut seed: u64) {
+    pub fn shake(&self, seed: u64) {
+        self.shake_scaled(seed, 1.0);
+    }
+    /// A bounded kick; amplitudes below one support cooling/annealing.
+    pub fn shake_scaled(&self, mut seed: u64, strength: f32) {
+        if !strength.is_finite() {
+            return;
+        }
+        let strength = strength.clamp(0.0, 1.0);
         let mut random = || {
             seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
             ((seed >> 32) as f32 / u32::MAX as f32) - 0.5
         };
         let mut s = self.state.borrow_mut();
         for b in &mut s.bodies {
-            b.vx = random() * 7.0;
-            b.vy = random() * 7.0;
-            b.omega = random() * 3.0;
+            b.vx = random() * 7.0 * strength;
+            b.vy = random() * 7.0 * strength;
+            b.omega = random() * 3.0 * strength;
         }
         s.revision += 1;
     }

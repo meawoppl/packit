@@ -10,10 +10,13 @@ async fn gpu_matches_cpu_and_keeps_direct_edits() {
         p.set_params(Params {
             gravity: true,
             attraction: true,
+            edge_attraction: 25.0,
             ..p.params()
         });
         p.set_pose(0, 1.4, 1.0, 0.15);
         p.set_pose(1, 2.2, 1.0, -0.1);
+        p.set_pose(2, 1.1, 2.8, 0.1);
+        p.set_pose(3, 2.5, 2.8, -0.1);
     }
     gpu.init_gpu().await;
     assert_eq!(gpu.mode(), Backend::Gpu, "test requires a WebGPU adapter");
@@ -135,4 +138,38 @@ async fn missing_webgpu_uses_cpu() {
     p.step(6).await;
     assert!(p.bodies()[0].y < y);
     p.dispose();
+}
+
+#[wasm_bindgen_test(async)]
+async fn gpu_torque_clamp_and_resting_grids() {
+    let p = Physics::new(1, 4.0);
+    p.init_gpu().await;
+    assert_eq!(p.mode(), Backend::Gpu);
+    for omega in [-100.0, 100.0] {
+        p.set_pose(0, 2.0, 2.0, 0.2);
+        p.state.borrow_mut().bodies[0].omega = omega;
+        p.step(1).await;
+        assert_eq!(p.bodies()[0].omega, omega.signum() * 8.0);
+    }
+    p.dispose();
+    for edge_attraction in [0.0, 30.0] {
+        let p = Physics::new(9, 3.5);
+        p.init_gpu().await;
+        assert_eq!(p.mode(), Backend::Gpu);
+        p.set_params(Params {
+            gravity: true,
+            edge_attraction,
+            ..p.params()
+        });
+        for _ in 0..160 {
+            p.step(6).await;
+        }
+        assert!(
+            p.motion() < 0.002 * 9.0,
+            "edge={edge_attraction}, motion={}, bodies={:?}",
+            p.motion(),
+            p.bodies()
+        );
+        p.dispose();
+    }
 }

@@ -152,7 +152,7 @@ impl Gpu {
             u32::from(p.attraction) as f32 * 1.8,
             p.damping,
             p.stiffness,
-            0.0,
+            p.edge_attraction,
             mouse.x,
             mouse.y,
             mouse.index.unwrap_or(0) as f32,
