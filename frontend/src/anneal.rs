@@ -140,9 +140,9 @@ impl Anneal {
         }
         // Zero at the start of each cycle (squeezed), one halfway (relaxed).
         let wave = 0.5 * (1.0 - (std::f64::consts::TAU * self.elapsed / period).cos());
-        // Open by at least 0.4 of the squeeze span, so every relax outpaces
-        // the squeeze: the eased squeeze falls at most 6 * span / heat time
-        // per unit of fade, and 0.4 keeps each cycle's opening ahead of it.
+        // Open by at least 0.4 of the squeeze span, so relaxes stay visible
+        // even where the eased squeeze falls fastest, mid-run. The span
+        // tests are the evidence, from small spans to large.
         let span = self.start_side - self.floor_side;
         let depth = self.schedule.relax_depth.max(0.4 * span);
         // Relaxing never opens the band past where the run started.
@@ -337,6 +337,45 @@ mod tests {
         assert!((targets.last().unwrap() - 3.0).abs() < 1e-12);
         let measures = commands.iter().filter(|c| **c == Command::Measure).count();
         assert_eq!(measures, 1);
+    }
+
+    #[test]
+    fn squeeze_down_relaxes_visibly_at_every_span() {
+        // Small, typical (n = 2), mid, and large squeeze spans.
+        for (start, floor) in [(1.6, 1.414), (2.5, 1.414), (4.5, 3.0), (15.0, 10.0)] {
+            let mut a = Anneal::new(Schedule::squeeze_down(), start, floor, 3);
+            let mut targets = Vec::new();
+            let mut measures = 0;
+            while !a.is_finished() {
+                for c in a.advance(FRAME) {
+                    match c {
+                        Command::Band { target_side, .. } => targets.push(target_side),
+                        Command::Measure => measures += 1,
+                        Command::Shake { .. } => panic!("squeeze down never shakes"),
+                    }
+                }
+            }
+            // Openings: rising stretches of the band target that gain over 0.01.
+            let mut openings = 0;
+            let mut gain = 0.0;
+            for w in targets.windows(2) {
+                if w[1] > w[0] {
+                    gain += w[1] - w[0];
+                } else {
+                    openings += usize::from(gain > 0.01);
+                    gain = 0.0;
+                }
+            }
+            openings += usize::from(gain > 0.01);
+            let span = format!("{start} -> {floor}");
+            assert!(openings >= 4, "{span}: {openings} openings");
+            assert!(
+                targets.iter().all(|s| (floor - 1e-12..=start).contains(s)),
+                "{span}: target left [floor, start]"
+            );
+            assert!((targets.last().unwrap() - floor).abs() < 1e-12, "{span}");
+            assert_eq!(measures, 1, "{span}");
+        }
     }
 
     #[test]
