@@ -16,7 +16,6 @@ async fn decode<T: DeserializeOwned>(resp: Response) -> Result<T, String> {
     }
 }
 
-#[allow(dead_code)] // Called by the game screen once it lands.
 pub async fn submit_score(body: SubmitScore) -> Result<ScoreEntry, String> {
     let resp = Request::post("/api/scores")
         .json(&body)

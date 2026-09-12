@@ -9,9 +9,14 @@ yew = { version = "0.21", features = ["csr"] }
 yew-router = "0.18"
 wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"
-web-sys = "0.3"
+web-sys = { version = "0.3", features = ["Element"] }
 gloo-net = "0.6"
 serde = { version = "1", features = ["derive"] }
 shared = { path = "../shared" }
 uuid = "1.26.1"
 chrono = "0.4.45"
+
+js-sys = "0.3"
+physics = { path = "../physics" }
+solver = { path = "../solver" }
+serde_json = "1.0.151"
