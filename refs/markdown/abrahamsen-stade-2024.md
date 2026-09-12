@@ -2,7 +2,7 @@
 >
 > **License:** Creative Commons Attribution 4.0 International (CC BY 4.0), https://creativecommons.org/licenses/by/4.0/
 >
-> Machine conversion of [`../downloads/abrahamsen-stade-2024.pdf`](../downloads/abrahamsen-stade-2024.pdf) with pymupdf4llm. Formulas, figures, and tables are often garbled; cite and check the PDF.
+> Math transcription checked against [`../downloads/abrahamsen-stade-2024.pdf`](../downloads/abrahamsen-stade-2024.pdf). Inline and displayed equations were restored from the original. Figure captions link to the source pages; consult the PDF for diagrams and authoritative wording. Apparent errors printed in the original are retained and identified in the transcription notes below.
 
 # Hardness of Packing, Covering and Partitioning Simple Polygons with Unit Squares 
 
@@ -14,7 +14,7 @@ April 2024
 
 ##### **Abstract** 
 
-We show that packing axis-aligned unit squares into a simple polygon $P$ is NP-hard, even when $P$ is an orthogonal and orthogonally convex polygon with half-integer coordinates. It has been known since the early 80s that packing unit squares into a polygon with holes is NPhard [Fowler, Paterson, Tanimoto, Inf. Process. Lett., 1981], but the version without holes was conjectured to be polynomial-time solvable more than two decades ago [Baur and Fekete, Algorithmica, 2001]. 
+We show that packing axis-aligned unit squares into a simple polygon $P$ is NP-hard, even when $P$ is an orthogonal and orthogonally convex polygon with half-integer coordinates. It has been known since the early 80s that packing unit squares into a polygon with holes is NP-hard [Fowler, Paterson, Tanimoto, Inf. Process. Lett., 1981], but the version without holes was conjectured to be polynomial-time solvable more than two decades ago [Baur and Fekete, Algorithmica, 2001]. 
 
 Our reduction relies on a new way of reducing from Planar-3SAT. Interestingly, our geometric realization of a planar formula is non-planar. Vertices become rows and edges become columns, with crossings being allowed. The planarity ensures that all endpoints of rows and columns are incident to the outer face of the resulting drawing. We can then construct a polygon following the outer face that realizes all the logic of the formula geometrically, without the need of any holes. 
 
@@ -22,49 +22,40 @@ This new reduction technique proves to be general enough to also show hardness o
 
 ## **Contents** 
 
-|**1**<br>**Int**|**roduction**|**1**|
+| | | |
 |---|---|---|
-|1.1|Other related work on packing<br>. . . . . . . . . . . . . . .|. . . . . . . . . . . . . . .<br>2|
-|1.2|Technical overview . . . . . . . . . . . . . . . . . . . . . .|. . . . . . . . . . . . . . .<br>3|
-|**2**<br>**Pac**|**king in simple polygons**|**4**|
-|2.1|Schematics of the construction<br>. . . . . . . . . . . . . . .|. . . . . . . . . . . . . . .<br>4|
-|2.2|Reference centers . . . . . . . . . . . . . . . . . . . . . . .|. . . . . . . . . . . . . . .<br>6|
-|2.3|Components and gadgets<br>. . . . . . . . . . . . . . . . . .|. . . . . . . . . . . . . . .<br>7|
-|2.4|The variable component . . . . . . . . . . . . . . . . . . .|. . . . . . . . . . . . . . .<br>7|
-|2.5|Rows and alignment . . . . . . . . . . . . . . . . . . . . .|. . . . . . . . . . . . . . .<br>8|
-|2.6|The PUSH gadgets . . . . . . . . . . . . . . . . . . . . . .|. . . . . . . . . . . . . . .<br>9|
-
-
-
-i 
-
-|2.7|The OR gadgets<br>. . . . . . . . . . . . . . . . . . . . . . . . . .|. . . . . . . . . . . .<br>10|
-|---|---|---|
-|2.8|Verifying the construction . . . . . . . . . . . . . . . . . . . . .|. . . . . . . . . . . .<br>13|
-|**3**<br>**Co**|**vering and partitioning**|**14**|
-|3.1|Components and gadgets<br>. . . . . . . . . . . . . . . . . . . . .|. . . . . . . . . . . .<br>14|
-|**4**<br>**Pac**|**king in orthogonally convex polygons**|**17**|
-|4.1|Overview of the construction<br>. . . . . . . . . . . . . . . . . . .|. . . . . . . . . . . .<br>17|
-|4.2|Clover-3SAT . . . . . . . . . . . . . . . . . . . . . . . . . . .|. . . . . . . . . . . .<br>18|
-|4.3|Stacks, reference centers, and crossings . . . . . . . . . . . . . .|. . . . . . . . . . . .<br>23|
-|4.4|Verification order and membrane rows . . . . . . . . . . . . . .|. . . . . . . . . . . .<br>25|
-|4.5|Variable components . . . . . . . . . . . . . . . . . . . . . . . .|. . . . . . . . . . . .<br>28|
-||4.5.1<br>Helper rows . . . . . . . . . . . . . . . . . . . . . . . . .|. . . . . . . . . . . .<br>29|
-||4.5.2<br>PUSH gadgets<br>. . . . . . . . . . . . . . . . . . . . . . .|. . . . . . . . . . . .<br>30|
-||4.5.3<br>Redundancy columns. . . . . . . . . . . . . . . . . . . .|. . . . . . . . . . . .<br>31|
-||4.5.4<br>The complete variable component<br>. . . . . . . . . . . .|. . . . . . . . . . . .<br>33|
-|4.6|Verification of the variable components . . . . . . . . . . . . . .|. . . . . . . . . . . .<br>35|
-|4.7|Clause components . . . . . . . . . . . . . . . . . . . . . . . . .|. . . . . . . . . . . .<br>40|
-||4.7.1<br>Tester stacks and SWITCH gadgets<br>. . . . . . . . . . .|. . . . . . . . . . . .<br>40|
-||4.7.2<br>Defining the clause components . . . . . . . . . . . . . .|. . . . . . . . . . . .<br>43|
-||4.7.3<br>Packing the clause components . . . . . . . . . . . . . .|. . . . . . . . . . . .<br>45|
-|4.8|Verification of the clause components . . . . . . . . . . . . . . .|. . . . . . . . . . . .<br>46|
-|4.9|Proof of Theorem 1. . . . . . . . . . . . . . . . . . . . . . . . .|. . . . . . . . . . . .<br>54|
-|**5**<br>**Co**|**ncluding remarks**|**54**|
-
-
-
-ii 
+|**1**|**Introduction**|**1**|
+|1.1|Other related work on packing|2|
+|1.2|Technical overview|3|
+|**2**|**Packing in simple polygons**|**4**|
+|2.1|Schematics of the construction|4|
+|2.2|Reference centers|6|
+|2.3|Components and gadgets|7|
+|2.4|The variable component|7|
+|2.5|Rows and alignment|8|
+|2.6|The PUSH gadgets|9|
+|2.7|The OR gadgets|10|
+|2.8|Verifying the construction|13|
+|**3**|**Covering and partitioning**|**14**|
+|3.1|Components and gadgets|14|
+|**4**|**Packing in orthogonally convex polygons**|**17**|
+|4.1|Overview of the construction|17|
+|4.2|Clover-3SAT|18|
+|4.3|Stacks, reference centers, and crossings|23|
+|4.4|Verification order and membrane rows|25|
+|4.5|Variable components|28|
+|4.5.1|Helper rows|29|
+|4.5.2|PUSH gadgets|30|
+|4.5.3|Redundancy columns|31|
+|4.5.4|The complete variable component|33|
+|4.6|Verification of the variable components|35|
+|4.7|Clause components|40|
+|4.7.1|Tester stacks and SWITCH gadgets|40|
+|4.7.2|Defining the clause components|43|
+|4.7.3|Packing the clause components|45|
+|4.8|Verification of the clause components|46|
+|4.9|Proof of Theorem 1|54|
+|**5**|**Concluding remarks**|**54**|
 
 ## **1 Introduction** 
 
@@ -80,9 +71,7 @@ While the complexity of $2 \times 2$-Square-Packing for polygons with holes was 
 
 **Theorem 1.** _The problem_ $2 \times 2$-Square-Packing _is NP-hard, even for orthogonally convex grid polygons._ 
 
-> 1The only preceding work with a result of this type seems to be a manuscript by Masek cited by Garey and Johnson [32, p. 232], proving NP-hardness of the problem of describing an orthogonal polygon as a union of a minimum number of rectangles. The manuscript was never published and is now apparently lost. 
-
-1 
+> <sup>1</sup>The only preceding work with a result of this type seems to be a manuscript by Masek cited by Garey and Johnson [32, p. 232], proving NP-hardness of the problem of describing an orthogonal polygon as a union of a minimum number of rectangles. The manuscript was never published and is now apparently lost. 
 
 Allen and Iacono [8] mentioned that this special case of $2 \times 2$-Square-Packing was the simplest packing problem with unknown complexity, and that the problem was “most likely in P.” 
 
@@ -94,7 +83,7 @@ The technique proves to be general enough to also show hardness of some other pr
 
 **Theorem 3.** _The problem_ Small-Partitioning _is NP-hard, even for simple grid polygons._ 
 
-There have been many prior examples of covering problems that are intractable for simple polygons, and some are even $\exists\mathbb{R}$-hard like the Art Gallery Problem [3] and covering with convex polygons [2]. It is more remarkable that Theorem 3 gives the first example of a _partitioning_ problem that is hard already for simple polygons (with the usual objective of minimizing the number of pieces). For other partitioning problems, like partitioning into convex [19] or star-shaped pieces [4] or trapezoids [11], there are known polynomial-time algorithms. Partitioning problems usually become hard in the presence of holes, which is also the case for the here mentioned problems [11, 46] (a notable exception is partitioning into rectangles, which can be done optimally in polynomial time even for polygons with holes [35]). Like packing, polygon decomposition forms a large subfield in computational geometry, with several books and survey papers that give an overview of the stateof-the-art at the time of publication [18, 20, 36, 37, 46, 48, 51]. Abrahamsen and Rasmussen [6] recently described an 13-approximation algorithm for finding a partition of a simple polygon into a minimum number of small pieces. The problem is motivated by various settings in manufacturing and shipping. 
+There have been many prior examples of covering problems that are intractable for simple polygons, and some are even $\exists\mathbb{R}$-hard like the Art Gallery Problem [3] and covering with convex polygons [2]. It is more remarkable that Theorem 3 gives the first example of a _partitioning_ problem that is hard already for simple polygons (with the usual objective of minimizing the number of pieces). For other partitioning problems, like partitioning into convex [19] or star-shaped pieces [4] or trapezoids [11], there are known polynomial-time algorithms. Partitioning problems usually become hard in the presence of holes, which is also the case for the here mentioned problems [11, 46] (a notable exception is partitioning into rectangles, which can be done optimally in polynomial time even for polygons with holes [35]). Like packing, polygon decomposition forms a large subfield in computational geometry, with several books and survey papers that give an overview of the state-of-the-art at the time of publication [18, 20, 36, 37, 46, 48, 51]. Abrahamsen and Rasmussen [6] recently described an 13-approximation algorithm for finding a partition of a simple polygon into a minimum number of small pieces. The problem is motivated by various settings in manufacturing and shipping. 
 
 ### **1.1 Other related work on packing** 
 
@@ -102,11 +91,7 @@ Several other packing problems have been shown to be NP-hard. Here we mention th
 
 Allen and Iacono [8] showed that it is NP-hard to pack identical simple (small) polygons $Q$ into a simple (larger) polygon $P$. Here, both $Q$ and $P$ are specified as part of the input. We show that this problem is hard even when $Q$ is the $2 \times 2$ square and $P$ is orthogonally convex. 
 
-Some packing problems are even known to be $\exists\mathbb{R}$-complete, and thus likely not in NP. Abrahamsen, Miltzow and Seiferth [5] showed that when the pieces can be rotated, the problem of packing convex polygons into a square is $\exists\mathbb{R}$-complete. When the pieces can only be translated, 
-
-2 
-
-the problem is $\exists\mathbb{R}$-complete if arcs from hyperbolae can appear on the boundaries of the pieces or the container. 
+Some packing problems are even known to be $\exists\mathbb{R}$-complete, and thus likely not in NP. Abrahamsen, Miltzow and Seiferth [5] showed that when the pieces can be rotated, the problem of packing convex polygons into a square is $\exists\mathbb{R}$-complete. When the pieces can only be translated, the problem is $\exists\mathbb{R}$-complete if arcs from hyperbolae can appear on the boundaries of the pieces or the container. 
 
 On the positive side, Hochbaum and Maass [34] gave a PTAS for $2 \times 2$-Square-Packing in grid polygons with holes. Faster schemes have since then been described by Agarwal, van Kreveld and Suri [7] and Chan [17]. El-Khechen [38] and van Renssen and Speckmann [50] described families of simple grid polygons where $2 \times 2$-Square-Packing can be solved optimally in polynomial time. El-Khechen, Dulieu, Iacono and van Omme [25] showed that $2 \times 2$-Square-Packing into grid polygons with holes is in NP. This is not immediately clear since, if $P$ is given in the standard representation as the coordinates of the vertices in binary, then the number of squares that fit in $P$ can be exponential in $n$ (the number of vertices), so specifying the placements of the squares is not a valid certificate. 
 
@@ -124,11 +109,9 @@ Variables are represented by neighbouring rows of squares that can be packed in 
 
 Our first construction, described in Section 2, shows that $2 \times 2$-Square-Packing is NP-hard for simple grid polygons. The construction is not so involved and quite straightforward to verify. 
 
-3 
-
 In Section 3, we study the problems Small-Cover and Small-Partitioning. A construction very similar to the one for packing proves that Small-Cover is NP-hard, establishing Theorem 2. A main difference is that in packing, information propagate by squares _pushing_ each other, because they are not allowed to overlap, while in covering, the squares are _pulling_ each other, because they must cover everything. We also show that in a satisfiable instance, an optimal covering has a nice property that allows it to be converted into a partition of the same cardinality, hence proving Theorem 3. 
 
-In Section 4, we then turn our attention to packing $2 \times 2$ squares in an orthogonally convex grid polygon. This is a strictly stronger result than the one from Section 2, that requires a different, much more complicated construction. We develop the problem Clover-3SAT, which is a modification of Planar-3SAT under which our schematics have an orthogonally convex shape. This builds on work by Pilz [49], who showed that a related problem called Variable-Clause-Linked-Planar3SAT is NP-hard. 
+In Section 4, we then turn our attention to packing $2 \times 2$ squares in an orthogonally convex grid polygon. This is a strictly stronger result than the one from Section 2, that requires a different, much more complicated construction. We develop the problem Clover-3SAT, which is a modification of Planar-3SAT under which our schematics have an orthogonally convex shape. This builds on work by Pilz [49], who showed that a related problem called Variable-Clause-Linked-Planar-3SAT is NP-hard. 
 
 The variable and clause components are built out of a large number of criss-crossing rows and columns. Since it is harder to isolate the different pieces, the dependencies between different parts of the construction are much more complicated. We need a long technical verification to ensure that the packings behave as we intend. 
 
@@ -150,18 +133,9 @@ The following lemma was proved in [14].
 
 Let $\Phi$ be an instance of Monotone-Planar-3SAT with variables $x_1, \ldots, x_k$. We now describe schematically the overall construction of a grid polygon $P$, so that $P$ has a packing with a certain number of $2 \times 2$ squares if and only if $\Phi$ is satisfiable. The first step is shown in Figure 1 (middle). We make a horizontal segment for each variable $x_1, \ldots, x_k$ in this order bottom-up, where the $x$-coordinates of the right endpoints are non-decreasing, as are those of the left endpoints. Furthermore, the right endpoint of $x_1$ is to the right of the left endpoint of $x_k$, so that all the segments have a common horizontal overlap. These are the _main_ variable rows. 
 
-The positive clauses are represented as rows above $x_k$ and the negative as rows below $x_1$. In the embedding of $G$, a clause can be _nested_ inside another, defining a partial order on the clauses. For instance, in Figure 1, $c_2$ and $c_3$ are nested inside $c_1$. If a positive clause $c_i$ is nested inside $c_j$, then we draw the row of $c_i$ above that of $c_j$ in the schematics. If instead the clauses are negative, the 
+The positive clauses are represented as rows above $x_k$ and the negative as rows below $x_1$. In the embedding of $G$, a clause can be _nested_ inside another, defining a partial order on the clauses. For instance, in Figure 1, $c_2$ and $c_3$ are nested inside $c_1$. If a positive clause $c_i$ is nested inside $c_j$, then we draw the row of $c_i$ above that of $c_j$ in the schematics. If instead the clauses are negative, the row of $c_i$ is below that of $c_j$. Each edge $x_i c_j$ is realized as a vertical segment connecting the rows of $x_i$ and $c_j$. All vertical segments to the positive clauses are placed to the right of all those to the negative clauses. The left-to-right ordering of the edges to the positive clauses along the variables $x_1, \ldots, x_k$ in $G$ is preserved by the corresponding vertical segments, as well as the ordering of the edges to the negative clauses. The row of a positive (resp. negative) clause $c_j$ starts at the top (resp. bottom) endpoint of the vertical segment corresponding to the leftmost edge incident to $c_j$ in $G$ and ends at the top (resp. bottom) endpoint of the rightmost edge. 
 
-4 
-
-
-
-<!-- Start of picture text -->
-$c_2$ $c_3$<br>positive<br>$c_1$ $c_2$ $c_3$ $c_1$<br>$c_1$<br>$c_2$ $c_3$ $x_5$<br>$x_4$<br>$x_5$<br>$x_3$<br>$x_1$ $x_2$ $x_5$ $x_2$ $x_4$<br>$c_4$ $c_5$ $x_1$ $x_3$<br>negative $x_2$<br>$c_4$ $c_5$<br>$x_1$<br>$c_4$ $c_5$<br><!-- End of picture text -->
-
-Figure 1: The figure shows schematically how to convert an instance of Monotone-Planar-3SAT into a polygon. Left: The instance of Monotone-Planar-3SAT that we start with. Middle: We realize variables and clauses as rows. Right: We replace the clause rows with dark green auxiliary variables connected to red OR gadgets. The boundary of our constructed polygon is sketched in black. 
-
-row of $c_i$ is below that of $c_j$. Each edge $x_i c_j$ is realized as a vertical segment connecting the rows of $x_i$ and $c_j$. All vertical segments to the positive clauses are placed to the right of all those to the negative clauses. The left-to-right ordering of the edges to the positive clauses along the variables $x_1, \ldots, x_k$ in $G$ is preserved by the corresponding vertical segments, as well as the ordering of the edges to the negative clauses. The row of a positive (resp. negative) clause $c_j$ starts at the top (resp. bottom) endpoint of the vertical segment corresponding to the leftmost edge incident to $c_j$ in $G$ and ends at the top (resp. bottom) endpoint of the rightmost edge. 
+**Figure 1:** The figure shows schematically how to convert an instance of Monotone-Planar-3SAT into a polygon. Left: The instance of Monotone-Planar-3SAT that we start with. Middle: We realize variables and clauses as rows. Right: We replace the clause rows with dark green auxiliary variables connected to red OR gadgets. The boundary of our constructed polygon is sketched in black. [View the diagram (PDF, p. 7).](../downloads/abrahamsen-stade-2024.pdf#page=7)
 
 In the next step, as shown in Figure 1 (right), we replace each clause row by three _auxiliary_ variable rows, one for each of the variables connected to the clause. In the right side of the auxiliary rows, we connect them using vertical segments to an OR gadget, represented by a red horizontal segment. As sketched in the figure, we construct a polygon whose boundary approximately follows the outer face of the resulting arrangement, but the finer details will be given later. 
 
@@ -169,30 +143,28 @@ The use of auxiliary variables is necessary to make sure the OR gadgets can be p
 
 **Lemma 5.** _There is a schematics as described, where the segments representing the OR gadgets are not crossed by any edges, and all segment endpoints are incident to the outer face of the drawing._ 
 
-_Proof._ We proceed by induction on the number of clauses. The claim is trivial with no clauses. Consider a formula $\Phi$ with $n$ clauses and suppose inductively that the claim holds for $n-1$ clauses. Let $c$ be a clause of maximum depth of nestedness in $\Phi$ and let $\Phi'$ be $\Phi$ with $c$ removed. By the induction hypothesis, we can consider a schematics of $\Phi'$ with the stated properties. Without loss of generality, we consider the case where $c$ is a positive clause, so in the schematics, $c$ should be realized with three auxiliary variable rows connected to an OR gadget, and the auxiliary variables should be above the other OR gadgets. We can stretch the schematics of $\Phi'$ horizontally to make enough room for the columns connecting the main variable rows and the new auxiliary variable 
-
-5 
-
-rows. These columns then appear consecutively along the main variable rows. We can then also draw the auxiliary variable rows and the OR gadget. We thus avoid crossing through other OR gadgets and we keep all segment endpoints incident to the outer face of the drawing. 
+_Proof._ We proceed by induction on the number of clauses. The claim is trivial with no clauses. Consider a formula $\Phi$ with $n$ clauses and suppose inductively that the claim holds for $n-1$ clauses. Let $c$ be a clause of maximum depth of nestedness in $\Phi$ and let $\Phi'$ be $\Phi$ with $c$ removed. By the induction hypothesis, we can consider a schematics of $\Phi'$ with the stated properties. Without loss of generality, we consider the case where $c$ is a positive clause, so in the schematics, $c$ should be realized with three auxiliary variable rows connected to an OR gadget, and the auxiliary variables should be above the other OR gadgets. We can stretch the schematics of $\Phi'$ horizontally to make enough room for the columns connecting the main variable rows and the new auxiliary variable rows. These columns then appear consecutively along the main variable rows. We can then also draw the auxiliary variable rows and the OR gadget. We thus avoid crossing through other OR gadgets and we keep all segment endpoints incident to the outer face of the drawing. 
 
 Algebraically, we make use of the following equivalence when introducing auxiliary variables: 
+
+Equation (1):
 
 ```math
 \begin{aligned}
 &(x_i \vee x_j \vee x_k) \iff \\
 &\Big(\exists y_i, y_j, y_k : (y_i \implies x_i) \wedge (y_j \implies x_j) \wedge (y_k \implies x_k) \wedge (y_i \vee y_j \vee y_k)\Big)
 \end{aligned}
-\tag{1}
 ```
 
 Here, $x_i, x_j, x_k$ are the original variables and $y_i, y_j, y_k$ are the auxiliary variables introduced for that particular clause. For a negative clause, we use an analogous equivalence: 
+
+Equation (2):
 
 ```math
 \begin{aligned}
 &(\neg x_i \vee \neg x_j \vee \neg x_k) \iff \\
 &\Big(\exists y_i, y_j, y_k : (\neg y_i \implies \neg x_i) \wedge (\neg y_j \implies \neg x_j) \wedge (\neg y_k \implies \neg x_k) \wedge (\neg y_i \vee \neg y_j \vee \neg y_k)\Big)
 \end{aligned}
-\tag{2}
 ```
 
 ### **2.2 Reference centers** 
@@ -213,15 +185,7 @@ We get from Lemma 7 that there can be at most as many squares as reference cente
 
 A square in a perfect packing _pushes up_ (resp. _down_ , _left_ , _right_ ) if the reference center is contained in one of the lower (resp. upper, right, left) quadrants. For clarity, we will draw the reference centers in our diagrams. We use a system of color coding that describes some of the constraints on how that tile can move, as shown in Figure 2. Squares with pink reference centers will always push down and left, while squares with red reference centers will always push up and left. Squares with orange reference centers can move vertically but will always push left. Squares with green reference centers can move horizontally but will always push down. Squares with dark blue reference centers will always push up. Squares with light blue reference centers will have some freedom in both horizontal and vertical directions. 
 
-6 
-
-
-
-
-
-
-
-Figure 2: The color key. 
+**Figure 2:** The color key. [View the diagram (PDF, p. 9).](../downloads/abrahamsen-stade-2024.pdf#page=9)
 
 ### **2.3 Components and gadgets** 
 
@@ -229,7 +193,7 @@ We informally distinguish between _gadgets_ and _components_ in our construction
 
 First, we describe a _variable component_ in Section 2.4, which has two possible positions representing the values of a binary variable. The variable components are represented in these schematics as green horizontal rows. The two positions of a variable component are _plus_ and _minus_ , corresponding to the values true and false of a binary variable. 
 
-Next, we create _PUSH gadgets_ in Sections 2.5 and 2.6. A PUSH gadget is a section of the polygon boundary that interacts with a variable component. Each PUSH gadget pushes on a _push column_ , which is shown as an orange column in our schematics. We describe a PUSH-UP-IFMINUS and a PUSH-DOWN-IF-PLUS gadget. Consider a variable component $x$ that is below another $y$. We can make a PUSH-UP-IF-MINUS gadget on $x$ and a PUSH-DOWN-IF-PLUS on $y$ and a connection between these using a push column. Since a push column cannot be pushed both up and down at the same time, we have ensured that $x$ is plus or $y$ is minus, so we have made the implication $y \implies x$. 
+Next, we create _PUSH gadgets_ in Sections 2.5 and 2.6. A PUSH gadget is a section of the polygon boundary that interacts with a variable component. Each PUSH gadget pushes on a _push column_ , which is shown as an orange column in our schematics. We describe a PUSH-UP-IF-MINUS and a PUSH-DOWN-IF-PLUS gadget. Consider a variable component $x$ that is below another $y$. We can make a PUSH-UP-IF-MINUS gadget on $x$ and a PUSH-DOWN-IF-PLUS on $y$ and a connection between these using a push column. Since a push column cannot be pushed both up and down at the same time, we have ensured that $x$ is plus or $y$ is minus, so we have made the implication $y \implies x$. 
 
 Note that variable components only push on push columns via the presence of PUSH gadgets. Without a PUSH gadget, a push column and a variable component will cross each other without interacting. 
 
@@ -243,27 +207,9 @@ Consider a variable row $x$ in the schematics. We make a corresponding variable 
 
 _Proof._ We first consider the two leftmost squares in the variable component and note that the polygon boundary forces at least one of them to push to the right. Similarly, (at least) one of the two rightmost squares must push to the left. So all the squares in one of the rows must push to the left and all the squares in the other row must push to the right. 
 
-7 
+**Figure 3:** The ends of the variable component. The plus position is shown left and the minus is shown right. Some squares in the middle may be pushed up. [View the diagram (PDF, p. 10).](../downloads/abrahamsen-stade-2024.pdf#page=10)
 
-
-
-
-
-<!-- Start of picture text -->
-· · · · · ·<br>· · · · · ·<br><!-- End of picture text -->
-
-
-
-Figure 3: The ends of the variable component. The plus position is shown left and the minus is shown right. Some squares in the middle may be pushed up. 
-
-
-
-<!-- Start of picture text -->
-$y$ $y$<br>$x$ $x$<br><!-- End of picture text -->
-
-
-
-Figure 4: Schematic of how to make a dependency between two variable components. When crossing each variable component in between, the width of the pyramid grows by two squares. The push column is shown in orange. Depending on the position of the bottom variable component $x$, this column may be pushed up (left). Depending on the position of the top variable component $y$, it may be pushed down (right). Since the column can’t be pushed both up and down, this creates a constraint between $x$ and $y$. 
+**Figure 4:** Schematic of how to make a dependency between two variable components. When crossing each variable component in between, the width of the pyramid grows by two squares. The push column is shown in orange. Depending on the position of the bottom variable component $x$, this column may be pushed up (left). Depending on the position of the top variable component $y$, it may be pushed down (right). Since the column can’t be pushed both up and down, this creates a constraint between $x$ and $y$. [View the diagram (PDF, p. 10).](../downloads/abrahamsen-stade-2024.pdf#page=10)
 
 As we have seen, a perfect packing of the variable component has two possible positions, and they correspond to the values of a binary variable. The transition from one position to the other corresponds to all the squares rotating one step either clockwise or counterclockwise around the cycle formed by the squares. We say that _plus_ is the position where the squares are rotated in the positive (i.e., counterclockwise) direction, and _minus_ is the position where they rotated in the negative direction. 
 
@@ -273,21 +219,11 @@ We describe a way to make a dependency between two variable components $x$ and $
 
 One extra layer of squares on the left edge of the pyramid may move up or stay down depending on the positions of $x$ and $y$. The squares in this layer are called a _push column_ or _push_ squares. This layer acts like a wire connecting the bottom and top edges of the polygon that bound the variable components $x$ and $y$, respectively. The gadgets described in Section 2.6 work by pushing on the push squares. This structure is pyramid shaped because a stack of raised squares has to increase in width every time it passes between a pair of rows with opposite horizontal alignments. 
 
-Recall that each variable component consists of one pair of neighbouring unaligned rows. We want to control the width of the pyramid at the top, which means that the number of times it crosses 
+Recall that each variable component consists of one pair of neighbouring unaligned rows. We want to control the width of the pyramid at the top, which means that the number of times it crosses a pair of unaligned rows should not depend of the positions of the individual variable components crossed by the pyramid. To do this, we place each variable component between two _static_ rows such that, in either position of the variable component, one of the static rows is aligned with the adjacent row in the variable component and the other is unaligned. Figure 5 shows a static row. In each static row, the rightmost square is pushed to the left by an edge of the polygon, so the whole row of squares are in a left position. 
 
-8 
+**Figure 5:** A static row. Some squares may be pushed up, but all push left. [View the diagram (PDF, p. 11).](../downloads/abrahamsen-stade-2024.pdf#page=11)
 
-Figure 5: A static row. Some squares may be pushed up, but all push left. 
-
-
-
-
-
-
-
-Figure 6: A pyramid crossing a variable component. The size of the pyramid always grows by 2 squares, regardless of the position of the variable component. 
-
-a pair of unaligned rows should not depend of the positions of the individual variable components crossed by the pyramid. To do this, we place each variable component between two _static_ rows such that, in either position of the variable component, one of the static rows is aligned with the adjacent row in the variable component and the other is unaligned. Figure 5 shows a static row. In each static row, the rightmost square is pushed to the left by an edge of the polygon, so the whole row of squares are in a left position. 
+**Figure 6:** A pyramid crossing a variable component. The size of the pyramid always grows by 2 squares, regardless of the position of the variable component. [View the diagram (PDF, p. 11).](../downloads/abrahamsen-stade-2024.pdf#page=11)
 
 Figure 6 shows in detail how the width of a pyramid grows by two squares whenever it crosses a variable component. This is expressed by the following lemma. 
 
@@ -312,20 +248,9 @@ y \text{ pushes down on its push square} &\iff y \text{ is plus}
 \end{aligned}
 ```
 
+**Figure 7:** The PUSH-UP-IF-MINUS gadget. The gadget forces some number of squares in the static row (top, red) to rise, and requires an additional push square to the left to rise if the variable component (bottom two rows, green) is minus. The plus position is shown on the left and the minus position is shown on the right. [View the diagram (PDF, p. 12).](../downloads/abrahamsen-stade-2024.pdf#page=12)
 
-9 
-
-
-
-
-
-Figure 7: The PUSH-UP-IF-MINUS gadget. The gadget forces some number of squares in the static row (top, red) to rise, and requires an additional push square to the left to rise if the variable component (bottom two rows, green) is minus. The plus position is shown on the left and the minus position is shown on the right. 
-
-
-
-
-
-Figure 8: The PUSH-DOWN-IF-PLUS gadget. The gadget allows some number of squares in the static row (bottom, red) to rise, and _allows_ the square to left of these to rise only if the variable component (top two rows, green) is plus. Note that the top gadgets may need to be much wider since the constraint pyramid could increase in width many times. 
+**Figure 8:** The PUSH-DOWN-IF-PLUS gadget. The gadget allows some number of squares in the static row (bottom, red) to rise, and _allows_ the square to left of these to rise only if the variable component (top two rows, green) is plus. Note that the top gadgets may need to be much wider since the constraint pyramid could increase in width many times. [View the diagram (PDF, p. 12).](../downloads/abrahamsen-stade-2024.pdf#page=12)
 
 To this end, we make the two gadget _PUSH-UP-IF-MINUS_ and _PUSH-DOWN-IF-PLUS_ , respectively. Figure 7 shows the PUSH-UP-IF-MINUS gadget, which simply consists of small indent in the polygon wall that forces some squares to rise. Figure 8 shows the PUSH-DOWN-IF-PLUS gadget, which consists of an _out_ dent in the polygon wall allowing some squares to rise. The width of this outdent is adjusted according to the width of the push pyramid, which, as stated by Lemma 9, depends on the number of variable components it crosses. This also ensures that the pyramids don’t collide in the interior of the polygon. 
 
@@ -335,69 +260,27 @@ Figure 9 shows an example of how to make a dependency using these two gadgets. O
 
 In conclusion, we have described gadgets with the properties stated by the following lemma. 
 
-**Lemma 10.** _In any perfect packing, the following holds. If a variable is minus, the push square of any PUSH-UP-IF-MINUS gadget pushes up. If a variable is plus, the push square of any PUSHDOWN-IF-PLUS gadget pushes down. As a consequence, combining a PUSH-UP-IF-MINUS gadget and a PUSH-DOWN-IF-PLUS gadget, we can realize the implications_ $y \implies x$ _and_ $\neg y \implies \neg x$_, i.e., ensure that the values of variables encoded by the packing satisfy the implications._ 
+**Lemma 10.** _In any perfect packing, the following holds. If a variable is minus, the push square of any PUSH-UP-IF-MINUS gadget pushes up. If a variable is plus, the push square of any PUSH-DOWN-IF-PLUS gadget pushes down. As a consequence, combining a PUSH-UP-IF-MINUS gadget and a PUSH-DOWN-IF-PLUS gadget, we can realize the implications_ $y \implies x$ _and_ $\neg y \implies \neg x$_, i.e., ensure that the values of variables encoded by the packing satisfy the implications._ 
 
 ### **2.7 The OR gadgets** 
 
-We create two types of OR gadgets, namely positive OR gadgets for the positive clauses and negative for the negative clauses. Figure 10 shows the positive OR gadget. The OR gadget is connected to 
+We create two types of OR gadgets, namely positive OR gadgets for the positive clauses and negative for the negative clauses. Figure 10 shows the positive OR gadget. The OR gadget is connected to three auxiliary variables that are below the gadget, using upside down pyramids of raised squares with push columns, as shown in Figure 11. These pyramids are created by PUSH-UP-IF-MINUS gadgets on the auxiliary variables. If all three push columns push up, then it is impossible to pack the OR gadget. On the other hand, Figure 12 shows that it is possible to pack the OR gadget if one or more of the columns is not pushed up. In this way we can think of the OR gadget as being a gadget that pushes down on one of three input columns. Hence, one of the auxiliary variables must be plus. 
 
-10 
+**Figure 9:** Example of a dependency using the PUSH-UP-IF-MINUS gadget on the bottom variable and the PUSH-DOWN-IF-PLUS gadget on the top variable. Top left: The bottom and top variables are both minus. Top right: The bottom and top variables are both plus. Bottom left: The bottom variable is plus and the top is minus. Since no gadget pushes on the push square, this introduces some slack so there are more than one perfect packing. Bottom right: The bottom variable is minus and the top is plus, which causes an overlap at the black square. [View the diagram (PDF, p. 13).](../downloads/abrahamsen-stade-2024.pdf#page=13)
 
-
-
-Figure 9: Example of a dependency using the PUSH-UP-IF-MINUS gadget on the bottom variable and the PUSH-DOWN-IF-PLUS gadget on the top variable. Top left: The bottom and top variables are both minus. Top right: The bottom and top variables are both plus. Bottom left: The bottom variable is plus and the top is minus. Since no gadget pushes on the push square, this introduces some slack so there are more than one perfect packing. Bottom right: The bottom variable is minus and the top is plus, which causes an overlap at the black square. 
-
-three auxiliary variables that are below the gadget, using upside down pyramids of raised squares with push columns, as shown in Figure 11. These pyramids are created by PUSH-UP-IF-MINUS gadgets on the auxiliary variables. If all three push columns push up, then it is impossible to pack the OR gadget. On the other hand, Figure 12 shows that it is possible to pack the OR gadget if one or more of the columns is not pushed up. In this way we can think of the OR gadget as being a gadget that pushes down on one of three input columns. Hence, one of the auxiliary variables must be plus. 
-
-Figure 13 shows the negative OR gadget. Here we connect the auxiliary variables using PUSHDOWN-IF-PLUS gadgets, as shown in Figure 14. We use a slightly different variant of the PUSHDOWN-IF-PLUS gadget than what is shown in Figure 8: We shift the outdent one unit square to the right, which causes the column of push squares to be on the right side of the pyramid instead of the left. This allows for a slightly simpler OR gadget than if we were to use the usual push column on the left side of the pyramids. By inspection, we obtain the following lemma. 
+Figure 13 shows the negative OR gadget. Here we connect the auxiliary variables using PUSH-DOWN-IF-PLUS gadgets, as shown in Figure 14. We use a slightly different variant of the PUSH-DOWN-IF-PLUS gadget than what is shown in Figure 8: We shift the outdent one unit square to the right, which causes the column of push squares to be on the right side of the pyramid instead of the left. This allows for a slightly simpler OR gadget than if we were to use the usual push column on the left side of the pyramids. By inspection, we obtain the following lemma. 
 
 **Lemma 11.** _In a positive OR gadget, at least one of the connected auxiliary variables is plus. In a negative OR gadget, at least one of the connected auxiliary variables is minus._ 
 
-11 
+**Figure 10:** The positive OR gadget. In this figure, all the orange push columns are pushed up, meaning that we can’t pack all the squares into the OR gadget. The labels $y_i, y_j, y_k$ refer to Equation (1). [View the diagram (PDF, p. 14).](../downloads/abrahamsen-stade-2024.pdf#page=14)
 
+**Figure 11:** The figure shows how the auxiliary variable components are connected to the OR gadget using pyramids. Here is shown the situation where all variables are minus, so there is no perfect packing and the top left square sticks out. [View the diagram (PDF, p. 14).](../downloads/abrahamsen-stade-2024.pdf#page=14)
 
+**Figure 12:** Satisfying assignments of the OR gadget. As in Figure 10, we say that the push columns represent values $y_i, y_j, y_k$ from left to right, respectively. The top two and the bottom left diagrams show packings where the push squares of $y_i, y_j, y_k$ are down, respectively. To the bottom right is shown the situation that all three are down, which creates some slack so that there are more perfect packings. [View the diagram (PDF, p. 14).](../downloads/abrahamsen-stade-2024.pdf#page=14)
 
+**Figure 13:** The negative OR gadget. In this figure, all the orange push columns are pushed down, meaning that we can’t pack all the squares into the OR gadget. The labels $y_i, y_j, y_k$ refer to Equation (2). [View the diagram (PDF, p. 15).](../downloads/abrahamsen-stade-2024.pdf#page=15)
 
-
-<!-- Start of picture text -->
-Pyramid from $y_i$ Pyramid from $y_j$ Pyramid from $y_k$<br><!-- End of picture text -->
-
-Figure 10: The positive OR gadget. In this figure, all the orange push columns are pushed up, meaning that we can’t pack all the squares into the OR gadget. The labels $y_i, y_j, y_k$ refer to Equation (1). 
-
-
-
-<!-- Start of picture text -->
-Pyramid from $y_i$<br>Pyramid from $y_j$<br>Pyramid from $y_k$<br>$y_k$<br>$y_j$<br>$y_i$<br><!-- End of picture text -->
-
-Figure 11: The figure shows how the auxiliary variable components are connected to the OR gadget using pyramids. Here is shown the situation where all variables are minus, so there is no perfect packing and the top left square sticks out. 
-
-
-
-
-
-
-
-
-
-Figure 12: Satisfying assignments of the OR gadget. As in Figure 10, we say that the push columns represent values $y_i, y_j, y_k$ from left to right, respectively. The top two and the bottom left diagrams show packings where the push squares of $y_i, y_j, y_k$ are down, respectively. To the bottom right is shown the situation that all three are down, which creates some slack so that there are more perfect packings. 
-
-12 
-
-
-
-<!-- Start of picture text -->
-Pyramid to $y_i$  Pyramid to $y_j$ Pyramid to $y_k$<br><!-- End of picture text -->
-
-
-
-Figure 13: The negative OR gadget. In this figure, all the orange push columns are pushed down, meaning that we can’t pack all the squares into the OR gadget. The labels $y_i, y_j, y_k$ refer to Equation (2). 
-
-
-
-<!-- Start of picture text -->
-$y_k$<br>$y_j$<br>$y_i$<br><!-- End of picture text -->
-
-Figure 14: The figure shows how the variable components are connected to the negative OR gadget. Here is shown the situation where all variables are plus, so there is no perfect packing, and the bottom left square sticks out. 
+**Figure 14:** The figure shows how the variable components are connected to the negative OR gadget. Here is shown the situation where all variables are plus, so there is no perfect packing, and the bottom left square sticks out. [View the diagram (PDF, p. 15).](../downloads/abrahamsen-stade-2024.pdf#page=15)
 
 ### **2.8 Verifying the construction** 
 
@@ -410,8 +293,6 @@ _Proof._ By Lemma 8, each variable component encodes a value of one of the varia
 It is clear that our polygon can be constructed in polynomial time from the instance $\Phi$. We have thus proven the following theorem. 
 
 **Theorem 13.** _The problem_ $2 \times 2$-Square-Packing _is NP-hard, even for simple grid polygons._ 
-
-13 
 
 ## **3 Covering and partitioning** 
 
@@ -431,35 +312,25 @@ We construct a polygon $P$ based on a Monotone-Planar-3SAT instance $\Phi$ so th
 
 Analogous to Lemma 6, we have the following. 
 
-**Lemma 15.** _If an orthogonal polygon with integer coordinates has a square cover of size $k$, then such a square cover can be chosen where the coordinates of the vertices of all the squares are integers._ This again allows us to consider only four possible squares for each reference center, with the reference center in each of the quadrants. 
+**Lemma 15.** _If an orthogonal polygon with integer coordinates has a square cover of size $k$, then such a square cover can be chosen where the coordinates of the vertices of all the squares are integers._
+
+This again allows us to consider only four possible squares for each reference center, with the reference center in each of the quadrants. 
 
 ### **3.1 Components and gadgets** 
 
 Due to the similarity with our construction for packing, we shall give a less detailed description of the construction. Figure 15 shows the variable component, and we have the following analogue of Lemma 8. 
 
-14 
+**Figure 15:** Variable component for the covering problem. [View the diagram (PDF, p. 17).](../downloads/abrahamsen-stade-2024.pdf#page=17)
 
-
-
-
-
-
-
-Figure 15: Variable component for the covering problem. 
-
-
-
-
-
-Figure 16: The PULL-UP-IF-PLUS gadget. The gadget pulls up a pyramid of squares, and the orange pull square is also pulled up in the plus position. 
+**Figure 16:** The PULL-UP-IF-PLUS gadget. The gadget pulls up a pyramid of squares, and the orange pull square is also pulled up in the plus position. [View the diagram (PDF, p. 17).](../downloads/abrahamsen-stade-2024.pdf#page=17)
 
 **Lemma 16.** _In any perfect cover, one row of the variable component pulls left and the other pulls right._ 
 
 _Proof._ One row must pull left to cover the left end of the variable component, and the other must pull right to cover the right end. 
 
-Figures 16 and 17 shows the PULL-UP-IF-PLUS and PULL-DOWN-IF-MINUS gadgets. Instead of a column of push squares, we now have a column of _pull squares_ . Note that a PULL-UPIF-PLUS gadget on a variable $y$ forces a pyramid of squares to pull up. Similarly as in packing, we can make a matching PULL-DOWN-IF-MINUS gadget on a variable $x$ below $y$, resulting in a dependency between the variables. We have the following analogy of Lemma 10. 
+Figures 16 and 17 shows the PULL-UP-IF-PLUS and PULL-DOWN-IF-MINUS gadgets. Instead of a column of push squares, we now have a column of _pull squares_ . Note that a PULL-UP-IF-PLUS gadget on a variable $y$ forces a pyramid of squares to pull up. Similarly as in packing, we can make a matching PULL-DOWN-IF-MINUS gadget on a variable $x$ below $y$, resulting in a dependency between the variables. We have the following analogy of Lemma 10. 
 
-**Lemma 17.** _In any perfect covering, the following holds. If a variable is plus, the pull square of any PULL-UP-IF-PLUS gadget pulls up. If a variable is minus, the pull square of any PULL-DOWNIF-MINUS gadget is pulls down. As a consequence, combining a PULL-UP-IF-PLUS gadget and a PULL-DOWN-IF-MINUS gadget, we can realize the implications $y \implies x$ and $\neg y \implies \neg x$, i.e., ensure that the values of variables encoded by the packing satisfy the implications._ 
+**Lemma 17.** _In any perfect covering, the following holds. If a variable is plus, the pull square of any PULL-UP-IF-PLUS gadget pulls up. If a variable is minus, the pull square of any PULL-DOWN-IF-MINUS gadget is pulls down. As a consequence, combining a PULL-UP-IF-PLUS gadget and a PULL-DOWN-IF-MINUS gadget, we can realize the implications $y \implies x$ and $\neg y \implies \neg x$, i.e., ensure that the values of variables encoded by the packing satisfy the implications._ 
 
 Figures 18 and 19 show the positive OR gadget, and Figures 20 and 21 show the negative. By inspection, we get the following lemma, identical to Lemma 11. 
 
@@ -467,39 +338,15 @@ Figures 18 and 19 show the positive OR gadget, and Figures 20 and 21 show the ne
 
 We conclude with the following analogue of Lemma 12 (which has an analogous proof). 
 
+**Figure 17:** The PULL-DOWN-IF-MINUS gadget. The gadget allows some number of squares to pull up and requires the orange pull square to stay down in the minus position. [View the diagram (PDF, p. 17).](../downloads/abrahamsen-stade-2024.pdf#page=17)
 
+**Figure 18:** The positive OR gadget. Top left: The situation where all the orange pull squares pull down, and a unit square at the top is not covered. The other three: If one pull square goes up, everything can be covered. [View the diagram (PDF, p. 18).](../downloads/abrahamsen-stade-2024.pdf#page=18)
 
+**Figure 19:** Connecting the auxiliary variables to the positive OR gadget using PULL-DOWN-IF-MINUS gadgets. We have made a slight adjustment to the PULL-DOWN-IF-MINUS gadgets as compared to Figure 17 in order to have the pull squares in the right side of the pyramids. [View the diagram (PDF, p. 18).](../downloads/abrahamsen-stade-2024.pdf#page=18)
 
+**Figure 20:** The negative OR gadget. We show the situation where all the orange pull squares pull up, and a unit square at the bottom is not covered. If one pull square goes down, everything can be covered. [View the diagram (PDF, p. 18).](../downloads/abrahamsen-stade-2024.pdf#page=18)
 
-Figure 17: The PULL-DOWN-IF-MINUS gadget. The gadget allows some number of squares to pull up and requires the orange pull square to stay down in the minus position. 
-
-15 
-
-
-
-
-
-Figure 18: The positive OR gadget. Top left: The situation where all the orange pull squares pull down, and a unit square at the top is not covered. The other three: If one pull square goes up, everything can be covered. 
-
-
-
-<!-- Start of picture text -->
-yk<br>yj<br>yi<br><!-- End of picture text -->
-
-Figure 19: Connecting the auxiliary variables to the positive OR gadget using PULL-DOWN-IFMINUS gadgets. We have made a slight adjustment to the PULL-DOWN-IF-MINUS gadgets as compared to Figure 17 in order to have the pull squares in the right side of the pyramids. 
-
-
-
-Figure 20: The negative OR gadget. We show the situation where all the orange pull squares pull up, and a unit square at the bottom is not covered. If one pull square goes down, everything can be covered. 
-
-16 
-
-
-
-<!-- Start of picture text -->
-yk<br>yj<br>yi<br><!-- End of picture text -->
-
-Figure 21: Connecting the auxiliary variables to the negative OR gadget using PULL-UP-IF-PLUS gadgets. 
+**Figure 21:** Connecting the auxiliary variables to the negative OR gadget using PULL-UP-IF-PLUS gadgets. [View the diagram (PDF, p. 19).](../downloads/abrahamsen-stade-2024.pdf#page=19)
 
 **Lemma 19.** _If there exists a perfect covering of $P$, then $\Phi$ is satisfied._ 
 
@@ -507,7 +354,7 @@ We have then shown Theorem 2. Note that if a perfect cover exists, then so does 
 
 ## **4 Packing in orthogonally convex polygons** 
 
-Finally, we show that $2 \times 2$-Square-Packing for orthogonally convex grid polygons is also NPhard. This is a strictly stronger result than Theorem 13, but the proof is so much more difficult that it seems better to give it separately. Recall that a polygon $P$ is _orthogonally convex_ if for any horizontal or vertical line $\ell$, the intersection $P \cap \ell$ is connected. 
+Finally, we show that $2 \times 2$-Square-Packing for orthogonally convex grid polygons is also NP-hard. This is a strictly stronger result than Theorem 13, but the proof is so much more difficult that it seems better to give it separately. Recall that a polygon $P$ is _orthogonally convex_ if for any horizontal or vertical line $\ell$, the intersection $P \cap \ell$ is connected. 
 
 ### **4.1 Overview of the construction** 
 
@@ -515,11 +362,7 @@ The idea is again to convert the incidence graph of an instance of 3SAT into a s
 
 In Section 4.5, we show that we can make variable components in the orthogonally convex setting. The idea is to form parts of the “boundary” of the gadgets with squares in the packing rather than with the actual polygon boundary. Unsurprisingly, this make the verification of the variable components much more complicated. One key idea is that we can add redundancy to the constraints that form the variable component, so that one variable component can be verified without having already verified all the others. 
 
-Instead of having isolated OR gadgets, we use much more complicated _clause components_ . The clause components are described in Section 4.7. The clause components create a set of constraints 
-
-17 
-
-that are not obviously equivalent to the 3SAT instance. Verifying the clause gadgets requires a detailed algebraic analysis, which is given in Section 4.8. 
+Instead of having isolated OR gadgets, we use much more complicated _clause components_ . The clause components are described in Section 4.7. The clause components create a set of constraints that are not obviously equivalent to the 3SAT instance. Verifying the clause gadgets requires a detailed algebraic analysis, which is given in Section 4.8. 
 
 There will be two sections of border between the clause and variable components. These are formed by static rows that we call the _membrane rows_ . The clause and variable components are each verified independently, with any interactions controlled by some simple properties of squares in the membrane rows. 
 
@@ -537,34 +380,27 @@ An instance of Clover-3SAT consists of the following:
 
 - Edges $(x_1, c_1)$, $(c_1, x_n)$, $(x_n, d_1)$, and $(d_1, x_1)$. 
 
-#### **Question:** Is $\Phi$ satisfiable? 
+**Question:** Is $\Phi$ satisfiable? 
 
 We say that an instance of Clover-3SAT is _monotone_ if each clause $c_i$ is positive (i.e., it is of form $x_j \vee x_k \vee x_\ell$) and each clause $d_i$ is negative (i.e., it is of form $\neg x_j \vee \neg x_k \vee \neg v_\ell$). The problem Monotone-Clover-3SAT is Clover-3SAT restricted to monotone instances. 
 
 Clover-3SAT is a restriction of (variable-linked) Planar-3SAT with an additional constraint that it should also be possible to link some of the clauses as well. Figure 22 shows an example of the “clover” graph that appears in this definition. 
 
-In 2018, Pilz [49] showed that Planar-3SAT remains hard if there is a cycle that passes through all the clause vertices and then all of the variable vertices. This is called Variable-ClauseLinked-Planar-3SAT. The reduction is from Planar-3SAT, but unlike either variable-linked or clause-linked Planar-3SAT, the reduction requires modifying the original graph. By reducing instead from Monotone-Planar-3SAT, Pilz also shows that this problem is hard when all the edges inside the cycle represent positive literals and all the edges outside the cycle represent negative literals. 
+In 2018, Pilz [49] showed that Planar-3SAT remains hard if there is a cycle that passes through all the clause vertices and then all of the variable vertices. This is called Variable-Clause-Linked-Planar-3SAT. The reduction is from Planar-3SAT, but unlike either variable-linked or clause-linked Planar-3SAT, the reduction requires modifying the original graph. By reducing instead from Monotone-Planar-3SAT, Pilz also shows that this problem is hard when all the edges inside the cycle represent positive literals and all the edges outside the cycle represent negative literals. 
 
 Variable-Clause-Linked-Planar-3SAT is closely related to Clover-3SAT, and the proof of hardness follows Pilz [49] closely. In particular, both proofs use something like what we call Layered-Planar-3SAT as an intermediate step. An instance of Layered-Planar-3SAT consists of: 
 
 **Input:** An instance $\Phi$ of 3SAT and a planar, integer-coordinate straight line embedding of the incidence graph $G$ where the variable vertices have even $y$ coordinates, the clause vertices have odd $y$ coordinates, and each edge is between a pair of vertices whose $y$-coordinates differ by 1. 
 
-18 
+**Question:** Is $\Phi$ satisfiable? 
 
+**Figure 22:** A graph coming from an instance of Clover-3SAT. The 4 outer edges $(x_1, c_1)$, $(c_1, x_n)$, $(x_n, d_1)$, and $(d_1, x_1)$ exist to prevent constraint edges from wrapping around to the other side of the variables. When drawn like this, all the edges for $c$ constraints hit the variable vertices from above and all the edges for $d$ constraints hit variable vertices from below. [View the diagram (PDF, p. 21).](../downloads/abrahamsen-stade-2024.pdf#page=21)
 
-
-<!-- Start of picture text -->
-$c_1$<br>$x_1$ $x_n$<br>$d_1$<br><!-- End of picture text -->
-
-Figure 22: A graph coming from an instance of Clover-3SAT. The 4 outer edges $(x_1, c_1)$, $(c_1, x_n)$, $(x_n, d_1)$, and $(d_1, x_1)$ exist to prevent constraint edges from wrapping around to the other side of the variables. When drawn like this, all the edges for $c$ constraints hit the variable vertices from above and all the edges for $d$ constraints hit variable vertices from below. 
-
-#### **Question:** Is $\Phi$ satisfiable? 
-
-We call a problem instance _monotone_ if clause vertices with $y$ coordinates of the form $4k + 1$ are positive and clause vertices with $y$ coordinates of the form $4k - 1$ are negative. The problem Layered-Planar-3SAT restricted to monotone instances is called Monotone-LayeredPlanar-3SAT. 
+We call a problem instance _monotone_ if clause vertices with $y$ coordinates of the form $4k + 1$ are positive and clause vertices with $y$ coordinates of the form $4k - 1$ are negative. The problem Layered-Planar-3SAT restricted to monotone instances is called Monotone-Layered-Planar-3SAT. 
 
 **Lemma 20.** Monotone-Layered-Planar-3SAT _is NP-hard._ 
 
-_Proof._ Our proof closely follows Pilz [49]. We reduce from an instance $\Phi$ of Monotone-Planar3SAT. 
+_Proof._ Our proof closely follows Pilz [49]. We reduce from an instance $\Phi$ of Monotone-Planar-3SAT. 
 
 We draw the incidence graph with integer-coordinate vertices, straight edges, and no crossings. Since we have a cycle through the variable-vertices, we can draw this graph in such a way that the variable-vertices all have $y$-coordinate 0, the clause vertices have odd $y$-coordinates, and the positive clauses have positive $y$-coordinates while the negative clauses have negative $y$-coordinates. The size of the coordinates needed is no more than polynomial in the size of $\Phi$. 
 
@@ -578,14 +414,7 @@ Next, we split each edge whenever it crosses a layer. The process of splitting e
 
 - If instead the variable vertex has coordinate $i \equiv 2 \pmod 4$, then the sign of that variable in that clause is $\mathrm{sign}(i - k)$ 
 
-19 
-
-
-
-<!-- Start of picture text -->
-$u_1 \vee \neg u_2$ $\neg v_1 \vee v_2$<br>$y = 5$ 5<br>$v_2$ 4<br>$\neg u_2 \vee \neg v_2$ 3<br>$u_2$<br>$y = 2$ $v_1$ $u_2$ 2<br>$u_1 \vee v_2$ $u_2 \vee w_2$ 1<br>$u_1$<br>$y = 0$ $u_1$ 0<br>$w_2$<br>$-1$<br>$\neg u_1 \vee \neg w_1$<br>$-2$<br>$w_1$<br>$y = -3$ $-3$<br>$w_1 \vee \neg w_2$<br>$\neg u_1 \vee u_2$<br><!-- End of picture text -->
-
-Figure 23: Splitting edges to form a layered planar graph. For our purposes, a 3SAT instance has _at most_ 3 vertices per clause. 
+**Figure 23:** Splitting edges to form a layered planar graph. For our purposes, a 3SAT instance has _at most_ 3 vertices per clause. [View the diagram (PDF, p. 22).](../downloads/abrahamsen-stade-2024.pdf#page=22)
 
 This is satisfied by the initial configuration since the variable-vertices initially all have $y$-coordinate 0. Whenever an edge spans a $y$-distance of more than 1, we can split this edge in a way that preserves this property. Figure 23 shows the 4 cases that can occur depending on the $y$-coordinate of the variable vertex and whether the clause vertex is above or below it. For example, suppose a variable-vertex $v$ has $y$-coordinate $i \equiv 0 \pmod 4$ and is connected to a clause-vertex $c$ with $y$-coordinate $k > i + 1$. We add a variable $u$ with $y$-coordinate $i + 2$ and a clause $d = (v \vee u)$ with $y$ coordinate $i + 1$. Replace $v$ in $c$ with $\neg u$. The new clause $d$ is equivalent to $\neg u \implies v$, so the new 3SAT instance is equivalent, and we have reduced the the total number of times that an edges crosses a layer by 2. The other cases are shown in Figure 23. 
 
@@ -595,23 +424,13 @@ These layered planar graphs appear in the proof by Pilz [49]. They are then wrap
 
 **Lemma 21.** Monotone-Clover-3SAT _is NP-hard._ 
 
-_Proof._ We can add edges to a layered planar graph from an instance of Monotone-LayeredPlanar-3SAT to turn it into a clover graph, as shown in Figure 24 (left). This can be illustrated more clearly by wrapping the layered planar graph graph around in a spiral, as shown in Figure 24 (right). One of the clause paths goes through all the positive clause vertices and the other goes through the negative clause vertices, so this produces a monotone instance of Clover-3SAT. 
+_Proof._ We can add edges to a layered planar graph from an instance of Monotone-Layered-Planar-3SAT to turn it into a clover graph, as shown in Figure 24 (left). This can be illustrated more clearly by wrapping the layered planar graph graph around in a spiral, as shown in Figure 24 (right). One of the clause paths goes through all the positive clause vertices and the other goes through the negative clause vertices, so this produces a monotone instance of Clover-3SAT. 
 
 The planar embedding of the clover graph does not appear directly in our construction. Instead, we use the embedding to extract some combinatorial structure from the graph. The conversion from a clover graph to a schematic for the orthogonally convex construction is shown in Figure 25. Lemma 22 describes the properties that we will need. 
 
-20 
+**Figure 24:** Left: If we order the vertices appropriately, then we can add the extra edges to convert a layered-planar graph into a clover graph. The positive clauses are shown in red and the negative clauses are shown in purple. Right: The same graph can be put into a form like that in Figure 22. The layered planar graph is wrapped around the center in a spiral. [View the diagram (PDF, p. 23).](../downloads/abrahamsen-stade-2024.pdf#page=23)
 
-
-
-
-
-Figure 24: Left: If we order the vertices appropriately, then we can add the extra edges to convert a layered-planar graph into a clover graph. The positive clauses are shown in red and the negative clauses are shown in purple. Right: The same graph can be put into a form like that in Figure 22. The layered planar graph is wrapped around the center in a spiral. 
-
-
-
-Figure 25: Converting a clover graph to a schematic. Note that the order of the clauses is reversed— the innermost clauses in the graph become the outermost clauses in the schematic. 
-
-21 
+**Figure 25:** Converting a clover graph to a schematic. Note that the order of the clauses is reversed— the innermost clauses in the graph become the outermost clauses in the schematic. [View the diagram (PDF, p. 23).](../downloads/abrahamsen-stade-2024.pdf#page=23)
 
 **Lemma 22.** _An instance of_ Clover-3SAT _can be used to produce a schematic that is orthogonally convex in the following sense: each $y$-coordinate represents a variable or clause row, with variable rows in the middle and sets of clause rows above and below the variable rows. Each of the upper clause rows covers a strictly smaller range of $x$-coordinates than the row below it, and each of the lower clause rows covers a strictly smaller set of $x$-coordinates than the row above it. If a variable row spans the $x$ coordinates $[a, b]$, then the one above it spans $x$-coordinates $[c, d]$ with $a < c < b < d$._ 
 
@@ -635,20 +454,17 @@ Let $I_i = [a, b]$. Say the variables in $c_i$ are $x_j, x_k$ and $x_\ell$ with 
 [a, j], [j, k], [k, \ell], [\ell, b]
 ```
 
-So define $R_{i+1}$ to be the region that contains $c_{i+1}$ and define $I_{i+1}$ to be the corresponding interval. The indices $i$, $j$, and $k$ are all either outside of $I_{i+1}$ or an endpoint of it. Since the edges corresponding to the literals in $c_{i+1}$ can’t cross boundary of the region $R_{i+1}$, we see that $I_{i+1}$ contains the indices of all the variables that appear in $c_{i+1}$. These intervals can then be used to draw the clauses $c_i$ in our schematic. Since the intervals are nested, this schematic is orthogonally convex. We can do the same thing for the $d_i$ (only upside-down). 
+So define $R_{i+1}$ to be the region that contains $c_{i+1}$ and define $I_{i+1}$ to be the corresponding interval. The indices $i$, $j$, and $k$ are all either outside of $I_{i+1}$ or an endpoint of it. Since the edges corresponding to the literals in $c_{i+1}$ can’t cross boundary of the region $R_{i+1}$, we see that $I_{i+1}$ contains the indices of all the variables that appear in $c_{i+1}$.
+
+These intervals can then be used to draw the clauses $c_i$ in our schematic. Since the intervals are nested, this schematic is orthogonally convex. We can do the same thing for the $d_i$ (only upside-down). 
 
 In a monotone instance, the $c_i$ are positive and the $d_i$ are negative, so all the upper clauses are positive and all the lower clauses are negative. 
 
-22 
+**Figure 26:** The region $R_i$ is separated into 4 smaller regions, one of which is $R_{i+1}$. [View the diagram (PDF, p. 25).](../downloads/abrahamsen-stade-2024.pdf#page=25)
 
+For the last part, note that all the literal columns for clause $c_i$ pass through the row for clause $c_j$ for each $j < i$ and don’t intersect the row for clause $c_k$ when $k$ is $> i$ (similarly for the $d_i$). Also, a literal column for a clause $c_i$ can never intersect the row for a clause $d_k$ (and visa-versa).
 
-
-<!-- Start of picture text -->
-$c_{i-1}$<br>$R_i$<br>$c_i$<br>1<br>4<br>$c_{i+1}$<br>2 $3 = R_{i+1}$<br>$x_a$ $x_j$ $x_k$ $x_\ell$ $x_b$<br><!-- End of picture text -->
-
-Figure 26: The region $R_i$ is separated into 4 smaller regions, one of which is $R_{i+1}$. 
-
-For the last part, note that all the literal columns for clause $c_i$ pass through the row for clause $c_j$ for each $j < i$ and don’t intersect the row for clause $c_k$ when $k$ is $> i$ (similarly for the $d_i$). Also, a literal column for a clause $c_i$ can never intersect the row for a clause $d_k$ (and visa-versa). In analogy with the common definition of Monotone-Planar-3SAT, we have so far put the positive clauses above the variables and the negative clauses below the variables. This is of course arbitrary. There are several choices like this involved in our construction, and it seems to us that it is not possible to simultaneously take the most natural choices for all of them. For this reason, we will actually use rotated schematics where the negative clauses are above the variables and the negative clauses are below. 
+In analogy with the common definition of Monotone-Planar-3SAT, we have so far put the positive clauses above the variables and the negative clauses below the variables. This is of course arbitrary. There are several choices like this involved in our construction, and it seems to us that it is not possible to simultaneously take the most natural choices for all of them. For this reason, we will actually use rotated schematics where the negative clauses are above the variables and the negative clauses are below. 
 
 ### **4.3 Stacks, reference centers, and crossings** 
 
@@ -662,21 +478,9 @@ The color scheme used in Section 2 is not so useful for the orthogonally convex 
 
 Next, we introduce the concept of a _stack_ . This is a generalization of the pyramids from Section 2. 
 
-A _vertical stack_ is a maximal connected set of squares that share their vertical alignment. A _horizontal stack_ is a maximal connected set of squares sharing horizontal alignment. We say that 
+A _vertical stack_ is a maximal connected set of squares that share their vertical alignment. A _horizontal stack_ is a maximal connected set of squares sharing horizontal alignment. We say that a vertical stack _pushes up_ if all the squares in the stack push up, and _pushes down_ otherwise. Similarly, a horizontal stack _pushes right_ if all the squares push right, and _pushes left_ otherwise. 
 
-23 
-
-
-
-
-
-
-
-
-
-Figure 27: A vertical stack crossing a horizontal stack. First: The horizontal stack maintains the same width, while the vertical stack increases in width by 2 squares. Second: The vertical stack maintains the same width while the horizontal stack grows by 2 squares. Third: Each stack grows by 1 square. Fourth: A different way for each stack to grow by 1 square. 
-
-a vertical stack _pushes up_ if all the squares in the stack push up, and _pushes down_ otherwise. Similarly, a horizontal stack _pushes right_ if all the squares push right, and _pushes left_ otherwise. 
+**Figure 27:** A vertical stack crossing a horizontal stack. First: The horizontal stack maintains the same width, while the vertical stack increases in width by 2 squares. Second: The vertical stack maintains the same width while the horizontal stack grows by 2 squares. Third: Each stack grows by 1 square. Fourth: A different way for each stack to grow by 1 square. [View the diagram (PDF, p. 26).](../downloads/abrahamsen-stade-2024.pdf#page=26)
 
 Most of our reference centers are of the form $[2k - 1, 2k] \times [2\ell - 1, 2\ell]$, so in general a vertical stack always pushes either up or down and a horizontal stack pushes either right or left. However, each variable component will require exactly one row where the reference centers are of the form $[2k, 2k + 1] \times [2\ell - 1, 2\ell]$. A horizontal stack containing these squares can’t be given a left/right direction in general. We will avoid discussing horizontal stacks that contain these squares. 
 
@@ -700,15 +504,6 @@ _Then it holds that_
 
 1. $\langle 1, y_0 + 1 \rangle, \ldots, \langle x_0, y_0 + 1 \rangle$ _push up,_ 
 
-24 
-
-
-
-<!-- Start of picture text -->
-$x_0$ $x_0 + 1$ $x_0$ $x_0 + 1$ 0 1 0 1<br>$y_0 + 1$ $y_0 + 1$ 1 1<br>$y_0$ $y_0$ 0 0<br><!-- End of picture text -->
-
-Figure 28: Two left figures: The square $\langle x_0 + 1, y_0 + 1 \rangle$ pushes up or right. Two right figures: The square $\langle 0, 1 \rangle$ pushes up or $\langle 1, 0 \rangle$ pushes right. 
-
 2. $\langle x_0 + 1, 1 \rangle, \ldots, \langle x_0 + 1, y_0 \rangle$ _push right,_ 
 
 3. $\langle x_0 + 1, y_0 + 1 \rangle$ _pushes up or right, and_ 
@@ -716,6 +511,8 @@ Figure 28: Two left figures: The square $\langle x_0 + 1, y_0 + 1 \rangle$ pushe
 4. $\langle 0, y_0 + 1 \rangle$ _pushes up or_ $\langle x_0 + 1, 0 \rangle$ _pushes right._ 
 
 _In conclusion, when a vertical stack crosses a horizontal stack in a region where the reference centers all have the form $[2k - 1, 2k] \times [2\ell - 1, 2\ell]$, then the two stacks together grow in width by at least $2$ squares._ 
+
+**Figure 28:** Two left figures: The square $\langle x_0 + 1, y_0 + 1 \rangle$ pushes up or right. Two right figures: The square $\langle 0, 1 \rangle$ pushes up or $\langle 1, 0 \rangle$ pushes right. [View the diagram (PDF, p. 27).](../downloads/abrahamsen-stade-2024.pdf#page=27)
 
 _Proof._ Statements 1 and 2 follow since the reference centers form a regular grid. Figure 28 (left) shows that 3 follows. Figure 28 (right) shows that $\langle 0, 1 \rangle$ pushes up or $\langle 1, 0 \rangle$ pushes right. Then statement 4 also follows. 
 
@@ -727,14 +524,7 @@ We are given a formula $\Phi$ of Monotone-Clover-3SAT and describe how to constr
 
 The variable components are separated from the clause components by two special static rows that we call the _membrane rows_ . There are two such rows, one above and one below the variable components. These separate the variable components from the upper and lower clause components, respectively. All the dependence of the variable components on the clause components is through these rows—the variable components don’t (directly) depend on squares in the clause components. 
 
-25 
-
-
-
-<!-- Start of picture text -->
-Horizontal Static Shifts<br>Variable Membrane Squares<br>Variable Components<br>Connecting Membrane<br>Clause Membrane Squares<br>Squares<br>Vertical Static Shifts<br>Clause Components<br><!-- End of picture text -->
-
-Figure 29: Logical dependence of the different parts of the construction. 
+**Figure 29:** Logical dependence of the different parts of the construction. [View the diagram (PDF, p. 28).](../downloads/abrahamsen-stade-2024.pdf#page=28)
 
 Similarly, all the dependence of the clause components on the variable components is through these rows. We say a square in one of the membrane rows _pushes in_ if it pushes towards the variable components—that is, it is in the upper membrane row and pushes down or is in the lower membrane row and pushes up. A square in one of the membrane rows _pushes out_ if it does the opposite—that is, it pushes _away_ from the variable components. We divide the squares in the membrane rows into 4 types depending on the role that they play in the construction. Each square in either of the two membrane rows will be one of these types. The types are as follows: 
 
@@ -744,20 +534,13 @@ Similarly, all the dependence of the clause components on the variable component
 
 - _Clause membrane squares_ are squares that need to push out in order to verify the clause components. 
 
-- _Spacing membrane squares_ are all the other squares on the membrane rows. We will describe 
+- _Spacing membrane squares_ are all the other squares on the membrane rows. We will describe satisfying assignments that have these pushing out, but the verification doesn’t depend on this; there could be some slack in these squares. 
 
-26 
+**Figure 30:** Left: The variable membrane squares always push down. Right: Each block of variable membrane squares has clause membrane squares on either side, creating a vertical static shift on each side. [View the diagram (PDF, p. 29).](../downloads/abrahamsen-stade-2024.pdf#page=29)
 
+The variable membrane squares and connecting membrane squares are organized into _blocks_ , each containing some number of adjacent squares. The clause membrane squares are exactly the squares directly adjacent to a block of variable membrane or connecting membrane squares.
 
-
-<!-- Start of picture text -->
-Vertical static shift<br>Static shift<br>Membrane row<br>Variable membrane squares Clause membrane squares<br><!-- End of picture text -->
-
-Figure 30: Left: The variable membrane squares always push down. Right: Each block of variable membrane squares has clause membrane squares on either side, creating a vertical static shift on each side. 
-
-satisfying assignments that have these pushing out, but the verification doesn’t depend on this; there could be some slack in these squares. 
-
-The variable membrane squares and connecting membrane squares are organized into _blocks_ , each containing some number of adjacent squares. The clause membrane squares are exactly the squares directly adjacent to a block of variable membrane or connecting membrane squares. We will verify the variable components first, then verify the clause components (see Figure 29). In particular, we will only know that the clause membrane squares push out _after_ verifying the variable components. However, we can show that the variable membrane squares push in already. Each block of variable membrane squares is part of a vertical stack created in a clause component above or below the variable components. An edge of the polygon pushes a square in, which creates the stack. By Lemma 24, the vertical stack grows each time it passes through a static shift. By the time the stack reaches the membrane row, it has grown to the full width of the block of variable membrane squares, and so all those squares push in. Figure 30 (left) shows a simplified example of this. In order to be able to make this construction, we just need to make sure that each block of variable membrane squares has a number of squares equal to 1 plus the number of static shifts above it (or below it for a block of variable membrane squares in the lower membrane row). 
+We will verify the variable components first, then verify the clause components (see Figure 29). In particular, we will only know that the clause membrane squares push out _after_ verifying the variable components. However, we can show that the variable membrane squares push in already. Each block of variable membrane squares is part of a vertical stack created in a clause component above or below the variable components. An edge of the polygon pushes a square in, which creates the stack. By Lemma 24, the vertical stack grows each time it passes through a static shift. By the time the stack reaches the membrane row, it has grown to the full width of the block of variable membrane squares, and so all those squares push in. Figure 30 (left) shows a simplified example of this. In order to be able to make this construction, we just need to make sure that each block of variable membrane squares has a number of squares equal to 1 plus the number of static shifts above it (or below it for a block of variable membrane squares in the lower membrane row). 
 
 **Lemma 26.** _The variable membrane squares push in._ 
 
@@ -765,19 +548,9 @@ _Proof._ Each block of variable membrane squares in the upper membrane row has w
 
 Each block of variable membrane squares will have a pair of clause membrane squares on either side. This creates _vertical static shifts_ between the stack containing the variable membrane squares and the squares next to it. Figure 30 (right) shows a simplified example of this. 
 
-27 
+**Figure 31:** The variable rows for orthogonally convex polygons. The left figure shows what we call the _minus_ position and the right figure shows what we call the _plus_ position. [View the diagram (PDF, p. 30).](../downloads/abrahamsen-stade-2024.pdf#page=30)
 
-
-
-
-
-Figure 31: The variable rows for orthogonally convex polygons. The left figure shows what we call the _minus_ position and the right figure shows what we call the _plus_ position. 
-
-
-
-
-
-Figure 32: The squares with red reference centers are the _pinch_ squares. These push in to form part of the boundary of the variable rows. 
+**Figure 32:** The squares with red reference centers are the _pinch_ squares. These push in to form part of the boundary of the variable rows. [View the diagram (PDF, p. 30).](../downloads/abrahamsen-stade-2024.pdf#page=30)
 
 **Lemma 27.** _If the clause membrane squares push out, then any horizontal stack that doesn’t contain a static row and passes through a vertical static shift grows in size by $1$ square._ 
 
@@ -793,19 +566,9 @@ The variable components used in Section 2 involved two rows that always have alt
 
 Similarly as in Section 2, we designate the two positions of the variable components by plus and minus, with plus corresponding to squares pushing in a counterclockwise direction around the gadget and minus corresponding to squares pushing in a clockwise direction. The advantage of this type of variable component is that parts of its boundary can be formed by other static squares, allowing the boundary of the polygon to remain orthogonally convex. This is shown in Figure 32. In order for these to be the only packings of the gadget, we need to know that the two marked squares push in. We call these the _pinch squares_ . 
 
-28 
+**Figure 33:** A stack grows once when it passes through the variable component. [View the diagram (PDF, p. 31).](../downloads/abrahamsen-stade-2024.pdf#page=31)
 
-
-
-
-
-Figure 33: A stack grows once when it passes through the variable component. 
-
-
-
-
-
-Figure 34: The blocks of pinch squares can be arbitrarily wide, and we can ensure that the squares adjacent to each block of pinch squares push out. 
+**Figure 34:** The blocks of pinch squares can be arbitrarily wide, and we can ensure that the squares adjacent to each block of pinch squares push out. [View the diagram (PDF, p. 31).](../downloads/abrahamsen-stade-2024.pdf#page=31)
 
 The static rows above and below the variable component have different horizontal alignments, with the upper static rows pushing right and the lower static rows pushing left. As long as the pinch squares push in, the variable component will always be aligned with either the top or bottom row of static squares, so a stack passing through it always grows once, see Figure 33. 
 
@@ -815,19 +578,11 @@ The width of a block of pinch squares depends on the number of static shifts and
 
 A few rows immediately above and below the variable rows in a variable component are _helper rows_ , and these will be necessary for our PUSH gadgets to work. The PUSH gadgets will be described later in Section 4.5.2. The _upper helper rows_ are immediately above the variable rows, and the _lower variable rows_ are immediately below the variable rows. A helper row is a row that is sometimes forced to split, with squares on the left of the split pushing left and squares on the right of the split pushing right. The squares in the helper rows are shown with light blue and dark green reference centers in our diagrams. The helper rows will satisfy the follow: 
 
-- If the variable component is plus, then the squares in the upper helper rows push away from the helper row gadgets. That is, the squares in the upper helper rows that are to the right of the helper row gadgets (dark green reference centers) push right, and the squares in upper 
-
-29 
-
-
-
-
-
-Figure 35: The marked squares are the _helper row creation squares_ . The rows directly above and below the variable rows are the _helper rows_ . We may need a large number of helper rows, but there will always be the same number of upper helper rows as lower helper rows. 
-
-helper rows that are to the left of the helper row gadgets (light blue reference centers) push left. 
+- If the variable component is plus, then the squares in the upper helper rows push away from the helper row gadgets. That is, the squares in the upper helper rows that are to the right of the helper row gadgets (dark green reference centers) push right, and the squares in upper helper rows that are to the left of the helper row gadgets (light blue reference centers) push left. 
 
 - If the variable component is minus, then the squares in the lower helper rows push away from the helper row gadgets. That is, the squares in the lower helper rows that are to the right of the helper row gadgets (light blue reference centers) push right, and the squares in upper lower rows that are to the left of the helper row gadgets (dark green reference centers) push left. 
+
+**Figure 35:** The marked squares are the _helper row creation squares_ . The rows directly above and below the variable rows are the _helper rows_ . We may need a large number of helper rows, but there will always be the same number of upper helper rows as lower helper rows. [View the diagram (PDF, p. 32).](../downloads/abrahamsen-stade-2024.pdf#page=32)
 
 When the helper rows don’t split, they can have slack, but we will carefully design the variable components so that this slack can’t propagate outside the helper rows. Figure 35 shows how the helper rows are created. Each helper row gadget creates both an upper and a lower helper row, so the number of upper helper rows is the same as the number of lower helper rows. 
 
@@ -841,19 +596,9 @@ The variable components should control the blocks of connecting membrane squares
 
 The PUSH-UP-IF-PLUS gadget is shown in Figure 36. If the variable component is plus, then it isn’t possible for _all_ the marked squares to push down. This will prevent all the squares in some block of connecting membrane squares in the upper membrane row from pushing down. 
 
-30 
+**Figure 36:** The PUSH-UP-IF-PLUS gadget. [View the diagram (PDF, p. 33).](../downloads/abrahamsen-stade-2024.pdf#page=33)
 
-
-
-
-
-Figure 36: The PUSH-UP-IF-PLUS gadget. 
-
-
-
-
-
-Figure 37: The PUSH-DOWN-IF-MINUS gadget. 
+**Figure 37:** The PUSH-DOWN-IF-MINUS gadget. [View the diagram (PDF, p. 33).](../downloads/abrahamsen-stade-2024.pdf#page=33)
 
 Since the polygon is orthogonally convex, we need to add an extra row below the gadget for spacing. The part of the PUSH gadget that interacts with the polygon boundary should carry some information about the position of the variable component, so it isn’t possible to use a static row for this purpose. This is why we need the helper rows. There will be helper rows on either side of the variable component, with the lower helper rows “helping” to space out the PUSH-UP gadgets and the upper helper rows helping with the PUSH-DOWN gadgets. The squares in the helper rows are shown with light blue and dark green reference centers in our figures. 
 
@@ -865,51 +610,23 @@ Some of the blocks of connecting membrane squares not supposed to depend on vari
 
 Each variable component relies on some squares from below pushing up and some squares from above pushing down. The main part of the verification of the variable components is done working from top-to-bottom, so a variable component may depend on the variable components above it, but shouldn’t depend on the ones below it. 
 
-The first step in verifying a single variable component is to ensure that the two variable rows 
+The first step in verifying a single variable component is to ensure that the two variable rows share their alignment. This is the only step that requires some squares from below to push up. Observe that there are two “bad” cases where the rows do not share an alignment. These are shown in Figure 39. 
 
-31 
+**Figure 38:** The PUSH-UP-NEVER gadget. The PUSH-DOWN-NEVER gadget is a mirror image. [View the diagram (PDF, p. 34).](../downloads/abrahamsen-stade-2024.pdf#page=34)
 
-
-
-
-
-Figure 38: The PUSH-UP-NEVER gadget. The PUSH-DOWN-NEVER gadget is a mirror image. 
-
-
-
-
-
-Figure 39: The variable rows should always be aligned with each other. These are the two cases that need to be ruled out by some gadgets. 
-
-share their alignment. This is the only step that requires some squares from below to push up. Observe that there are two “bad” cases where the rows do not share an alignment. These are shown in Figure 39. 
+**Figure 39:** The variable rows should always be aligned with each other. These are the two cases that need to be ruled out by some gadgets. [View the diagram (PDF, p. 34).](../downloads/abrahamsen-stade-2024.pdf#page=34)
 
 These are not symmetric. The case where both push right is excluded by knowledge about the squares packed in parts of the polygon above this variable component. The case where both push left must be ruled out by other means. Here, we use that a vertical stack crossing the unaligned variable rows would grow more in width than if the rows were aligned. We utilize this insight by introducing vertical stacks called _redundancy columns_ . This is shown in Figures 40 and 41. 
 
 The redundancy columns need to pass through rows that haven’t been verified yet, so we cannot be sure about its width as it reaches this variable component. We _can_ have a large number of redundancy columns. As long as one of these columns has full width by the time it hits the variable component, it will enforce the necessary constraint. In Section 4.6, we will show that if the total number of redundancy columns is larger than the number of helper rows and variables rows below the variable component, then at least one of the redundancy columns needs to reach full width. 
 
-Figure 42 shows how to pack the polygon when there are multiple redundancy columns and some helper rows. Each redundancy column requires adding an extra static row above the upper 
+Figure 42 shows how to pack the polygon when there are multiple redundancy columns and some helper rows. Each redundancy column requires adding an extra static row above the upper helper rows for spacing reasons. 
 
+**Figure 40:** The dark purple squares are _redundancy squares_ , which create a _redundancy column_ . The redundancy column prevents both variable rows from pushing left. [View the diagram (PDF, p. 34).](../downloads/abrahamsen-stade-2024.pdf#page=34)
 
+**Figure 41:** Even if the left pinch squares fail to push up, at least one of the variable rows still has to push right because of the redundancy column. [View the diagram (PDF, p. 35).](../downloads/abrahamsen-stade-2024.pdf#page=35)
 
-
-
-Figure 40: The dark purple squares are _redundancy squares_ , which create a _redundancy column_ . The redundancy column prevents both variable rows from pushing left. 
-
-32 
-
-
-
-
-
-Figure 41: Even if the left pinch squares fail to push up, at least one of the variable rows still has to push right because of the redundancy column. 
-
-
-
-
-
-Figure 42: Multiple redundancy columns. 
-
-helper rows for spacing reasons. 
+**Figure 42:** Multiple redundancy columns. [View the diagram (PDF, p. 35).](../downloads/abrahamsen-stade-2024.pdf#page=35)
 
 The redundancy columns only help to verify the part of the variable component that is to the right of the redundancy columns. The PUSH-DOWN gadgets will be to the _left_ of the redundancy columns, so we do need to eventually verify that the pinch square on the left pushes up. The left pinch squares are verified _after_ the right parts of _all_ the variable components have been verified. 
 
@@ -919,18 +636,9 @@ In summary, the strategy for verifying the variable components is to first verif
 
 Figure 43 shows a schematic of a full variable component. Each variable component has two variable rows and some number of helper rows above and below the variable rows. These are flanked by static rows. Because the polygon needs to be orthogonally convex, we need several static rows on each side for spacing reasons. The upper static rows are created in order to make redundancy columns, and the lower are created in order to make helper rows. The lower static rows push left and the upper static rows push right. There is a static shift between the lower static rows for this variable component (which push left) and the upper static rows for the next variable component (which push right). 
 
-There are three types of vertical stacks that are used to verify the variable components. These are pinch columns, helper row creators, and redundancy columns. The upper pinch column is always near the right edge of the gadget and the lower pinch column is at the left edge. We place the redundancy columns as far right as possible and place the helper row creators as far left as possible. So all the PUSH-UP columns are between the helper row creators and the upper pinch 
+There are three types of vertical stacks that are used to verify the variable components. These are pinch columns, helper row creators, and redundancy columns. The upper pinch column is always near the right edge of the gadget and the lower pinch column is at the left edge. We place the redundancy columns as far right as possible and place the helper row creators as far left as possible. So all the PUSH-UP columns are between the helper row creators and the upper pinch column, while the PUSH-DOWN columns are between the lower pinch column and the redundancy columns. 
 
-33 
-
-
-
-<!-- Start of picture text -->
-PUSH-UP columns<br>Vertical stacks passing through Helper row creators<br>Upper pinch column<br>Upper static rows<br>Upper helper rows<br>Variable rows<br>Lower helper rows<br>Lower static rows<br>Static shift<br>Lower pinch column Redundancy columns<br>PUSH-DOWN columns<br><!-- End of picture text -->
-
-Figure 43: A schematic of a variable component. 
-
-column, while the PUSH-DOWN columns are between the lower pinch column and the redundancy columns. 
+**Figure 43:** A schematic of a variable component. [View the diagram (PDF, p. 36).](../downloads/abrahamsen-stade-2024.pdf#page=36)
 
 Figure 44 shows a complete variable component with helper rows, a PUSH gadget on each side, and one redundancy column. It is not hard to check from the construction that there exists a packing corresponding to any assignment of variables in the formula $\Phi$, as described by the following lemma. 
 
@@ -940,11 +648,7 @@ Figure 44 shows a complete variable component with helper rows, a PUSH gadget on
 
 - _Each square in a block of connecting membrane squares connected to a PUSH-NEVER gadget pushes in._ 
 
-34 
-
-
-
-Figure 44: A variable component in the plus (top) and minus (bottom) position. There are two pairs of helper rows, one PUSH-DOWN-IF-MINUS gadget, one PUSH-UP-IF-PLUS gadget, one redundancy column, and one vertical stack passing through. 
+**Figure 44:** A variable component in the plus (top) and minus (bottom) position. There are two pairs of helper rows, one PUSH-DOWN-IF-MINUS gadget, one PUSH-UP-IF-PLUS gadget, one redundancy column, and one vertical stack passing through. [View the diagram (PDF, p. 37).](../downloads/abrahamsen-stade-2024.pdf#page=37) 
 
 ### **4.6 Verification of the variable components** 
 
@@ -958,14 +662,6 @@ _Proof._ For each row of squares, there are three cases:
 
 - All the squares push left. 
 
-35 
-
-
-
-
-
-Figure 45: There is 1 slack row between two static rows, so at least one of the vertical stacks needs to grow by 1 square. 
-
 - All the squares push right. 
 
 - Some of the squares on the left push left and the rest push right. There is a _split_ separating the two sets of squares. 
@@ -973,6 +669,8 @@ Figure 45: There is 1 slack row between two static rows, so at least one of the 
 Each split has width 1, and the squares (and hence also the splits) have integer coordinates, so each split is directly above at most one of the squares in the bottom row. 
 
 Consider the square $s\in L$, covering the range of $x$-coordinates $[x_s,x_s+2]$. If there is no split with the range $[x_s,x_s+1]$, then all squares covering that range push up, and similarly if there is no split in $[x_s+1,x_s+2]$. There can be a split in the range $[x_s,x_s+2]$ for at most $k$ squares $s\in L$, one for each of the intermediate layers. Hence, all but at most $k$ squares in $U$ must push up. 
+
+**Figure 45:** There is 1 slack row between two static rows, so at least one of the vertical stacks needs to grow by 1 square. [View the diagram (PDF, p. 38).](../downloads/abrahamsen-stade-2024.pdf#page=38)
 
 **Corollary 30.** *Suppose there is a left static row of squares of the form $\langle x,0\rangle$ and $k+1$ rows above it there is a right static row of squares of the form $\langle x,k+1\rangle$. Suppose that there are blocks of squares $\langle a_i,0\rangle$ through $\langle b_i,0\rangle$ for $i\in\lbrace 1,\ldots,j\rbrace$ that all push up. Then for all but $k$ indices, all of the squares $\langle a_i-1,k+1\rangle$ through $\langle b_i,k+1\rangle$ push up.* 
 
@@ -986,20 +684,9 @@ We are now ready to begin the verification of a single variable component. We fi
 
 **Lemma 32.** *Suppose that the rightmost square in the upper block of pinch squares for a variable component pushes down. Then the squares in the variable rows that are to the right of the rightmost redundancy column share their horizontal alignment. Precisely, each square in the upper row spans the same $x$-coordinates as a square in the lower row and each square in the lower row spanes the same $x$-coordinates as a square in the upper row (except for the rightmost squares at the end of the variable gadget).* 
 
-36 
+**Figure 46:** If rightmost of the upper pinch squares pushes down, then one of the rows in the variable component pushes left. [View the diagram (PDF, p. 39).](../downloads/abrahamsen-stade-2024.pdf#page=39)
 
-
-
-
-
-Figure 46: If rightmost of the upper pinch squares pushes down, then one of the rows in the variable component pushes left. 
-
-
-
-<!-- Start of picture text -->
-x  + 1 x  + 1<br>⟨x  + 1 ,  0 ⟩<br>⟨x  + 1 ,  0 ⟩<br>⟨x  + 1 2 , − 1 ⟩ ⟨x  + 1 2 , − 1 ⟩<br>⟨x, − 2 ⟩ ⟨x, − 2 ⟩<br>x x<br><!-- End of picture text -->
-
-Figure 47: If the rightmost square in any block of redundancy squares pushes up, then at least one of the rows in the variable component pushes right (for squares to the right of that square). 
+**Figure 47:** If the rightmost square in any block of redundancy squares pushes up, then at least one of the rows in the variable component pushes right (for squares to the right of that square). [View the diagram (PDF, p. 39).](../downloads/abrahamsen-stade-2024.pdf#page=39)
 
 _Proof._ Together with the pinch squares, the edges of the polygon at the right end of the variable row force the squares in one of the rows to push left, as shown in Figure 46. 
 
@@ -1010,8 +697,6 @@ Let $\langle x,-2-n\rangle$ be the rightmost redundancy square in a redundancy c
 The conclusion is that, for squares to the right of the rightmost redundancy column, one of the variable rows pushes left and the other pushes right. Since these rows have differently-aligned reference centers, the two rows are aligned with each other. 
 
 When the reference centers form a regular grid and a square pushes up, all the squares in the column above that square must also push up. This isn’t _a priori_ true for a column passing through a variable component since the reference centers don’t form a regular grid. Figure 33 shows that a similar conclusion _does_ still hold as long as the variable rows are aligned. We formulate this observation as the following lemma: 
-
-37 
 
 **Lemma 33.** *Suppose that a square $\langle x,0\rangle$ in the upper row of a variable component is aligned with a square (either $\langle x+\frac{1}{2},-1\rangle$ or $\langle x-\frac{1}{2},-1\rangle$) in the lower variable row. If the square $\langle x,0\rangle$ pushes down, then the square $\langle x,-2\rangle$ also pushes down. If the $\langle x,-2\rangle$ pushes up, then the square $\langle x,0\rangle$ also pushes up.* 
 
@@ -1037,14 +722,7 @@ We are now ready to prove a claim made early in this section and shown in Figure
 
 **Lemma 35.** *If all the helper row creation squares and upper pinch squares push down, then any vertical stack passing through the variable component grows in width by $1$.* 
 
-38 
-
-
-
-<!-- Start of picture text -->
-xk xn +1 −k<br>k n  + 1  − k<br>k − 1 n  + 1  − ( k  + 1)<br>xk  + 1 xn +1 −k  + 1<br><!-- End of picture text -->
-
-Figure 48: Left: The square $\langle x_k,k\rangle$ pushes left. Right: The square $\langle x_{n+1-k}+1,n+1-(k+1)\rangle$ pushes right. 
+**Figure 48:** Left: The square $\langle x_k,k\rangle$ pushes left. Right: The square $\langle x_{n+1-k}+1,n+1-(k+1)\rangle$ pushes right. [View the diagram (PDF, p. 41).](../downloads/abrahamsen-stade-2024.pdf#page=41)
 
 _Proof._ Suppose that square $\langle x,-2-n\rangle$ in the below static row pushes up. Any stack that is the left of the redundancy columns will hit the top wall of the polygon instead of passing through the variable component, so we can assume that this square is to the right of the redundancy columns and so the conclusions of Lemmas 32 and 33 can be used. The square $\langle x,n+1\rangle$ pushes up (by Lemma 33), and we want to show that the square $\langle x-1,n+1\rangle$ also pushes up. There are two cases to consider. 
 
@@ -1062,11 +740,7 @@ We can now verify that the push squares of the PUSH gadgets work as claimed.
 
 **Lemma 37.** _If a variable component is plus, then the rightmost square of each of its PUSH-UP gadgets pushes up. If a variable component is minus, then the leftmost square of each of its PUSH-DOWN gadgets pushes down._ 
 
-_Proof._ The PUSH-UP gadgets are right of the helper row gadgets and the PUSH-DOWN gadgets are left of the helper row gadgets. So by Lemma 34, if the variable component is in the up position 
-
-39 
-
-then the upper helper row squares in a PUSH-UP gadget push right, which means that the rightmost wire square pushes up (see Figure 36). Similarly, if the variable component is in the down position, then the lower helper row squares in a PUSH-DOWN gadget push left, so the leftmost wire square pushes down (see Figure 37). 
+_Proof._ The PUSH-UP gadgets are right of the helper row gadgets and the PUSH-DOWN gadgets are left of the helper row gadgets. So by Lemma 34, if the variable component is in the up position then the upper helper row squares in a PUSH-UP gadget push right, which means that the rightmost wire square pushes up (see Figure 36). Similarly, if the variable component is in the down position, then the lower helper row squares in a PUSH-DOWN gadget push left, so the leftmost wire square pushes down (see Figure 37). 
 
 Put together, we can now verify all the properties of the variable components. 
 
@@ -1086,68 +760,29 @@ Each set of variable membrane squares connects to a block of pinch, helper row c
 
 By a similar principal and Corollary 36, the connecting membrane squares behave as required. That is, the clause membrane squares adjacent to the block of connecting membrane squares push out, and it is only possible for all the squares in the block to push in if the variable component is in the appropriate position (see Lemma 37). This is shown in Figure 50. 
 
+**Figure 49:** A block of e.g. pinch squares are created by a block of variable squares at the boundary. The squares adjacent to the block of pinch squares push out by construction of the gadget, so by Corollary 36 the squares adjacent to the set of variable membrane squares also push out. [View the diagram (PDF, p. 43).](../downloads/abrahamsen-stade-2024.pdf#page=43)
+
+**Figure 50:** When the push squares are up, the rightmost connecting membrane square is also up, is if all connecting membrane squares are down, the variable component containing the PUSH-UP-IF-PLUS gadget must be minus. [View the diagram (PDF, p. 43).](../downloads/abrahamsen-stade-2024.pdf#page=43)
+
 ### **4.7 Clause components** 
 
 We will need two sets of clause components, one above the variable components and one below. These are both created in the same way, so throughout this section we just consider the top set of components. To create the bottom set of components, just exchange “up” and “down”. The clause components above the variable components represent negative clauses in the formula $\Phi$ that we reduce from, while the clause components below the variables represent positive clauses. 
 
 #### **4.7.1 Tester stacks and SWITCH gadgets** 
 
-Each set of clause components is formed by a large number of criss-crossing horizontal and vertical stacks. Each stack is limited in how wide it can grow. Figure 51 shows how the start of a stack is 
+Each set of clause components is formed by a large number of criss-crossing horizontal and vertical stacks. Each stack is limited in how wide it can grow. Figure 51 shows how the start of a stack is created. On the other side of the polygon, the boundary prevents the stack from growing by more than a certain amount. For a vertical stack, the membrane row prevents the stack from growing more than a certain amount, as shown in Figure 52. 
 
-40 
+**Figure 51:** The squares in the middle must form part of a horizontal stack that pushes to the right, due to the edge of the polygon at the left side that pushes a square to the right. The adjacent squares could also be part of this stack. A vertical stack or a stack pushing to the left could be created in a similar way. For horizontal stacks, a section of the polygon boundary on the opposite side prevents the horizontal stack from growing more than a set amount, as shown here. [View the diagram (PDF, p. 44).](../downloads/abrahamsen-stade-2024.pdf#page=44)
 
-
-
-<!-- Start of picture text -->
-Variable<br>membrane Clause membrane squares<br>squares<br>Membrane row<br>Variable gadget<br>Static shift<br>Variable gadget<br>Static shift<br>Pinch, helper row creation, or redundancy squares<br><!-- End of picture text -->
-
-Figure 49: A block of e.g. pinch squares are created by a block of variable squares at the boundary. The squares adjacent to the block of pinch squares push out by construction of the gadget, so by Corollary 36 the squares adjacent to the set of variable membrane squares also push out. 
-
-
-
-<!-- Start of picture text -->
-Connecting<br>membrane Clause membrane squares<br>squares<br>Membrane row<br>Variable component<br>Static shift<br>Variable component<br>Static shift<br>PUSH-UP-IF-PLUS gadget<br><!-- End of picture text -->
-
-Figure 50: When the push squares are up, the rightmost connecting membrane square is also up, is if all connecting membrane squares are down, the variable component containing the PUSH-UP-IF-PLUS gadget must be minus. 
-
-41 
-
-
-
-
-
-Figure 51: The squares in the middle must form part of a horizontal stack that pushes to the right, due to the edge of the polygon at the left side that pushes a square to the right. The adjacent squares could also be part of this stack. A vertical stack or a stack pushing to the left could be created in a similar way. For horizontal stacks, a section of the polygon boundary on the opposite side prevents the horizontal stack from growing more than a set amount, as shown here. 
-
-Clause membrane squares 
-
-
-
-PUSH-NEVER block 
-
-Figure 52: A block of connecting membrane squares (which are attached to a PUSH-NEVER gadget in a variable component below) allow a vertical stack created in a clause component above to grow only by up to a certain amount and no more. 
-
-created. On the other side of the polygon, the boundary prevents the stack from growing by more than a certain amount. For a vertical stack, the membrane row prevents the stack from growing more than a certain amount, as shown in Figure 52. 
+**Figure 52:** A block of connecting membrane squares (which are attached to a PUSH-NEVER gadget in a variable component below) allow a vertical stack created in a clause component above to grow only by up to a certain amount and no more. [View the diagram (PDF, p. 44).](../downloads/abrahamsen-stade-2024.pdf#page=44)
 
 An important ingredient is the _SWITCH gadget_ , which must create a vertical stack or a horizontal stack, but generally not both. This is shown in Figure 53. Consider a negative clause $\neg x_i\vee\neg x_j\vee\neg x_k$ of the formula $\Phi$ that we reduce from. We make a corresponding clause component in which we have three SWITCH gadgets corresponding to $x_i,x_j,x_k$, respectively. These define variables $y_i,y_j,y_k$, and for each of these $y_\ell$, we define $y_\ell=1$ if the SWITCH gadget creates a vertical stack, and otherwise we define $y_\ell=0$. The clause component will enforce the constraint $y_i+y_j+y_k=1$, i.e., exactly one SWITCH gadget will make a vertical stack. When $y_\ell=1$ and the respective gadget creates a vertical stack, this stack hits a block of connecting membrane squares that is connected to a PUSH-UP-IF-PLUS gadget in the corresponding variable component $x_\ell$. An example of this is shown in Figure 54. The PUSH-UP-IF-PLUS gadget only allows all these squares to push down if the variable component is minus. This creates a constraint $y_\ell\implies\neg x_\ell$. Since one of the SWITCH gadgets make a vertical stack, we conclude that the clause $\neg x_i\vee\neg x_j\vee\neg x_k$ is satisfied. This is only a one way implication—if $y_\ell$ is 0 then there is no constraint on $x_\ell$, so even though just one SWITCH gadget makes a vertical stack, there can be more than one variable satisfying the clause. 
 
-The corresponding construction in the clause components below the variable components result 
+The corresponding construction in the clause components below the variable components result in the implication $y_i\implies x_k$, since there we connect the SWITCH gadget to a PUSH-DOWN-IF-MINUS gadget. Hence, we can also realize a positive clause $x_i\vee x_j\vee x_k$. 
 
-42 
+**Figure 53:** A _SWITCH gadget_ that either creates a vertical stack or a horizontal stack. [View the diagram (PDF, p. 45).](../downloads/abrahamsen-stade-2024.pdf#page=45)
 
-
-
-
-
-Figure 53: A _SWITCH gadget_ that either creates a vertical stack or a horizontal stack. 
-
-
-
-<!-- Start of picture text -->
-SWITCH gadget<br>Static shift<br>Membrane row<br>PUSH-UP-IF-PLUS block<br><!-- End of picture text -->
-
-Figure 54: If the SWITCH gadget creates a vertical stack, then all the squares in a block of connecting membrane squares push down. These connect to a PUSH-UP-IF-PLUS gadget, so this can only happen if the variable component is minus. 
-
-in the implication $y_i\implies x_k$, since there we connect the SWITCH gadget to a PUSH-DOWN-IF-MINUS gadget. Hence, we can also realize a positive clause $x_i\vee x_j\vee x_k$. 
+**Figure 54:** If the SWITCH gadget creates a vertical stack, then all the squares in a block of connecting membrane squares push down. These connect to a PUSH-UP-IF-PLUS gadget, so this can only happen if the variable component is minus. [View the diagram (PDF, p. 45).](../downloads/abrahamsen-stade-2024.pdf#page=45)
 
 The rows and columns created by the SWITCH gadgets are called _literal rows_ and _literal columns_ . We say that a literal row is _aligned_ if there is no stack present and _unaligned_ otherwise. Note that the literal row created by a SWITCH gadget on the left side of the polygon should be unaligned when pushing right, but the literal row created by a SWITCH gadget on the right side of the polygon should be unaligned when pushing left. Whenever we need a SWITCH gadget on the right side of the polygon, we will need a static shift above and below it to change the alignment of the static squares. This can be seen in Figure 60. 
 
@@ -1157,14 +792,7 @@ There are also some stacks that will always exist. These are called _tester rows
 
 We are now ready to fully define the clause components. Figure 55 shows the setup at a schematic level. Due to the structure of the schematics produced from an instance of Monotone-Clover-3SAT, all the literal columns and tester columns from the $i$th clause from the top pass through the literal and testers rows from the $k$th clause if $k>i$. 
 
-43 
-
-
-
-<!-- Start of picture text -->
-Clause<br>component<br>Literal<br>rows<br>Tester rows<br>Tester columns of<br>other components<br>Tester columns of<br>this component Literal columns of<br>Literal columns of other components<br>this component<br><!-- End of picture text -->
-
-Figure 55: Expanding the schematic described in Lemma 22 to make space for the tester rows and tester columns. Each red or light blue line in this schematic represents multiple tester rows or columns. 
+**Figure 55:** Expanding the schematic described in Lemma 22 to make space for the tester rows and tester columns. Each red or light blue line in this schematic represents multiple tester rows or columns. [View the diagram (PDF, p. 46).](../downloads/abrahamsen-stade-2024.pdf#page=46)
 
 Now we just need to specify the number of tester rows and tester columns for each clause and the amount by which each stack in the construction may grow. Here we mostly ignore horizontal static shifts (needed to change the alignment between left and right SWITCH gadgets) and vertical static shifts (needed to push down the variable membrane squares). By Lemmas 24 and 27, each stack grows exactly once when it passes through one of these shifts. When creating the final construction, the full amount that each stack can grow will be increased to account for this. The tester rows and tester columns are defined as follows: 
 
@@ -1177,8 +805,6 @@ Now we just need to specify the number of tester rows and tester columns for eac
 - A tester row below the $i$th clause component is allowed to grow by at most $i+1+t_i$ squares on each side, so by $2(i+1+t_i)$ squares in total. 
 
 An unaligned literal column should always push down on an entire block of connecting membrane squares, even if it only grows at static shifts. Since the clause membrane squares adjacent to the connecting membrane squares push up, this prevents an unaligned literal column from growing any further. So it just remains to specify how much the literal rows can grow. Each clause component has 3 literal rows. 
-
-44 
 
 - The top literal row in the $i$th clause component from the top (again starting at $i=0$) can grow by at most $i+t_{i-1}$ squares on each side, so by at most $2(i+t_{i-1})$ squares in total. 
 
@@ -1212,14 +838,7 @@ That is to say, the literal columns only grow at static shifts. Each tester colu
 
 The unaligned literal rows in the $i$th clause component grow when they cross a tester column for one of the previous clause components, but do not grow at the tester columns for that column. The literal rows also grow at each of the unaligned literal columns. There are $t_{i-1}$ and $i$ unaligned literal columns coming from the clause components above. The lower of the two literal rows also cross some of the literal columns from _this_ variable component, so may need to grow $1+i+t_{i-1}$ times. 
 
-45 
-
-
-
-<!-- Start of picture text -->
-Tester column<br>Unaligned literal rows<br>Aligned literal row<br>Tester row<br>Unaligned literal column<br>Aligned literal columns<br><!-- End of picture text -->
-
-Figure 56: A simplified clause component. The tester column (red) grows twice at the two unaligned literal rows (green). There are two unaligned literal rows (light green), which have corresponding aligned literal columns (orange). There is one aligned literal row (dark green), with a corresponding unaligned literal column (gold). The tester row (light blue) grows at the tester column and at the unaligned literal column. 
+**Figure 56:** A simplified clause component. The tester column (red) grows twice at the two unaligned literal rows (green). There are two unaligned literal rows (light green), which have corresponding aligned literal columns (orange). There is one aligned literal row (dark green), with a corresponding unaligned literal column (gold). The tester row (light blue) grows at the tester column and at the unaligned literal column. [View the diagram (PDF, p. 48).](../downloads/abrahamsen-stade-2024.pdf#page=48)
 
 The tester rows grow at all the stacks that they pass through. Below the $i$th clause component, there are $t_i$ tester columns and $i+1$ unaligned literal columns (recall that $i$ starts at 0). 
 
@@ -1239,83 +858,70 @@ For the $i$th SWITCH gadget (starting with $i=0$), we define a variable $y_i$ th
 
 We give a name to each stack in the construction that can grow. The row for the literal $y_i$ is $\ell_i$. The $j$th tester column for the clause $c_i$ is called $c_{i,j}$. The $j$th tester row for the clause $c_i$ is called $r_{i,j}$. 
 
-46 
+**Figure 57:** The three ways to pack the first clause component, depending on which literal is true. Here only one tester row is pictured, in the actual construction there would be seven. Note that in the top left figure, the middle literal row doesn’t grow to its full width. [View the diagram (PDF, p. 49).](../downloads/abrahamsen-stade-2024.pdf#page=49)
 
+**Figure 58:** The second clause component. The bottom two literal rows need to be able to grow 5 times, once for the crossing with the third literal column, once for the one true literal from the first clause component, and once for each of the tester columns from the first clause component. The top literal row is only allowed to grow 4 times. The tester rows are omitted. The second clause component has a 4th tester column in case the first one sends some slack down. [View the diagram (PDF, p. 49).](../downloads/abrahamsen-stade-2024.pdf#page=49)
 
-
-
-
-
-
-Figure 57: The three ways to pack the first clause component, depending on which literal is true. Here only one tester row is pictured, in the actual construction there would be seven. Note that in the top left figure, the middle literal row doesn’t grow to its full width. 
-
-
-
-Figure 58: The second clause component. The bottom two literal rows need to be able to grow 5 times, once for the crossing with the third literal column, once for the one true literal from the first clause component, and once for each of the tester columns from the first clause component. The top literal row is only allowed to grow 4 times. The tester rows are omitted. The second clause component has a 4th tester column in case the first one sends some slack down. 
-
-47 
-
-
-
-Figure 59: If the lowest literal row is the one that is aligned, then some slack can propagate. 
+**Figure 59:** If the lowest literal row is the one that is aligned, then some slack can propagate. [View the diagram (PDF, p. 50).](../downloads/abrahamsen-stade-2024.pdf#page=50)
 
 Recall that when two stacks cross each other, combined they grow by a total of at least 2 squares (Lemma 25). For the crossing between a horizontal stack $a$ and a vertical stack $b$, we designate a variable $x(a,b)\in\lbrace 0,1,2\rbrace$ that records how many times $a$ grows when passing through this crossing. The vertical stack $b$ then grows $2-x(a,b)$ times. The stacks created by unaligned literal columns can’t grow, so any row that crosses an unaligned literal column grows by 2 and we don’t need an $x$ variable to keep track of this. The full set of constraints can now be written. For $0\le i<n$ and $0\le j<1+2t_i$ there is a tester row $r_{i,j}$. This is allowed to grow at each tester column and at one of the literal columns for each of the clauses above it, up to a total width of $2(i+1+t_i)$ (recall that $t_i=3(i+1)+\frac{1}{2}i(i+1)$ is the number of tester columns in clauses $c_0,\ldots,c_i$). The constraint created by a tester row can then be expressed as follows: 
 
+Equation (3):
+
 ```math
-2\sum_{p=0}^{3i+2}y_p+\sum_{p=0}^{i}\sum_{q=0}^{3+p-1}x(r_{i,j},c_{p,q})\le 2(i+1+t_i) \tag{3}
+2\sum_{p=0}^{3i+2}y_p+\sum_{p=0}^{i}\sum_{q=0}^{3+p-1}x(r_{i,j},c_{p,q})\le 2(i+1+t_i)
 ```
 
 For $0\le i<n$, the uppermost literal row in the $i$th clause is $\ell_{3i}$. The literal row $\ell_{3i}$ is allowed to grow once at each of the tester columns for _previous_ clauses, and at one of the literal columns for each of the clauses above it, for a total of $2(i+t_{i-1})$ times. This leads to the following inequality. 
 
+Equation (4):
+
 ```math
-(1-y_{3i})\left(2\sum_{p=0}^{3i-1}y_p+\sum_{p=0}^{i}\sum_{q=0}^{3+p-1}x(\ell_{3i},c_{p,q})\right)\le 2(i+t_{i-1}) \tag{4}
+(1-y_{3i})\left(2\sum_{p=0}^{3i-1}y_p+\sum_{p=0}^{i}\sum_{q=0}^{3+p-1}x(\ell_{3i},c_{p,q})\right)\le 2(i+t_{i-1})
 ```
 
 The next two literal rows in the $i$th clause are each allowed to grow by an additional two squares. So for $0\le i<n$ and $m\in\lbrace 1,2\rbrace$, we have the following: 
 
+Equation (5):
+
 ```math
-(1-y_{3i+m})\left(2\sum_{p=0}^{3i+m-1}y_p+\sum_{p=0}^{i}\sum_{q=0}^{3+p-1}x(\ell_{3i+m},c_{p,q})\right)\le 2(1+i+t_{i-1}) \tag{5}
+(1-y_{3i+m})\left(2\sum_{p=0}^{3i+m-1}y_p+\sum_{p=0}^{i}\sum_{q=0}^{3+p-1}x(\ell_{3i+m},c_{p,q})\right)\le 2(1+i+t_{i-1})
 ```
 
 Finally, for $0\le p<n$ and $0\le q<3+i$, we have a tester column $c_{p,q}$, which is allowed to grow 4 times. Recall that $c_{p,q}$ crosses all literal and tester rows in clauses $c_{p+1}$ through $c_{n-1}$. This leads to the constraint: 
 
-48 
-
-
-
-<!-- Start of picture text -->
-Tester columns<br>yk<br>Static shift<br>yj<br>yi<br>To xi To xj<br>To xk<br>To PUSH-NEVER gadgets<br><!-- End of picture text -->
-
-Figure 60: The clause component, showing a state where none of the literals are true and so no perfect packing exists (two squares overlap). 
-
-
-
-Figure 61: A perfect packing _does_ exist if the first literal column is allowed to lower. The packing shown here is _not_ quite the same packing described in Lemma 39. Instead we show a case where the middle tester column has not grown to its maximum width in this component, creating some slack that can propagate down. 
-
-49 
-
-
-
-Figure 62: A perfect packing when the second literal column is allowed to lower. 
+Equation (6):
 
 ```math
-\sum_{i=p}^{n-1}\sum_{m=0}^{2}(1-y_{3i+m})(2-x(\ell_{3i+m},c_{p,q}))+\sum_{i=p}^{n-1}\sum_{j=0}^{2t_i}(2-x(r_{i,j},c_{p,q}))\le 4 \tag{6}
+\sum_{i=p}^{n-1}\sum_{m=0}^{2}(1-y_{3i+m})(2-x(\ell_{3i+m},c_{p,q}))+\sum_{i=p}^{n-1}\sum_{j=0}^{2t_i}(2-x(r_{i,j},c_{p,q}))\le 4
 ```
 
 Here we are assuming that a literal row is always aligned when the corresponding literal column is unaligned. There could be both vertical and horizontal stacks starting at a single SWITCH gadget, but this could only increase the values of the left hand sides of (3)–(6). 
+
+**Figure 60:** The clause component, showing a state where none of the literals are true and so no perfect packing exists (two squares overlap). [View the diagram (PDF, p. 51).](../downloads/abrahamsen-stade-2024.pdf#page=51)
+
+**Figure 61:** A perfect packing _does_ exist if the first literal column is allowed to lower. The packing shown here is _not_ quite the same packing described in Lemma 39. Instead we show a case where the middle tester column has not grown to its maximum width in this component, creating some slack that can propagate down. [View the diagram (PDF, p. 51).](../downloads/abrahamsen-stade-2024.pdf#page=51)
+
+**Figure 62:** A perfect packing when the second literal column is allowed to lower. [View the diagram (PDF, p. 52).](../downloads/abrahamsen-stade-2024.pdf#page=52)
+
+**Figure 63:** A perfect packing when all the squares in the third literal column are allowed to lower. [View the diagram (PDF, p. 53).](../downloads/abrahamsen-stade-2024.pdf#page=53)
 
 **Lemma 40.** *Inequalities (3)–(6) imply that, for each $i$, $y_{3i}+y_{3i+1}+y_{3i+2}=1$.* 
 
 _Proof._ By induction on $k$, we show that for $i<k$, we have 
 
+Equation (7):
+
 ```math
-y_{3i}+y_{3i+1}+y_{3i+2}=1. \tag{7}
+y_{3i}+y_{3i+1}+y_{3i+2}=1.
 ```
 
 We will simultaneously show (in the same induction) that: 
 
+Equation (8):
+
 ```math
-\sum_{p=0}^{k-1}\sum_{q=0}^{3+p-1}\sum_{i=p}^{k-1}\sum_{m=0}^{2}(1-y_{3i+m})(2-x(\ell_{3i+m},c_{p,q}))\ge 4t_{k-1}-2k \tag{8}
+\sum_{p=0}^{k-1}\sum_{q=0}^{3+p-1}\sum_{i=p}^{k-1}\sum_{m=0}^{2}(1-y_{3i+m})(2-x(\ell_{3i+m},c_{p,q}))\ge 4t_{k-1}-2k
 ```
 
 The left hand side of (8) counts how much the tester columns grow in total when crossing literal rows in the first $k$ clause components. Recall that each of the $t_{k-1}$ tester columns is allowed to grow by 4 squares, so in total they can grow by $4t_{k-1}$ squares. So what (8) says is that at most $2k$ squares worth of slack is propagating downward after the first $k$ clause components. 
@@ -1324,14 +930,10 @@ The base case for the induction is $k=0$. Since there are no literals and no tes
 
 For induction, suppose the above holds for some $k$. First, we show that $y_{3k}+y_{3k+1}+y_{3k+2}\le 1$. By using (7) in (3), we have, for $0\le j<1+2t_k$: 
 
-50 
-
-
-
-Figure 63: A perfect packing when all the squares in the third literal column are allowed to lower. 
+Equation (9):
 
 ```math
-2k+2(y_{3k}+y_{3k+1}+y_{3k+2})+\sum_{p=0}^{k}\sum_{q=0}^{3+p-1}x(r_{k,j},c_{p,q})\le 2(k+1+t_k) \tag{9}
+2k+2(y_{3k}+y_{3k+1}+y_{3k+2})+\sum_{p=0}^{k}\sum_{q=0}^{3+p-1}x(r_{k,j},c_{p,q})\le 2(k+1+t_k)
 ```
 
 We want to show that there is a value of $j$ where the sum of the $x(r_{k,j},c_{p,q})$ is at least $2t_k-1$. All the terms in (6) are positive, so for each $p,q$ we can extract that: 
@@ -1360,8 +962,6 @@ This can be rearranged to obtain:
 
 Subtracting this from (9), we see that: 
 
-51 
-
 ```math
 2(y_{3k}+y_{3k+1}+y_{3k+2})\le 3
 ```
@@ -1370,14 +970,21 @@ Since the $y_i$ are integer valued, this implies that $y_{3k}+y_{3k+1}+y_{3k+2}\
 
 Next we should show that $y_{3k}+y_{3k+1}+y_{3k+2}\ge 1$. Suppose for contradiction that 
 
+Equation (10):
+
 ```math
-y_{3k}=y_{3k+1}=y_{3k+2}=0 \tag{10}
+y_{3k}=y_{3k+1}=y_{3k+2}=0
 ```
 
 By subtracting the inductive hypothesis (8) from the sum of (6) over $0\le p<k$ and $0\le q<3+p$, we see that: 
 
+Equation (11):
+
 ```math
-2k\ge\sum_{p=0}^{k-1}\sum_{q=0}^{3+p-1}\sum_{m=0}^{2}(2-x(\ell_{3k+m},c_{p,q}))=6t_{k-1}-\sum_{p=0}^{k-1}\sum_{q=0}^{3+p-1}\sum_{m=0}^{2}x(\ell_{3k+m},c_{p,q}) \tag{11}
+\begin{aligned}
+2k&\ge\sum_{p=0}^{k-1}\sum_{q=0}^{3+p-1}\sum_{m=0}^{2}(2-x(\ell_{3k+m},c_{p,q}))\\
+&=6t_{k-1}-\sum_{p=0}^{k-1}\sum_{q=0}^{3+p-1}\sum_{m=0}^{2}x(\ell_{3k+m},c_{p,q})
+\end{aligned}
 ```
 
 Adding up (4) and versions of (5) for both values $m\in\lbrace 1,2\rbrace$ (and simplifying using (10) and (7)): 
@@ -1420,8 +1027,6 @@ a contradiction. We conclude that $y_{3k}$, $y_{3k+1}$ and $y_{3k+2}$ can’t al
 
 For a general function $f$ in two variables: 
 
-52 
-
 ```math
 \sum_{p=0}^{k}\sum_{i=p}^{k}f(p,i)=\sum_{p=0}^{k-1}\sum_{i=p}^{k-1}f(p,i)+\sum_{p=0}^{k}f(p,k)
 ```
@@ -1462,8 +1067,6 @@ as required. The cases $y_{3k}=1$ and $y_{3k+1}=1$ are similar. By induction, th
 
 _Proof._ Whenever a SWITCH gadget creates a vertical stack, the corresponding block of membrane connecting squares must all push in (by Lemma 24). Lemma 40 says that, for each clause, at least one of the SWITCH gadgets must create a vertical stack. So for clause of form $\neg x_i\vee\neg x_j\vee\neg x_k$ (resp. $x_i\vee x_j\vee x_k$) in $\Phi$, one of the variables has a PUSH-UP-IF-PLUS (resp. PUSH-UP-IF-MINUS) gadget that is connected to a block of membrane connecting squares that all push in. 
 
-53 
-
 ### **4.9 Proof of Theorem 1** 
 
 We are now ready to give the proof of our main theorem. 
@@ -1490,19 +1093,9 @@ Lemmas 28 and 39 say that there is a packing of $P$ with $k$ squares of size $2\
 
 To our knowledge, these represent the first results on NP-hardness for packing or covering a simple polygon with identical (fixed) shapes and the first NP-hardness result for partitioning simple polygons into connected pieces. There are many interesting problems that are known to be hard for polygons with holes but with unknown complexity for simple polygons. Until now, techniques for showing hardness of many of these problems have not been available. 
 
-The problem $2\times 2$-Square-Packing in a grid polygon is equivalent to Maximum-Independent-Set on a grid graph $G$ with diagonals added; see Figure 64. We can define $G$ to be _orthogonally_ 
+The problem $2\times 2$-Square-Packing in a grid polygon is equivalent to Maximum-Independent-Set on a grid graph $G$ with diagonals added; see Figure 64. We can define $G$ to be _orthogonally convex_ if whenever two vertices $u,v\in V(G)$ are from the same row or column, then all grid points between $u$ and $v$ are also vertices of $G$. Our result has the following interesting consequence: 
 
-54 
-
-
-
-
-
-
-
-Figure 64: The equivalence between $2\times 2$-Square-Packing and Maximum-Independent-Set. Left: A polygon and the equivalent instance of Maximum-Independent-Set. Middle: A packing with $2\times 2$ squares. Right: The corresponding independent set. 
-
-_convex_ if whenever two vertices $u,v\in V(G)$ are from the same row or column, then all grid points between $u$ and $v$ are also vertices of $G$. Our result has the following interesting consequence: 
+**Figure 64:** The equivalence between $2\times 2$-Square-Packing and Maximum-Independent-Set. Left: A polygon and the equivalent instance of Maximum-Independent-Set. Middle: A packing with $2\times 2$ squares. Right: The corresponding independent set. [View the diagram (PDF, p. 57).](../downloads/abrahamsen-stade-2024.pdf#page=57)
 
 **Corollary 42.** _The maximum independent set problem for orthogonally convex grid graphs with diagonals is NP-hard._ 
 
@@ -1514,11 +1107,7 @@ For certain geometric shapes other than squares, our techniques may be useful fo
 
 It may also be possible to show hardness for packing $n\times k$ rectangles with 90-degree rotations allowed into a simple (not necessarily grid) polygon using these techniques. It seems much more difficult to apply our ideas to the problem of packing $n\times k$ rectangles into a simple _grid_ polygon. This problem is in P for $1\times 2$ rectangles, but little is known even for $1\times 3$ rectangles. 
 
-In a forthcoming paper (with another set of authors), we show that _reconfiguration_ from one packing of axis-aligned unit squares to another is PSPACE-hard, even in a simple polygon. The construction relies on a slight modification of the construction from Section 2. Until now, it was 
-
-55 
-
-only known that reconfiguration in a polygon with holes is PSPACE-hard [52]. 
+In a forthcoming paper (with another set of authors), we show that _reconfiguration_ from one packing of axis-aligned unit squares to another is PSPACE-hard, even in a simple polygon. The construction relies on a slight modification of the construction from Section 2. Until now, it was only known that reconfiguration in a polygon with holes is PSPACE-hard [52]. 
 
 ## **References** 
 
@@ -1550,8 +1139,6 @@ only known that reconfiguration in a polygon with holes is PSPACE-hard [52].
 
 - [14] Mark de Berg and Amirali Khosravi. “Optimal Binary Space Partitions for Segments in the Plane”. In: _Int. J. Comput. Geom. Appl._ 22.3 (2012), pp. 187–206. doi: `10 . 1142 / S0218195912500045` . 
 
-56 
-
 - [15] Francine Berman, David S. Johnson, Frank Thomson Leighton, Peter W. Shor, and Larry Snyder. “Generalized Planar Matching”. In: _J. Algorithms_ 11.2 (1990), pp. 153–184. doi: `10.1016/0196-6774(90)90001-U` . 
 
 - [16] Francine Berman, Frank Thomsons Leighton, and Lawrence Snyder. _Optimal tile salvage_ . Tech. rep. 81–396. Purdue University, 1981. url: `https://docs.lib.purdue.edu/cstech/ 322` . 
@@ -1579,8 +1166,6 @@ only known that reconfiguration in a polygon with holes is PSPACE-hard [52].
 - [27] S´andor P. Fekete, Tom Kamphans, Alexander Kr¨oller, Joseph S. B. Mitchell, and Christiane Schmidt. “Exploring and Triangulating a Region by a Swarm of Robots”. In: _Approximation, Randomization, and Combinatorial Optimization. Algorithms and Techniques (APPROX 2011)_ . 2011, pp. 206–217. doi: `10.1007/978-3-642-22935-0\_18` . 
 
 - [28] S´andor P. Fekete and Henk Meijer. “The one-round Voronoi game replayed”. In: _Comput. Geom._ 30.2 (2005), pp. 81–94. doi: `10.1016/J.COMGEO.2004.05.005` . 
-
-57 
 
 - [29] S´andor P. Fekete and Joseph S. B. Mitchell. “Terrain Decomposition and Layered Manufacturing”. In: _Int. J. Comput. Geom. Appl._ 11.6 (2001), pp. 647–668. doi: `10 . 1142 / S0218195901000687` . 
 
@@ -1612,8 +1197,6 @@ only known that reconfiguration in a polygon with holes is PSPACE-hard [52].
 
 - [43] Andrzej Lingas. “The Power of Non-Rectilinear Holes”. In: _9th International Colloquium on Automata, Languages, and Programming (ICALP 1982)_ . 1982, pp. 369–383. doi: `10.1007/ BFB0012784` . 
 
-58 
-
 - [44] Anna Lubiw and Debajyoti Mondal. “On compatible triangulations with a minimum number of Steiner points”. In: _Theor. Comput. Sci._ 835 (2020), pp. 97–107. doi: `10.1016/J.TCS. 2020.06.014` . 
 
 - [45] Wolfgang Mulzer and G¨unter Rote. “Minimum-weight triangulation is NP-hard”. In: _J. ACM_ 55.2 (2008), 11:1–11:29. doi: `10.1145/1346330.1346336` . 
@@ -1632,5 +1215,21 @@ only known that reconfiguration in a polygon with holes is PSPACE-hard [52].
 
 - [52] Kiril Solovey and Dan Halperin. “On the hardness of unlabeled multi-robot motion planning”. In: _Int. J. Robotics Res._ 35.14 (2016), pp. 1750–1759. doi: `10.1177/0278364916672311` . 
 
-59 
+## Transcription notes (not part of the paper)
 
+The text above follows the committed PDF, including these apparent errors in the original. They are kept as printed rather than silently repaired. Page numbers are PDF pages.
+
+- p. 17 (Lemma 17): "encoded by the packing" appears in the covering section, where "covering" seems to be meant.
+- p. 20: the negative clause is printed as $\neg x_j \vee \neg x_k \vee \neg v_\ell$; $x_\ell$ appears to be meant.
+- p. 24 (proof of Lemma 22): "The indices $i, j$ and $k$ are in $I_i$" and, a few lines later, "The indices $i$, $j$, and $k$ are all either outside of $I_{i+1}$"; the clause indices $j, k, \ell$ appear to be meant.
+- p. 25: "the negative clauses are above the variables and the negative clauses are below"; the second should be "positive".
+- p. 31: "the lower variable rows are immediately below the variable rows"; "lower helper rows" appears to be meant, as with "the squares in upper lower rows" on p. 32.
+- p. 42 (Lemma 38): "must be in the push position"; "plus position" appears to be meant.
+- p. 45: $y_i \implies x_k$ mixes indices; $y_\ell \implies x_\ell$ appears to be meant.
+- p. 47 (proof of Lemma 39): "literal columns from this variable component" and "tester columns for that column"; "clause component" and "that component" appear to be meant.
+- p. 50: $0 \le q < 3+i$; $3+p$ appears to be meant.
+- p. 53: "Since $2(2t_k+1) < 4t_k$"; the argument needs $>$.
+- p. 55 (proof of Lemma 41): "(resp. PUSH-UP-IF-MINUS)", while the lemma statement says PUSH-DOWN-IF-MINUS.
+- p. 56 (§4.9): "There are $\mathcal{O}(m^3)$ literal rows"; the bullets give $3m$ literal rows and $\mathcal{O}(m^3)$ tester rows, so "tester rows" appears to be meant. The preceding "dominated by squares in and around the literal rows" has the same issue.
+
+Minor grammatical slips and typos in the original (for example "Figures 16 and 17 shows", "visa-versa", "Eacg if these columns") are also kept as printed. Some DOIs in the reference list lost a hyphen at a PDF line break (for example [9] `S09257721`, [33] `s00454004` and [36] `B978044482537`, printed as `S0925-7721`, `s00454-004` and `B978-044482537`); the reference entries are reproduced as extracted.
