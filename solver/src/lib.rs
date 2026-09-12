@@ -472,6 +472,24 @@ mod tests {
         assert!(contact_system(&a, 1e-6).layers.iter().all(Option::is_none));
     }
     #[test]
+    fn exact_grid_at_algebraic_size_limit() {
+        let squares = (0..25)
+            .map(|i| Placement {
+                cx: (i % 5) as f64 + 0.5,
+                cy: (i / 5) as f64 + 0.5,
+                theta: 0.0,
+            })
+            .collect();
+        let report = refine(&Arrangement {
+            n: 25,
+            side: 5.0,
+            squares,
+        })
+        .unwrap();
+        assert!(report.valid);
+        assert_eq!(report.algebraic.unwrap().side_polynomial, vec!["1", "-5"]);
+    }
+    #[test]
     fn jostled_large_grids_refine_with_bounded_work() {
         for k in [5, 7, 10] {
             let squares = (0..k * k)
