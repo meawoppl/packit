@@ -101,7 +101,12 @@ it does not verify a theorem or catch every incorrectly transcribed symbol.
 Changes still need comparison with the source PDF and inspection of GitHub's
 rendered Markdown, including fractions, radicals, subscripts and equation labels. Numbered
 equations use adjacent prose labels: `\tag{...}` currently produces labeled
-MathML rows that render incorrectly in GitHub viewed with Chrome.
+MathML rows that render incorrectly in GitHub viewed with Chrome. Keep math
+outside link labels and footnotes, and use `^{\ast}` instead of a bare star
+that Markdown can consume as emphasis. GitHub's dollar/backtick inline syntax
+handles formulas next to ambiguous prose punctuation. In the longer papers,
+standalone single-letter symbols can use italic prose to stay within GitHub's
+per-document math rendering budget; compound formulas remain math.
 
 ## Solver interpretation
 
