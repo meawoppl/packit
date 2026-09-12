@@ -9,6 +9,8 @@ mod browser_tests;
 mod contacts;
 mod cpu;
 mod edges;
+mod glue;
+pub use glue::{Feature, Glue, MAX_GLUES};
 #[cfg(target_arch = "wasm32")]
 mod gpu;
 #[cfg(test)]
@@ -53,6 +55,7 @@ struct Rotation {
 }
 struct State {
     bodies: Vec<Body>,
+    glues: Vec<Glue>,
     contact_forces: Vec<[f32; 2]>,
     side: f64,
     params: Params,
@@ -80,6 +83,7 @@ impl Physics {
         assert!(side.is_finite() && (1.0..=1000.0).contains(&side));
         let physics = Self {
             state: Rc::new(RefCell::new(State {
+                glues: Vec::new(),
                 bodies: vec![Body::default(); n as usize],
                 contact_forces: vec![[0.0; 2]; n as usize],
                 side,
@@ -393,6 +397,7 @@ impl Physics {
         s.band_velocity = 0.0;
         s.mouse.down = false;
         s.rotation = Rotation::default();
+        s.glues.clear();
         s.contact_forces.fill([0.0; 2]);
         s.revision += 1;
     }
@@ -433,6 +438,7 @@ impl Physics {
         s.band_velocity = 0.0;
         s.mouse.down = false;
         s.rotation = Rotation::default();
+        s.glues.clear();
         for (b, p) in s.bodies.iter_mut().zip(&a.squares) {
             *b = Body {
                 x: p.cx as f32,
@@ -447,6 +453,7 @@ impl Physics {
     pub fn dispose(&self) {
         let mut s = self.state.borrow_mut();
         s.disposed = true;
+        s.glues.clear();
         s.rotation = Rotation::default();
         #[cfg(target_arch = "wasm32")]
         if let Some(gpu) = s.gpu.take() {

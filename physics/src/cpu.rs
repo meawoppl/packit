@@ -1,4 +1,4 @@
-use super::{contacts, edges, State, FIXED_STEP};
+use super::{contacts, edges, glue, State, FIXED_STEP};
 fn radius(t: f32, x: f32, y: f32) -> f32 {
     let (sin, cos) = t.sin_cos();
     0.5 * ((cos * x + sin * y).abs() + (-sin * x + cos * y).abs())
@@ -7,6 +7,13 @@ impl State {
     pub(super) fn cpu_step(&mut self) {
         let dt = FIXED_STEP as f32;
         let p = self.params;
+        let (glue_forces, _) = glue::forces(
+            &self.glues,
+            &self.bodies,
+            self.side as f32,
+            self.band_velocity,
+            p.stiffness,
+        );
         let mut next = self.bodies.clone();
         for (i, b) in self.bodies.iter().enumerate() {
             let (mut fx, mut fy, mut torque) = (0.0, if p.gravity { -9.0 } else { 0.0 }, 0.0);
@@ -84,6 +91,12 @@ impl State {
             torque += f[2];
             contact[0] += f[0];
             contact[1] += f[1];
+            let f = glue_forces[i];
+            fx += f[0];
+            fy += f[1];
+            torque += f[2];
+            contact[0] += f[0];
+            contact[1] += f[1];
             self.contact_forces[i] = contact;
             if self.mouse.down && self.mouse.index == Some(i) {
                 let (dx, dy) = (self.mouse.x - b.x, self.mouse.y - b.y);
@@ -125,8 +138,15 @@ impl State {
             })
             .sum();
         let n = self.bodies.len() as f64;
-        let force =
-            reaction - n * self.params.band_tension as f64 * (self.side - self.params.target_side);
+        let (_, glue_reaction) = glue::forces(
+            &self.glues,
+            &self.bodies,
+            self.side as f32,
+            self.band_velocity,
+            self.params.stiffness,
+        );
+        let force = reaction + glue_reaction as f64
+            - n * self.params.band_tension as f64 * (self.side - self.params.target_side);
         self.band_velocity = ((self.band_velocity as f64 + force * FIXED_STEP / (2.0 * n))
             * (-8.0 * FIXED_STEP).exp())
         .clamp(-1.0, 1.0) as f32;
