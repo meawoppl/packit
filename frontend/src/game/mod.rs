@@ -30,6 +30,8 @@ thread_local! {
     /// Physics of the most recently created `Game`, so browser tests can
     /// observe the simulation behind the mounted component.
     static TEST_PHYSICS: std::cell::RefCell<Option<Physics>> = const { std::cell::RefCell::new(None) };
+    /// The last validated arrangement, for exact comparisons in browser tests.
+    static TEST_REPORT: std::cell::RefCell<Option<Arrangement>> = const { std::cell::RefCell::new(None) };
 }
 
 const STEP_HZ: f64 = 120.0;
@@ -614,22 +616,13 @@ impl Component for Game {
                 false
             }
             Msg::Share => {
-                let arrangement = match &self.last_report {
-                    Some(r) if r.valid => r.arrangement.clone(),
-                    _ => self.physics.arrangement(),
-                };
                 let Some(window) = web_sys::window() else {
                     return false;
                 };
-                let path = format!("/play/{n}?s={}", share::encode(&arrangement));
                 // Put the link in the address bar too, so it survives a failed copy.
-                if let Ok(history) = window.history() {
-                    let _ = history.replace_state_with_url(
-                        &wasm_bindgen::JsValue::NULL,
-                        "",
-                        Some(&path),
-                    );
-                }
+                let Some(path) = self.update_share_url(n) else {
+                    return false;
+                };
                 let url = format!("{}{path}", window.location().origin().unwrap_or_default());
                 let copy = write_clipboard(&window, &url);
                 ctx.link().send_future(async move {
@@ -923,6 +916,23 @@ impl Game {
         true
     }
 
+    /// Point the address bar at a share link for the current solution (the
+    /// validated arrangement if there is one, else the live scene) without
+    /// adding a history entry. Returns the path written.
+    fn update_share_url(&self, n: u32) -> Option<String> {
+        let arrangement = match &self.last_report {
+            Some(r) if r.valid => r.arrangement.clone(),
+            _ => self.physics.arrangement(),
+        };
+        let path = format!("/play/{n}?s={}", share::encode(&arrangement));
+        web_sys::window()?
+            .history()
+            .ok()?
+            .replace_state_with_url(&wasm_bindgen::JsValue::NULL, "", Some(&path))
+            .ok()?;
+        Some(path)
+    }
+
     /// Manual input takes over from an annealing run.
     fn stop_anneal(&mut self) {
         if self.anneal.take().is_some() {
@@ -1149,6 +1159,8 @@ impl Game {
                     100.0 * (side / report.lower_bound - 1.0)
                 );
                 if report.valid {
+                    #[cfg(all(test, target_arch = "wasm32"))]
+                    TEST_REPORT.with(|r| r.replace(Some(report.arrangement.clone())));
                     // Settle at the measured packing; don't resume squeezing.
                     self.desired_side = None;
                     self.physics.load(&report.arrangement);
@@ -1187,6 +1199,9 @@ impl Game {
             }
             Err(e) => self.set_status(&e, true),
         }
+        // Every settle (automatic or Settle & measure) updates the URL, so a
+        // reload or copied address reproduces the current solution.
+        self.update_share_url(ctx.props().n);
         self.busy = false;
     }
 
