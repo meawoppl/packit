@@ -6,6 +6,16 @@ on the Rust CPU fallback and can asynchronously initialize WebGPU through
 attraction, and a bounded mouse spring. The CPU implementation uses the same
 model. Both use 120 Hz substeps, capped at six per frame, for up to 100 squares.
 Contacts are stiff penalty springs, intentionally not exact constraints.
+Off-center collisions and wall corners impart torque using unit-square inverse
+inertia 6. Face contacts distribute pressure and damping over their contact
+patch so near-flat resting faces do not jitter between support corners.
+
+`edge_attraction` (0–40, default 0) pulls nearby facing edge midpoints toward
+flush alignment and applies an aligning torque. Square pairs and all four walls
+use the same 0.75-unit range and falloff. It acts across gaps; penalty contacts
+handle overlaps. Attraction to moving walls also pulls on the outer band.
+`shake_scaled(seed, strength)` scales a deterministic shake from zero to full
+strength; `shake(seed)` is the full-strength version.
 
 Dragging uses a spring capped at 40 force units, so neighbors push back even
 when the pointer is far away. Mouse-target updates never increment the body
