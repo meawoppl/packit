@@ -280,3 +280,84 @@ async fn redundant_corner_unions_settle_on_gpu() {
     assert!(p.motion() < 0.008, "motion={}", p.motion());
     p.dispose();
 }
+
+#[wasm_bindgen_test(async)]
+async fn centered_drag_growth_matches_cpu_on_every_wall() {
+    let gpu = Physics::new(1, 2.0);
+    let cpu = Physics::new(1, 2.0);
+    gpu.init_gpu().await;
+    assert_eq!(gpu.mode(), Backend::Gpu);
+    for (x, y) in [(-2.0, 1.0), (1.0, -2.0), (4.0, 1.0), (1.0, 4.0)] {
+        for p in [&cpu, &gpu] {
+            p.load(&shared::Arrangement {
+                n: 1,
+                side: 2.0,
+                squares: vec![shared::Placement {
+                    cx: 1.0,
+                    cy: 1.0,
+                    theta: 0.0,
+                }],
+            });
+            p.set_drag_expansion(true);
+        }
+        let shifts = [cpu.frame_shift(), gpu.frame_shift()];
+        for _ in 0..80 {
+            for (p, start) in [&cpu, &gpu].into_iter().zip(shifts) {
+                let shift = (p.frame_shift() - start) as f32;
+                p.set_mouse(x + shift, y + shift, Some(0), true);
+                p.step(6).await;
+            }
+        }
+        assert!(gpu.side() > 2.1, "wall {x},{y}: {}", gpu.side());
+        assert!((cpu.side() - gpu.side()).abs() < 0.03);
+        for (a, b) in cpu.bodies().iter().zip(gpu.bodies()) {
+            assert!((a.x - b.x).abs() < 0.03 && (a.y - b.y).abs() < 0.03);
+        }
+        gpu.set_mouse(0.0, 0.0, None, false);
+        let side = gpu.side();
+        gpu.step(6).await;
+        assert_eq!(gpu.side(), side);
+    }
+    gpu.dispose();
+}
+
+#[wasm_bindgen_test(async)]
+async fn gpu_settle_resolves_contacts_and_reports_glued_jams() {
+    let gpu = Physics::new(2, 1.8);
+    gpu.set_pose(0, 0.5, 0.9, 0.0);
+    gpu.set_pose(1, 1.3, 0.9, 0.0);
+    gpu.init_gpu().await;
+    assert_eq!(gpu.mode(), Backend::Gpu);
+    let before = gpu.bodies();
+    gpu.begin_settle();
+    assert_eq!(gpu.bodies(), before);
+    for _ in 0..260 {
+        gpu.step(6).await;
+    }
+    assert_eq!(
+        gpu.settle_status().phase,
+        SettlePhase::Settled,
+        "{:?}",
+        gpu.settle_status()
+    );
+    assert!(gpu.violations().max_depth <= SETTLE_DEPTH);
+    assert!(gpu.paused());
+    let links = [0, 2].map(|edge| Glue {
+        a: Feature::Midpoint { square: 0, edge },
+        b: Feature::Midpoint { square: 1, edge },
+    });
+    gpu.set_glues(&links).unwrap();
+    gpu.begin_settle();
+    for _ in 0..260 {
+        gpu.step(6).await;
+    }
+    assert_eq!(
+        gpu.settle_status().phase,
+        SettlePhase::Blocked,
+        "{:?}",
+        gpu.settle_status()
+    );
+    assert_eq!(gpu.glues(), links);
+    assert!(gpu.paused());
+    gpu.dispose();
+}

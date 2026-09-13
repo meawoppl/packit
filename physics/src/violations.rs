@@ -1,5 +1,5 @@
 //! Geometric overlap telemetry from one snapshot, independent of the backend.
-use crate::Physics;
+use crate::{Feature, Physics, State};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PairViolation {
@@ -16,7 +16,15 @@ pub struct WallViolation {
     pub depth: f64,
 }
 
-/// Positive penetration depths only. Exact touching has depth zero.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct GlueViolation {
+    pub index: usize,
+    pub distance: f64,
+    pub angle: f64,
+}
+
+/// Exact touching has geometric depth zero. Body/wall display strengths also
+/// include glue distance and half its angular error (unit-square lever arm).
 /// This is display/settling telemetry, not a certificate for score submission.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ViolationReport {
@@ -25,6 +33,8 @@ pub struct ViolationReport {
     pub pairs: Vec<PairViolation>,
     pub wall_contacts: Vec<WallViolation>,
     pub max_depth: f64,
+    pub glues: Vec<GlueViolation>,
+    pub max_glue_error: f64,
 }
 
 impl ViolationReport {
@@ -35,6 +45,8 @@ impl ViolationReport {
             pairs: Vec::new(),
             wall_contacts: Vec::new(),
             max_depth: 0.0,
+            glues: Vec::new(),
+            max_glue_error: 0.0,
         };
         for (i, square) in arrangement.squares.iter().enumerate() {
             let mut depths = [0.0_f64; 4];
@@ -77,7 +89,34 @@ impl Physics {
     /// Measures the current readback on CPU; no extra GPU readback or force
     /// buffer is required. At 100 squares this checks 4,950 unordered pairs.
     pub fn violations(&self) -> ViolationReport {
-        ViolationReport::measure(&self.arrangement())
+        self.state.borrow().violation_report()
+    }
+}
+
+impl State {
+    pub(crate) fn violation_report(&self) -> ViolationReport {
+        let mut report = ViolationReport::measure(&self.arrangement());
+        for (index, glue) in self.glues.iter().enumerate() {
+            let (distance, angle) = crate::glue::error(*glue, &self.bodies, self.side as f32);
+            let error = distance.max(angle * 0.5);
+            if error > 0.0 {
+                report.glues.push(GlueViolation {
+                    index,
+                    distance,
+                    angle,
+                });
+                report.max_glue_error = report.max_glue_error.max(error);
+                for feature in [glue.a, glue.b] {
+                    if let Some(i) = feature.square() {
+                        report.bodies[i] = report.bodies[i].max(error);
+                    }
+                    if let Feature::Wall(w) = feature {
+                        report.walls[w as usize] = report.walls[w as usize].max(error);
+                    }
+                }
+            }
+        }
+        report
     }
 }
 
