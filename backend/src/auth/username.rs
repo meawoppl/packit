@@ -6,7 +6,7 @@ pub const UNAVAILABLE: &str = "That username isn't available";
 pub const INVALID: &str =
     "Usernames are 3 to 24 letters, digits, _ or -, starting with a letter or digit";
 
-const RESERVED: &[&str] = &["admin", "root", "system", "packit", "api"];
+const RESERVED: &[&str] = &["admin", "root", "system", "packit", "potatos", "api"];
 
 /// Trim and ASCII-lowercase `raw`, then require
 /// `^[a-z0-9][a-z0-9_-]{2,23}$`. Anything non-ASCII is rejected rather than
@@ -92,7 +92,7 @@ mod tests {
 
     #[test]
     fn reserved_names_match_after_normalization() {
-        for raw in ["admin", "ROOT", " System ", "Packit", "API"] {
+        for raw in ["admin", "ROOT", " System ", "Packit", " Potatos ", "API"] {
             assert!(is_reserved(&normalize(raw).unwrap()), "{raw}");
         }
         assert!(!is_reserved("ada"));

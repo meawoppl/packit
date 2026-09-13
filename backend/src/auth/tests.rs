@@ -704,6 +704,7 @@ async fn names_are_validated_reserved_and_credited_users_locked_out() {
         " Root ",
         "API",
         "packit",
+        "Potatos",
         "SYSTEM",
         &credited,
         &credited.to_uppercase(),

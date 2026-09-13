@@ -330,7 +330,7 @@ fn creation_started(ceremony: &str) -> Reply {
         json!({
             "ceremony": ceremony,
             "options": { "publicKey": {
-                "rp": { "name": "packit", "id": "localhost" },
+                "rp": { "name": "Potatos", "id": "localhost" },
                 "user": { "id": b64(&[5; 16]), "name": "bob", "displayName": "bob" },
                 "challenge": b64(&[8; 32]),
                 "pubKeyCredParams": [{ "type": "public-key", "alg": -7 }],
