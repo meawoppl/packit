@@ -58,8 +58,8 @@ impl Physics {
         self.state.borrow().interaction.frame_shift
     }
 
-    /// Release compression/attraction and resolve contacts with damping. Deep
-    /// intersections left after a brief relaxation slowly open all four walls.
+    /// Release compression/attraction and resolve contacts with damping. The
+    /// box slowly opens all four walls only once deep overlap stops improving.
     /// No poses are changed by this call, and glue constraints remain intact.
     pub fn begin_settle(&self) {
         let mut s = self.state.borrow_mut();

@@ -48,7 +48,7 @@ pub async fn play(
     let code = query.and_then(|Query(q)| q.s);
     let shared = n
         .zip(code)
-        .and_then(|(n, s)| share::decode(&s, n).ok().map(|a| (a, s)));
+        .and_then(|(n, s)| share::decode(&s, n).ok().map(|snap| (snap.arrangement, s)));
     let tags = meta_tags(
         &state.public_url,
         n,
@@ -66,7 +66,7 @@ pub async fn preview_png(query: Option<Query<PreviewQuery>>) -> Response {
     let png = query
         .ok_or_else(|| "n and s are required".to_string())
         .and_then(|Query(q)| share::decode(&q.s, q.n))
-        .and_then(|a| render(&a));
+        .and_then(|snap| render(&snap.arrangement));
     match png {
         Ok(png) => (
             [
@@ -241,7 +241,12 @@ mod tests {
             }],
         };
         let huge = square(1e300);
-        assert_eq!(share::decode(&share::encode(&huge), 1).unwrap(), huge);
+        assert_eq!(
+            share::decode(&share::encode(&huge, &[]), 1)
+                .unwrap()
+                .arrangement,
+            huge
+        );
         let normalized = square(1e300f64.sin().atan2(1e300f64.cos()));
         assert_eq!(render(&huge).unwrap(), render(&normalized).unwrap());
         assert_ne!(

@@ -55,6 +55,7 @@ Note: memory-serve 2.x requires axum 0.8+. For axum 0.7, use memory-serve 0.6.0 
 - `refs/best_known.json` is compiled into the backend (`include_str!`) and served at `/api/records`. A unit test checks it parses, is sorted by `n`, and respects the `sqrt(n)` area bound.
 - `rank` in `ScoreEntry` is computed at read time (smaller side first, earlier submission breaks ties), so a rank returned at submit time goes stale.
 - Axum is 0.7: path params use `/:id`, not `/{id}`.
+- Glue types (`Feature`, `Glue`, `MAX_GLUES`) and their validation (`shared::glue::check`) live in `shared`; `physics` re-exports them. Share codes carry glue in an optional tagged trailer (`'G'`, version 2, one `u16` per feature) written only when there is glue, so glue-free codes stay byte-identical and existing links and dedup hashes remain valid.
 - The share-link codec and load limits live in `shared::share`, used by the frontend (share links, JSON import) and the backend (link previews). `/play/:n` is a backend route that injects meta tags into trunk's built `dist/index.html` (via `include_str!`) before `</head>` and changes nothing else; tests assert the rest of the page is byte-identical, so hashed scripts and SRI survive. Absolute URLs come from `PUBLIC_URL`, never request headers.
 
 ## Workstream Ownership

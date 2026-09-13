@@ -759,9 +759,11 @@ fn two_squares() -> Arrangement {
 #[wasm_bindgen_test]
 async fn share_link_loads_paused_and_unvalidated() {
     let _gpu = NoWebGpu::install();
-    let (handle, root, physics) = mount_at(&format!("s={}", share::encode(&two_squares()))).await;
+    let (handle, root, physics) =
+        mount_at(&format!("s={}", share::encode(&two_squares(), &[]))).await;
     assert!(physics.paused(), "shared packings open paused");
     assert_eq!(physics.arrangement(), two_squares());
+    assert!(physics.glues().is_empty());
     assert!(text(&root, ".pg-status").starts_with("Shared packing loaded"));
     assert!(
         text(&root, ".pg-benchmark").contains("unchecked")
@@ -994,7 +996,10 @@ async fn share_button_copies_a_short_link_for_the_captured_precise_snapshot() {
     force_button(&root, "Shake").click();
     wait_share(&root).await;
     let body = api.requests.borrow()[0].clone();
-    assert_eq!(share::decode(&body.code, body.n).unwrap(), report);
+    assert_eq!(
+        share::decode(&body.code, body.n).unwrap().arrangement,
+        report
+    );
     assert_eq!(
         clipboard.values.borrow().as_slice(),
         ["https://packit.test/s/0123456789abcdef01234567"]
@@ -1014,7 +1019,7 @@ async fn sharing_during_a_settle_keeps_it_and_its_snapshot() {
     let _gpu = NoWebGpu::install();
     let api = ShareApi::install(&[OK]);
     let clipboard = Clipboard::install(false);
-    let (handle, root, physics) = mount_at(&format!("s={}", share::encode(&cramped()))).await;
+    let (handle, root, physics) = mount_at(&format!("s={}", share::encode(&cramped(), &[]))).await;
     submit_button(&root, "Settle").click();
     sleep(30).await;
     assert_eq!(physics.settle_status().phase, SettlePhase::Running);
@@ -1023,7 +1028,10 @@ async fn sharing_during_a_settle_keeps_it_and_its_snapshot() {
     sleep(30).await;
     wait_share(&root).await;
     let body = api.requests.borrow()[0].clone();
-    assert_eq!(share::decode(&body.code, body.n).unwrap(), snapshot);
+    assert_eq!(
+        share::decode(&body.code, body.n).unwrap().arrangement,
+        snapshot
+    );
     assert_eq!(clipboard.values.borrow().len(), 1);
     assert_eq!(
         physics.settle_status().phase,
@@ -1268,6 +1276,63 @@ async fn unmount_discards_pending_share_without_writing_the_clipboard() {
     assert!(clipboard.values.borrow().is_empty());
 }
 
+/// Every feature kind, walls included, between the two squares.
+fn two_square_glues() -> Vec<Glue> {
+    vec![
+        Glue {
+            a: Feature::Edge { square: 0, edge: 0 },
+            b: Feature::Edge { square: 1, edge: 2 },
+        },
+        Glue {
+            a: Feature::Corner {
+                square: 0,
+                corner: 3,
+            },
+            b: Feature::Wall(1),
+        },
+        Glue {
+            a: Feature::Wall(3),
+            b: Feature::Midpoint { square: 1, edge: 1 },
+        },
+    ]
+}
+
+#[wasm_bindgen_test]
+async fn share_captures_the_glue_and_reopening_the_link_restores_it() {
+    let _gpu = NoWebGpu::install();
+    let api = ShareApi::install(&[UNAVAILABLE, OK]);
+    let _clipboard = Clipboard::install(false);
+    let (handle, root, physics) = mount().await;
+    physics.set_glues(&two_square_glues()).unwrap();
+    submit_button(&root, "Share").click();
+    sleep(30).await;
+    // Glue edited while the request is in flight stays out of the link,
+    // including the retry.
+    physics.set_glues(&[]).unwrap();
+    wait_share(&root).await;
+    let requests = api.requests.borrow().clone();
+    assert_eq!(requests.len(), 2, "one retry");
+    assert_eq!(
+        requests[0], requests[1],
+        "the retry sends the same snapshot"
+    );
+    let body = requests[1].clone();
+    assert_eq!(
+        share::decode(&body.code, 2).unwrap().glues,
+        two_square_glues()
+    );
+    handle.destroy();
+    root.remove();
+
+    let (handle, root, physics) = mount_at(&format!("s={}", body.code)).await;
+    assert_eq!(physics.glues(), two_square_glues());
+    assert!(physics.paused(), "shared packings open paused");
+    assert!(text(&root, ".pg-status").starts_with("Shared packing loaded"));
+    assert!(TEST_REPORT.with(|r| r.borrow().is_none()), "not validated");
+    handle.destroy();
+    root.remove();
+}
+
 #[wasm_bindgen_test]
 async fn gentle_squeeze_tightens_and_hands_over_to_anneal() {
     let _gpu = NoWebGpu::install();
@@ -1371,7 +1436,7 @@ async fn squeeze_down_relaxes_between_squeezes_and_stop_keeps_glue() {
 #[wasm_bindgen_test]
 async fn settling_opens_the_box_instead_of_popping() {
     let _gpu = NoWebGpu::install();
-    let (handle, root, physics) = mount_at(&format!("s={}", share::encode(&cramped()))).await;
+    let (handle, root, physics) = mount_at(&format!("s={}", share::encode(&cramped(), &[]))).await;
     click_button(&root, ".pg-submit", "Settle");
     sleep(30).await;
     let status = text(&root, ".pg-status");
@@ -1498,7 +1563,7 @@ fn click_button(root: &Element, scope: &str, label: &str) {
 #[wasm_bindgen_test]
 async fn starting_a_run_cancels_a_settle() {
     let _gpu = NoWebGpu::install();
-    let (handle, root, physics) = mount_at(&format!("s={}", share::encode(&cramped()))).await;
+    let (handle, root, physics) = mount_at(&format!("s={}", share::encode(&cramped(), &[]))).await;
     click_button(&root, ".pg-submit", "Settle");
     sleep(100).await;
     let status = text(&root, ".pg-status");
@@ -1527,7 +1592,7 @@ async fn starting_a_run_cancels_a_settle() {
 #[wasm_bindgen_test]
 async fn cancelling_a_settle_drops_its_pending_submit() {
     let _gpu = NoWebGpu::install();
-    let (handle, root, physics) = mount_at(&format!("s={}", share::encode(&cramped()))).await;
+    let (handle, root, physics) = mount_at(&format!("s={}", share::encode(&cramped(), &[]))).await;
     let name: HtmlInputElement = root
         .query_selector("#pg-player")
         .unwrap()
@@ -1574,7 +1639,7 @@ async fn cancelling_a_settle_drops_its_pending_submit() {
 #[wasm_bindgen_test]
 async fn submitting_during_a_settle_submits_when_it_measures() {
     let _gpu = NoWebGpu::install();
-    let (handle, root, _physics) = mount_at(&format!("s={}", share::encode(&cramped()))).await;
+    let (handle, root, _physics) = mount_at(&format!("s={}", share::encode(&cramped(), &[]))).await;
     let name: HtmlInputElement = root
         .query_selector("#pg-player")
         .unwrap()
@@ -1693,7 +1758,7 @@ async fn settling_and_sharing_leave_the_address_bar_alone() {
     let _gpu = NoWebGpu::install();
     let _api = ShareApi::install(&[OK]);
     let _clipboard = Clipboard::install(false);
-    let solution = format!("s={}", share::encode(&two_squares()));
+    let solution = format!("s={}", share::encode(&two_squares(), &[]));
     for query in ["", solution.as_str()] {
         let (handle, root, _) = mount_at(query).await;
         let href = web_sys::window().unwrap().location().href().unwrap();

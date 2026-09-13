@@ -3,6 +3,7 @@ use uuid::Uuid;
 use ws_bridge::WsEndpoint;
 
 pub mod geometry;
+pub mod glue;
 pub mod share;
 
 // ---------------------------------------------------------------------------

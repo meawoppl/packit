@@ -323,14 +323,18 @@ impl Component for Game {
             .and_then(|q| q.s);
         if let Some(code) = code {
             match share::decode(&code, n) {
-                Ok(a) => {
-                    game.physics.load(&a);
+                Ok(snapshot) => {
+                    // Loading clears glue, so the shared glue goes on after it.
+                    game.physics.load(&snapshot.arrangement);
                     game.physics.set_paused(true);
                     game.view_side.set(game.physics.side());
-                    game.set_status(
-                        "Shared packing loaded, not yet validated. Settle to check it.",
-                        false,
-                    );
+                    match game.physics.set_glues(&snapshot.glues) {
+                        Ok(()) => game.set_status(
+                            "Shared packing loaded, not yet validated. Settle to check it.",
+                            false,
+                        ),
+                        Err(e) => game.set_status(&format!("Share link glue: {e}"), true),
+                    }
                 }
                 Err(e) => game.set_status(&format!("Share link: {e}"), true),
             }
@@ -748,11 +752,11 @@ impl Component for Game {
                     return false;
                 }
                 // Freeze the requested snapshot, including the solver's f64
-                // precision. Later edits never change what this link contains.
-                let arrangement = self.share_arrangement();
+                // precision and the glue. Later edits never change what this
+                // link contains.
                 let body = shared::CreateShare {
-                    n: arrangement.n,
-                    code: share::encode(&arrangement),
+                    n: ctx.props().n,
+                    code: self.share_code(),
                 };
                 self.sharing = true;
                 self.short_share = None;
@@ -1111,10 +1115,17 @@ impl Game {
         true
     }
 
+    /// The current solution: the certified arrangement if there is one,
+    /// else the live scene.
     fn share_arrangement(&self) -> Arrangement {
         self.certified
             .clone()
             .unwrap_or_else(|| self.physics.arrangement())
+    }
+
+    /// Share code for the current solution with the scene's glue.
+    fn share_code(&self) -> String {
+        share::encode(&self.share_arrangement(), &self.physics.glues())
     }
 
     fn copy_share(&self, ctx: &Context<Self>) {
@@ -1134,6 +1145,7 @@ impl Game {
             )
         });
     }
+
     /// Manual input takes over from an annealing run.
     fn stop_anneal(&mut self) {
         if self.anneal.take().is_some() {
