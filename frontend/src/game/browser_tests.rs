@@ -4,8 +4,8 @@
 
 use super::*;
 use crate::account::browser_tests::{
-    click, find, login_started, not_signed_in, reply, text_of, type_username, wait_until, Api,
-    Passkeys,
+    click, empty, find, login_started, not_signed_in, reply, text_of, type_username, wait_until,
+    Api, Passkeys,
 };
 use crate::account::{AccountMenu, AccountProvider};
 use wasm_bindgen_test::*;
@@ -2360,8 +2360,9 @@ async fn mount_site(query: &str) -> (yew::AppHandle<Site>, Element, Physics) {
 }
 
 fn sign_in_api() -> Api {
+    let ada = reply(200, serde_json::json!({ "username": "ada" }));
     Api::install(&[
-        ("/api/auth/me", vec![not_signed_in()]),
+        ("/api/auth/me", vec![not_signed_in(), ada]),
         ("/api/auth/login/start", vec![login_started()]),
         (
             "/api/auth/login/finish",
@@ -2437,9 +2438,13 @@ async fn a_stale_sign_in_does_not_share_for_a_newer_ask() {
     let _clipboard = Clipboard::install(false);
     let ada = || reply(200, serde_json::json!({ "username": "ada" }));
     let auth = Api::install(&[
-        ("/api/auth/me", vec![not_signed_in()]),
+        (
+            "/api/auth/me",
+            vec![not_signed_in(), not_signed_in(), ada()],
+        ),
         ("/api/auth/login/start", vec![login_started()]),
         ("/api/auth/login/finish", vec![ada().after(800), ada()]),
+        ("/api/auth/logout", vec![empty(204)]),
     ]);
     let _keys = Passkeys::install();
     let (handle, root, _) = mount_site(&format!("s={}", glued_code())).await;
@@ -2461,6 +2466,11 @@ async fn a_stale_sign_in_does_not_share_for_a_newer_ask() {
         "the stale sign-in shared nothing"
     );
     assert!(find(&root, ".account-name").is_none());
+    assert_eq!(
+        auth.sent("/api/auth/logout").len(),
+        1,
+        "that session was signed out"
+    );
     assert_eq!(sign_in_note(&root).as_deref(), Some(SHARE_NOTE));
     click(&root, ".account-sign-in");
     wait_until("the share", || shares.requests.borrow().len() == 1).await;

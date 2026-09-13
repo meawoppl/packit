@@ -97,11 +97,17 @@ records and the leaderboards stay public and anonymous.
 - There is no account recovery. An account whose passkeys are all lost can't
   be recovered, so the sign-up help asks players to keep a synced passkey or
   add a second one.
-- The header's account state numbers each auth operation (the startup
-  `/api/auth/me`, sign-in, registration, adding a passkey, sign-out) and
-  applies only the latest one's response. Closing the dialog or a new sign-in
-  request abandons a ceremony in flight, so a late response can't undo a
-  newer sign-in or sign-out, or complete another request.
+- The browser applies a response's `Set-Cookie` whether or not the page
+  still wants it, so requests that set or clear the session cookie
+  (sign-in and registration finishes, sign-out) run one at a time. Each is
+  followed, under the same lock, by an `/api/auth/me` check, and the page
+  shows whichever account the server says the cookie holds. A ceremony
+  cancelled before its finish never sends it. One cancelled while its finish
+  is in flight is signed out again once it lands, so Cancel never leaves a
+  sign-in behind. Until that has settled, no other sign-in, registration or
+  sign-out starts (the dialog says "Finishing sign-in…"), and a late
+  response never answers a dismissed or newer request. The startup `/me`
+  counts only if nothing has happened since.
 - A short link records its creator (`solution_shares.created_by`). Sharing a
   snapshot that already has a link returns that link unchanged, so it never
   reveals or changes who created it, and links from before accounts stay

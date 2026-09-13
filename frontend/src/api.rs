@@ -126,54 +126,66 @@ pub async fn me() -> Result<Option<String>, Failure> {
     }
 }
 
-/// Create an account with a new passkey, which also signs in. Returns the
-/// username as the server stored it.
-pub async fn register(username: &str) -> Result<String, Failure> {
+/// A passkey ceremony up to its finish. Preparing it leaves the session
+/// alone; [`finish`] is the request that sets the session cookie.
+pub struct Prepared {
+    finish: &'static str,
+    ceremony: String,
+    credential: serde_json::Value,
+}
+
+/// Start an account with a new passkey, up to its finish.
+pub async fn prepare_registration(username: &str) -> Result<Prepared, Failure> {
     let body = AuthUsername {
         username: username.into(),
     };
     let started: Started = post("/api/auth/register/start", &body).await?;
-    let credential = webauthn::create(&started.options).await?;
-    finish("/api/auth/register/finish", started.ceremony, credential).await
+    Ok(Prepared {
+        finish: "/api/auth/register/finish",
+        credential: webauthn::create(&started.options).await?,
+        ceremony: started.ceremony,
+    })
 }
 
-/// Sign in to `username` with one of its passkeys.
-pub async fn sign_in(username: &str) -> Result<String, Failure> {
+/// Sign in to `username` with one of its passkeys, up to the finish.
+pub async fn prepare_sign_in(username: &str) -> Result<Prepared, Failure> {
     let body = AuthUsername {
         username: username.into(),
     };
     let started: Started = post("/api/auth/login/start", &body).await?;
-    let credential = webauthn::get(&started.options).await?;
-    finish("/api/auth/login/finish", started.ceremony, credential).await
+    Ok(Prepared {
+        finish: "/api/auth/login/finish",
+        credential: webauthn::get(&started.options).await?,
+        ceremony: started.ceremony,
+    })
+}
+
+/// Finish a prepared ceremony and return the account's username. For a
+/// sign-in or registration this sets the session cookie.
+pub async fn finish(prepared: Prepared) -> Result<String, Failure> {
+    let body = Finish {
+        ceremony: prepared.ceremony,
+        credential: prepared.credential,
+    };
+    let me: AuthMe = post(prepared.finish, &body).await?;
+    Ok(me.username)
 }
 
 /// Add another passkey to the signed-in account. The server wants a recent
-/// sign-in for this.
+/// sign-in for this. It doesn't change the session.
 pub async fn add_passkey() -> Result<(), Failure> {
     let resp = with_session(Request::post("/api/auth/passkeys/start"))
         .send()
         .await
         .map_err(network)?;
     let started: Started = decode(resp).await?;
-    let credential = webauthn::create(&started.options).await?;
-    finish("/api/auth/passkeys/finish", started.ceremony, credential).await?;
-    Ok(())
-}
-
-async fn finish(
-    url: &str,
-    ceremony: String,
-    credential: serde_json::Value,
-) -> Result<String, Failure> {
-    let me: AuthMe = post(
-        url,
-        &Finish {
-            ceremony,
-            credential,
-        },
-    )
+    finish(Prepared {
+        finish: "/api/auth/passkeys/finish",
+        credential: webauthn::create(&started.options).await?,
+        ceremony: started.ceremony,
+    })
     .await?;
-    Ok(me.username)
+    Ok(())
 }
 
 pub async fn sign_out() -> Result<(), Failure> {
