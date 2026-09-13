@@ -23,7 +23,8 @@ use std::rc::Rc;
 use std::time::Duration;
 use wasm_bindgen::JsCast;
 use web_sys::{
-    Event, HtmlCanvasElement, HtmlInputElement, KeyboardEvent, PointerEvent, WheelEvent,
+    Event, HtmlCanvasElement, HtmlElement, HtmlInputElement, KeyboardEvent, PointerEvent,
+    WheelEvent,
 };
 use yew::context::ContextHandle;
 use yew::prelude::*;
@@ -116,6 +117,10 @@ pub enum Msg {
     Key(KeyboardEvent),
     SetCount(String),
     TargetSide(f64),
+    CornerStart(u8, PointerEvent),
+    CornerMove(PointerEvent),
+    CornerEnd(PointerEvent, bool),
+    CornerNudge,
     /// A range-stepping key went down on the Squeeze slider. Its `change`
     /// then fires on every step, so the key's release ends the squeeze
     /// instead.
@@ -262,6 +267,8 @@ pub struct Game {
     desired_side: Option<f64>,
     /// Set while a range-stepping key is held on the Squeeze slider.
     squeeze_key: bool,
+    corner_drag: Option<CornerDrag>,
+    corner_nudge: Option<f64>,
     readout: Readout,
     /// Detects the double tap that opens the glue tool.
     taps: tap::DoubleTap,
@@ -272,6 +279,24 @@ pub struct Game {
     glue_resume: bool,
     /// Set while this screen's Settle runs in the physics.
     settling: bool,
+}
+
+/// Pointer movement is measured in the view captured at press time, so a
+/// moving spring boundary never changes what the same finger position requests.
+struct CornerDrag {
+    pointer: i32,
+    element: HtmlElement,
+    start: (f64, f64),
+    side: f64,
+    scale: f64,
+    corner: u8,
+    moved: bool,
+}
+
+fn corner_target(side: f64, scale: f64, corner: u8, dx: f64, dy: f64) -> f64 {
+    let sx = if corner & 1 == 0 { -1.0 } else { 1.0 };
+    let sy = if corner & 2 == 0 { -1.0 } else { 1.0 };
+    (side + (sx * dx + sy * dy) / scale).clamp(1.0, 1000.0)
 }
 
 fn initial_side(n: u32) -> f64 {
@@ -306,7 +331,7 @@ fn steps_range(e: &KeyboardEvent) -> bool {
 /// `element.focus({preventScroll: true})`; focusing must not scroll the page,
 /// or pointer-to-world coordinates shift mid-drag. The pinned web-sys has no
 /// `FocusOptions`, so the options object is built by hand.
-fn focus_without_scroll(canvas: &HtmlCanvasElement) {
+fn focus_without_scroll(canvas: &HtmlElement) {
     let options = js_sys::Object::new();
     let _ = js_sys::Reflect::set(&options, &"preventScroll".into(), &true.into());
     if let Ok(focus) = js_sys::Reflect::get(canvas, &"focus".into()) {
@@ -404,6 +429,8 @@ impl Component for Game {
             run_kind: RunKind::Anneal,
             desired_side: None,
             squeeze_key: false,
+            corner_drag: None,
+            corner_nudge: None,
             readout: Readout::default(),
             taps: tap::DoubleTap::default(),
             glue_tool: None,
@@ -504,6 +531,28 @@ impl Component for Game {
         ) {
             self.drop_glue_tool();
         }
+        // A different control takes ownership of the scene; a captured corner
+        // must not revive its old request on a later pointer event.
+        if (self.corner_drag.is_some() || self.corner_nudge.is_some())
+            && !matches!(
+                msg,
+                Msg::Frame(_)
+                    | Msg::Stepped
+                    | Msg::GpuReady
+                    | Msg::Records(_)
+                    | Msg::CornerStart(..)
+                    | Msg::CornerMove(_)
+                    | Msg::CornerEnd(..)
+                    | Msg::TargetSide(_)
+            )
+        {
+            self.end_corner();
+            self.corner_nudge = None;
+            self.desired_side = None;
+            let mut params = self.physics.params();
+            params.band_tension = 0.0;
+            self.physics.set_params(params);
+        }
         match msg {
             Msg::Frame(time) => {
                 self.frame = None;
@@ -512,7 +561,9 @@ impl Component for Game {
                     .map_or(0.0, |last| ((time - last) / 1000.0).clamp(0.0, 0.05));
                 self.last_time = Some(time);
                 // Either can change the status, which the readout doesn't track.
-                let changed = self.tick_anneal(elapsed) | self.tick_settle(ctx);
+                let changed = self.tick_corner_nudge(elapsed)
+                    | self.tick_anneal(elapsed)
+                    | self.tick_settle(ctx);
                 if self.physics.paused() {
                     self.accumulator = 0.0;
                 } else {
@@ -687,21 +738,77 @@ impl Component for Game {
                 }
                 false
             }
-            Msg::TargetSide(side) => {
-                self.stop_anneal();
-                let mut params = self.physics.params();
-                // A size edit is a spring target, never a teleport. Enable
-                // pressure if it was off, retaining any chosen nonzero strength.
-                if params.band_tension == 0.0 {
-                    params.band_tension = 30.0;
+            Msg::CornerStart(corner, e) => {
+                if self.busy || self.corner_drag.is_some() || !e.is_primary() || e.button() != 0 {
+                    return false;
                 }
-                self.desired_side = Some(side);
-                params.target_side = scrub_target(side, self.physics.side(), params.band_tension);
-                self.physics.set_params(params);
-                self.set_pause(false);
-                self.refresh_readout();
+                e.prevent_default();
+                let Some(canvas) = self.canvas.cast::<HtmlCanvasElement>() else {
+                    return false;
+                };
+                let element = e.target_unchecked_into::<HtmlElement>();
+                let _ = element.set_pointer_capture(e.pointer_id());
+                focus_without_scroll(&element);
+                self.stop_anneal();
+                if self.corner_nudge.take().is_some() {
+                    self.desired_side = None;
+                    let mut params = self.physics.params();
+                    params.band_tension = 0.0;
+                    self.physics.set_params(params);
+                }
+                self.dragging = false;
+                self.rotating = false;
+                self.push_mouse();
+                self.corner_drag = Some(CornerDrag {
+                    pointer: e.pointer_id(),
+                    element,
+                    start: (e.client_x() as f64, e.client_y() as f64),
+                    side: self.physics.side(),
+                    scale: canvas.get_bounding_client_rect().width() * 0.91 / self.extent.get(),
+                    corner,
+                    moved: false,
+                });
                 true
             }
+            Msg::CornerMove(e) => {
+                let Some(drag) = self.corner_drag.as_mut() else {
+                    return false;
+                };
+                if drag.pointer != e.pointer_id() {
+                    return false;
+                }
+                e.prevent_default();
+                let dx = e.client_x() as f64 - drag.start.0;
+                let dy = e.client_y() as f64 - drag.start.1;
+                if !drag.moved && dx.hypot(dy) < 3.0 {
+                    return false;
+                }
+                drag.moved = true;
+                let target = corner_target(drag.side, drag.scale, drag.corner, dx, dy);
+                self.squeeze_to(target)
+            }
+            Msg::CornerEnd(e, cancelled) => {
+                if self
+                    .corner_drag
+                    .as_ref()
+                    .is_none_or(|d| d.pointer != e.pointer_id())
+                {
+                    return false;
+                }
+                let drag = self.end_corner().unwrap();
+                if !cancelled && !drag.moved {
+                    return self.nudge_corner();
+                }
+                self.release_squeeze();
+                true
+            }
+            Msg::CornerNudge => {
+                if self.busy {
+                    return false;
+                }
+                self.nudge_corner()
+            }
+            Msg::TargetSide(side) => self.squeeze_to(side),
             Msg::SqueezeKey => {
                 self.squeeze_key = true;
                 false
@@ -998,12 +1105,9 @@ impl Component for Game {
         };
         html! {
             <div class="packing-game">
+                <div class="pg-layout">
+                    <div class="pg-stage">
                 <div class="pg-top">
-                    <div>
-                        <div class="pg-eyebrow">{ "A little chaos. A tighter fit." }</div>
-                        <h1>{ "Make room." }</h1>
-                        <div class="pg-sub">{ "Pack unit squares. Chase the smallest container." }</div>
-                    </div>
                     <Benchmark
                         side={bench_side}
                         reference_side={self.record.as_ref().map(|r| r.side)}
@@ -1016,9 +1120,9 @@ impl Component for Game {
                             onchange={link.callback(|e: Event| Msg::SetCount(input_value(&e)))} />
                     </label>
                 </div>
-                <div class="pg-layout">
-                    <div>
+
                         <div class="pg-board">
+                            <div class="pg-canvas-frame">
                             <canvas ref={self.canvas.clone()} tabindex="0"
                                 aria-label="Square packing playfield. Drag to move. Select a square, then use arrow keys to move and Q or E to rotate. Double-click to glue two features; Escape cancels."
                                 onpointerdown={link.callback(Msg::PointerDown)}
@@ -1027,30 +1131,32 @@ impl Component for Game {
                                 onpointercancel={link.callback(|_| Msg::PointerUp)}
                                 onlostpointercapture={link.callback(|_| Msg::PointerUp)}
                                 onkeydown={link.callback(Msg::Key)} />
+                            { for [(0u8, "top left", "↘"), (1, "top right", "↙"), (2, "bottom left", "↗"), (3, "bottom right", "↖")].map(|(corner, name, arrow)| {
+                                let inset = (50.0 - 45.5 * self.physics.side() / self.extent.get()).max(0.0);
+                                let x = if corner & 1 == 0 { inset } else { 100.0 - inset };
+                                let y = if corner & 2 == 0 { inset } else { 100.0 - inset };
+                                html! { <button class="pg-corner" disabled={self.busy}
+                                    aria-label={format!("Squeeze {name} corner")}
+                                    title="Drag inward to squeeze; release to settle. Tap to nudge."
+                                    style={format!("left:{x}%;top:{y}%")}
+                                    onpointerdown={link.callback(move |e| Msg::CornerStart(corner, e))}
+                                    onpointermove={link.callback(Msg::CornerMove)}
+                                    onpointerup={link.callback(|e| Msg::CornerEnd(e, false))}
+                                    onpointercancel={link.callback(|e| Msg::CornerEnd(e, true))}
+                                    onlostpointercapture={link.callback(|e| Msg::CornerEnd(e, true))}
+                                    onclick={link.batch_callback(|e: MouseEvent| (e.detail() == 0).then_some(Msg::CornerNudge))}>
+                                    {arrow}
+                                </button> }
+                            }) }
+                            </div>
                             <div class="pg-board-footer">
-                                <span class="pg-mode">{ &r.mode }</span>
+                                <span class="pg-corner-hint">{ "Drag a corner inward · release to settle" }</span>
                                 <span class="pg-turn">
                                     <button aria-label="Turn left" onclick={link.callback(|_| Msg::Turn(TOUCH_TURN))}>{ "⟲" }</button>
                                     <button aria-label="Turn right" onclick={link.callback(|_| Msg::Turn(-TOUCH_TURN))}>{ "⟳" }</button>
                                 </span>
-                                { (!self.physics.glues().is_empty()).then(|| html! {
-                                    <button class="pg-clear-glue" onclick={link.callback(|_| Msg::ClearGlue)}>{ "Clear glue" }</button>
-                                }) }
-                                <span class="pg-hint-mouse">{ "drag · wheel to rotate · shift-drag to spin · double-click to glue" }</span>
-                                <span class="pg-hint-touch">{ "drag to move · tap a square, then ⟲ ⟳ to turn · double-tap to glue" }</span>
                             </div>
                         </div>
-                        <p class="pg-help">{ "Force arrows: blue = net contact and edge pull · gold = mouse spring. Dashed band = target size." }</p>
-                        <details class="pg-details">
-                            <summary>{ "How to play & what the score means" }</summary>
-                            <p>{ "Each square has side length 1. Make the container smaller while keeping every square inside and avoiding overlap. Dragging and rotating resume physics, push neighbors, and resist blocked motion. Hold the Squeeze slider down to press the band in on the packing; let go and the box springs back out from the squares' pressure until nothing overlaps, then settles. Turn on forces, or use Q/E to rotate a selected square. Arrow keys nudge it. Space pauses." }</p>
-                            <p>{ "The simulation has springy contacts. “Settle” lets the contacts resolve, opening the box only while squares still overlap, then pauses the scene and refines its contacts with a numerical polynomial solver. Only an independently validated arrangement can be submitted. A best-known packing is an upper bound, not necessarily a proven optimum. A numerical match is not an exact proof." }</p>
-                            <p>
-                                <a href="https://kingbird.myphotos.cc/packing/squares_in_squares.html" target="_blank" rel="noopener">
-                                    { "Explore the research records ↗" }
-                                </a>
-                            </p>
-                        </details>
                     </div>
                     <aside class="pg-sidebar">
                         <section class="pg-panel pg-submit">
@@ -1059,21 +1165,6 @@ impl Component for Game {
                             <div class="pg-meter"><span style={format!("width: {}", r.meter)}></span></div>
                             <div class="pg-row"><span>{ "Area filled" }</span><strong>{ &r.density }</strong></div>
                             <div class="pg-help">{ &r.record }</div>
-                            <div class="pg-squeeze">
-                                <label class="pg-row" for="pg-size">
-                                    { "Squeeze " }<output>{ format!("{:.3}", r.size_value) }</output>
-                                </label>
-                                <input id="pg-size" type="range" min={r.squeeze_range.0.to_string()} max={r.squeeze_range.1.to_string()} step="0.001"
-                                    value={r.squeeze.to_string()}
-                                    oninput={link.callback(|e: InputEvent| Msg::TargetSide(input_value(&e).parse().unwrap_or(1.0)))}
-                                    onchange={link.callback(|_| Msg::SqueezeChange)}
-                                    onpointerup={link.callback(|_| Msg::SqueezeRelease)}
-                                    onpointercancel={link.callback(|_| Msg::SqueezeRelease)}
-                                    onkeydown={link.batch_callback(|e: KeyboardEvent| steps_range(&e).then_some(Msg::SqueezeKey))}
-                                    onkeyup={link.batch_callback(|e: KeyboardEvent| steps_range(&e).then_some(Msg::SqueezeRelease))}
-                                    onblur={link.callback(|_| Msg::SqueezeRelease)} />
-                                <p class="pg-help">{ "Hold to press the band in. Let go and the box springs back until nothing overlaps." }</p>
-                            </div>
                             <div class="pg-actions">
                                 <button class="pg-primary" disabled={self.busy} onclick={link.callback(|_| Msg::Measure)}>
                                     { if self.settling { "Settling…" } else { "Settle" } }
@@ -1109,6 +1200,21 @@ impl Component for Game {
                         </section>
                         <details class="pg-panel pg-advanced">
                             <summary>{ "Advanced" }</summary>
+                            <div class="pg-squeeze">
+                                <label class="pg-row" for="pg-size" title="Hold to squeeze; release to settle">
+                                    { "Squeeze " }<output>{ format!("{:.3}", r.size_value) }</output>
+                                </label>
+                                <input id="pg-size" type="range" min={r.squeeze_range.0.to_string()} max={r.squeeze_range.1.to_string()} step="0.001"
+                                    value={r.squeeze.to_string()}
+                                    oninput={link.callback(|e: InputEvent| Msg::TargetSide(input_value(&e).parse().unwrap_or(1.0)))}
+                                    onchange={link.callback(|_| Msg::SqueezeChange)}
+                                    onpointerup={link.callback(|_| Msg::SqueezeRelease)}
+                                    onpointercancel={link.callback(|_| Msg::SqueezeRelease)}
+                                    onkeydown={link.batch_callback(|e: KeyboardEvent| steps_range(&e).then_some(Msg::SqueezeKey))}
+                                    onkeyup={link.batch_callback(|e: KeyboardEvent| steps_range(&e).then_some(Msg::SqueezeRelease))}
+                                    onblur={link.callback(|_| Msg::SqueezeRelease)} />
+                            </div>
+
                             <label class="pg-row" for="pg-band">
                                 { "Outer band tension " }
                                 <output>{ if params.band_tension > 0.0 { format!("{}", params.band_tension) } else { "Off".into() } }</output>
@@ -1163,6 +1269,27 @@ impl Component for Game {
                                     onchange={link.callback(Msg::ImportFile)} />
                             </div>
                         </details>
+                        <section class="pg-instructions">
+                            <div class="pg-board-notes">
+                                <span class="pg-mode">{ &r.mode }</span>
+                                { (!self.physics.glues().is_empty()).then(|| html! {
+                                    <button class="pg-clear-glue" onclick={link.callback(|_| Msg::ClearGlue)}>{ "Clear glue" }</button>
+                                }) }
+                                <span class="pg-hint-mouse">{ "drag · wheel to rotate · shift-drag to spin · double-click to glue" }</span>
+                                <span class="pg-hint-touch">{ "drag to move · tap a square, then ⟲ ⟳ to turn · double-tap to glue" }</span>
+                            </div>
+                        <p class="pg-help">{ "Force arrows: blue = net contact and edge pull · gold = mouse spring. Dashed band = target size." }</p>
+                        <details class="pg-details">
+                            <summary>{ "How to play & what the score means" }</summary>
+                            <p>{ "Each square has side length 1. Make the container smaller while keeping every square inside and avoiding overlap. Dragging and rotating resume physics, push neighbors, and resist blocked motion. Drag a corner inward to squeeze the packing; let go and the box springs back out from the squares' pressure until nothing overlaps, then settles. Turn on forces, or use Q/E to rotate a selected square. Arrow keys nudge it. Space pauses." }</p>
+                            <p>{ "The simulation has springy contacts. “Settle” lets the contacts resolve, opening the box only while squares still overlap, then pauses the scene and refines its contacts with a numerical polynomial solver. Only an independently validated arrangement can be submitted. A best-known packing is an upper bound, not necessarily a proven optimum. A numerical match is not an exact proof." }</p>
+                            <p>
+                                <a href="https://kingbird.myphotos.cc/packing/squares_in_squares.html" target="_blank" rel="noopener">
+                                    { "Explore the research records ↗" }
+                                </a>
+                            </p>
+                        </details>
+                        </section>
                     </aside>
                 </div>
             </div>
@@ -1176,6 +1303,46 @@ impl Component for Game {
 }
 
 impl Game {
+    fn nudge_corner(&mut self) -> bool {
+        self.squeeze_to((self.physics.side() - 0.05).max(1.0));
+        self.corner_nudge = Some(0.25);
+        true
+    }
+
+    fn tick_corner_nudge(&mut self, elapsed: f64) -> bool {
+        let Some(remaining) = self.corner_nudge.as_mut() else {
+            return false;
+        };
+        *remaining -= elapsed;
+        if *remaining > 0.0 {
+            return false;
+        }
+        self.corner_nudge = None;
+        self.release_squeeze()
+    }
+
+    fn squeeze_to(&mut self, side: f64) -> bool {
+        self.corner_nudge = None;
+        self.stop_anneal();
+        let mut params = self.physics.params();
+        // A size edit is a spring target, never a teleport. Enable
+        // pressure if it was off, retaining any chosen nonzero strength.
+        if params.band_tension == 0.0 {
+            params.band_tension = 30.0;
+        }
+        self.desired_side = Some(side);
+        params.target_side = scrub_target(side, self.physics.side(), params.band_tension);
+        self.physics.set_params(params);
+        self.set_pause(false);
+        self.refresh_readout();
+        true
+    }
+    fn end_corner(&mut self) -> Option<CornerDrag> {
+        let drag = self.corner_drag.take()?;
+        let _ = drag.element.release_pointer_capture(drag.pointer);
+        Some(drag)
+    }
+
     /// Advance an annealing run by `dt` seconds and apply its commands.
     /// Returns whether the run ended in a settle, which sets the status.
     fn tick_anneal(&mut self, dt: f64) -> bool {
@@ -1440,7 +1607,7 @@ impl Game {
         // Hold the scale during a drag: a refit would move the pointer's
         // world position outward and the box would chase it. The box may
         // outgrow the view until the square is let go.
-        if !self.dragging {
+        if !self.dragging && self.corner_drag.is_none() {
             if extent > self.view_side.get() {
                 self.view_side
                     .set(self.view_side.get() + (extent - self.view_side.get()) * 0.12);
@@ -1490,6 +1657,8 @@ impl Game {
         // when it's let go.
         if self.physics.paused()
             || self.dragging
+            || self.corner_drag.is_some()
+            || self.corner_nudge.is_some()
             || self.busy
             || self.auto_measured
             || self.anneal.is_some()
@@ -1990,6 +2159,17 @@ mod tests {
             best_label(&record(&[], false, &[], true)),
             "Best known 3.7071 · optimal"
         );
+    }
+
+    #[test]
+    fn each_corner_projects_inward_outward_and_tangential_motion() {
+        for corner in 0..4 {
+            let x = if corner & 1 == 0 { 10.0 } else { -10.0 };
+            let y = if corner & 2 == 0 { 10.0 } else { -10.0 };
+            assert_eq!(corner_target(3.0, 100.0, corner, x, y), 2.8);
+            assert_eq!(corner_target(3.0, 100.0, corner, -x, -y), 3.2);
+            assert_eq!(corner_target(3.0, 100.0, corner, x, -y), 3.0);
+        }
     }
 
     #[test]

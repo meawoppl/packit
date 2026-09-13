@@ -39,7 +39,7 @@ main {
     flex-wrap: wrap;
     gap: 0 1.5rem;
     align-items: baseline;
-    padding: 0.75rem 2rem;
+    padding: 4px 12px;
     background: var(--panel);
 }
 
@@ -287,9 +287,9 @@ svg.arrangement .square {
     --pg-muted: #a1adc2;
     --pg-accent: #c7f36b;
     color: var(--ink);
-    max-width: 1250px;
+    --board-width: min(100%, calc(100svh - 176px));
     margin: auto;
-    padding: 24px 12px;
+    padding: 0;
 }
 
 .packing-game * {
@@ -304,21 +304,6 @@ svg.arrangement .square {
     flex-wrap: wrap;
 }
 
-.pg-eyebrow {
-    color: var(--pg-accent);
-    text-transform: uppercase;
-    letter-spacing: 0.17em;
-    font-size: 11px;
-    font-weight: 800;
-}
-
-.packing-game h1 {
-    color: var(--ink);
-    font-size: clamp(32px, 5vw, 58px);
-    letter-spacing: -0.055em;
-    margin: 8px 0;
-}
-
 .pg-sub {
     color: var(--pg-muted);
     font-size: 14px;
@@ -326,17 +311,18 @@ svg.arrangement .square {
 
 .pg-layout {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) 280px;
-    gap: 22px;
-    margin-top: 24px;
+    grid-template-columns: minmax(0, 1fr);
+    justify-items: center;
+    gap: 16px;
+    margin-top: 4px;
 }
 
 .pg-board {
     position: relative;
     background: #121823;
     border: 1px solid #303c50;
-    border-radius: 22px;
-    padding: 16px;
+    border-radius: 14px;
+    padding: 6px;
     box-shadow: 0 18px 60px #0003;
 }
 
@@ -704,42 +690,124 @@ svg.arrangement .square {
     margin-bottom: 8px;
 }
 
-/* Up to iPad portrait: full-width board, panels below in two columns. */
-@media (max-width: 900px) {
-    .pg-layout {
-        grid-template-columns: 1fr;
-    }
-
-    .pg-sidebar {
-        display: grid;
-        grid-template-columns: 1fr 1fr;
-        gap: 12px;
-    }
-
-    .pg-panel {
-        margin: 0;
-    }
-
-    .pg-submit {
-        grid-column: 1 / -1;
-    }
+/* The playfield gets the viewport; supporting panels follow below it. */
+main:has(.packing-game) {
+    max-width: none;
+    padding: 8px;
 }
 
-@media (max-width: 480px) {
+.pg-stage {
+    width: 100%;
+    margin-inline: auto;
+}
+
+.pg-top {
+    width: min(100%, max(360px, calc(100svh - 176px)));
+    margin-inline: auto;
+    flex-wrap: nowrap;
+    gap: 8px;
+    min-height: 52px;
+}
+
+.pg-top .pg-benchmark {
+    padding: 0;
+    margin: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+    gap: 8px;
+}
+
+.pg-top .pg-benchmark-pct {
+    font-size: clamp(24px, 3vw, 32px);
+}
+
+.pg-top > label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
+}
+
+.pg-board-footer {
+    padding: 0 4px;
+    flex-wrap: nowrap;
+    gap: 12px;
+}
+
+.pg-squeeze {
+    display: flex;
+    align-items: center;
+    flex: 1;
+    min-width: 0;
+    gap: 10px;
+}
+
+.pg-squeeze .pg-row {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0;
+    margin: 0;
+    font-size: 12px;
+}
+
+.pg-squeeze output {
+    color: var(--pg-muted);
+    font-variant-numeric: tabular-nums;
+}
+
+.pg-squeeze input[type="range"] {
+    min-width: 0;
+    height: 44px;
+    margin: 0;
+}
+
+.pg-sidebar {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-items: start;
+    gap: 12px;
+    width: min(100%, 960px);
+}
+
+.pg-sidebar .pg-panel {
+    margin: 0;
+}
+
+.pg-instructions {
+    grid-column: 1 / -1;
+}
+
+.pg-board-notes {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 12px;
+    color: var(--pg-muted);
+    font-size: 12px;
+}
+
+@media (max-width: 600px) {
+    .topbar {
+        gap: 0 12px;
+    }
+
+    .topbar .tagline {
+        display: none;
+    }
+
     .pg-sidebar {
-        display: block;
+        grid-template-columns: minmax(0, 1fr);
     }
 
-    .pg-panel {
-        margin-bottom: 12px;
+    .pg-benchmark-text strong {
+        font-size: 11px;
     }
 
-    .pg-board {
-        padding: 7px;
-    }
-
-    .packing-game {
-        padding: 12px 4px;
+    .pg-benchmark-text small {
+        font-size: 10px;
     }
 }
 
@@ -765,3 +833,45 @@ svg.arrangement .square {
 .account-availability { font-size: .85rem; min-height: 2.5em; }
 .account-modal button { min-height: 44px; }
 @media (max-width: 450px) { .account-choices { grid-template-columns: 1fr; } }
+
+/* Corner controls sit on the live outer square, inside the canvas frame. */
+.pg-canvas-frame { position: relative; }
+.packing-game .pg-corner {
+    position: absolute;
+    transform: translate(-50%, -50%);
+    width: 44px;
+    height: 44px;
+    padding: 0;
+    border: 1px solid #c7f36b88;
+    border-radius: 50%;
+    color: var(--pg-accent);
+    background: #17231fe8;
+    font-size: 24px;
+    cursor: grab;
+    touch-action: none;
+    user-select: none;
+}
+.packing-game .pg-corner:active { cursor: grabbing; background: #33452b; }
+.pg-corner:focus-visible { outline: 2px solid var(--pg-accent); outline-offset: 2px; }
+.pg-corner-hint { font-size: 12px; }
+
+/* Use the spare horizontal room only when the screen is landscape. */
+@media (min-aspect-ratio: 1/1) {
+    .pg-layout {
+        grid-template-columns: minmax(0, 1fr) clamp(240px, 26vw, 340px);
+        align-items: start;
+        gap: 12px;
+    }
+    .pg-sidebar {
+        display: block;
+        width: 100%;
+    }
+    .pg-sidebar .pg-panel { margin-bottom: 12px; }
+}
+
+.pg-board { width: var(--board-width); margin-inline: auto; }
+@media (max-height: 500px) and (min-aspect-ratio: 1/1) {
+    .pg-top .pg-benchmark-text strong { display: none; }
+    .pg-corner-hint { display: none; }
+    .pg-board-footer { justify-content: center; }
+}
