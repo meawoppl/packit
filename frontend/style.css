@@ -416,6 +416,17 @@ svg.arrangement .square {
     color: #ff9c9c;
 }
 
+/* A Share that finally failed: an alert that stands out from status text. */
+.pg-share-error {
+    margin: 8px 0;
+    padding: 10px 12px;
+    border: 1px solid #ff9c9c;
+    border-radius: 9px;
+    background: #3a1f27;
+    color: #ffd6d6;
+    font-size: 13px;
+}
+
 .pg-field {
     width: 100%;
     margin: 8px 0;
