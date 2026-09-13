@@ -43,6 +43,20 @@ pub struct KnownRecord {
     pub side_expr: Option<String>,
     pub proven_optimal: bool,
     pub source: String,
+    /// Who found the current best-known packing, from `refs/credits.json`.
+    /// Empty for the plain grid packings that no source credits.
+    #[serde(default)]
+    pub packing_by: Vec<String>,
+    /// The sources disagree on who found it; `packing_by` lists every
+    /// candidate rather than picking one.
+    #[serde(default)]
+    pub packing_disputed: bool,
+    /// Who proved `side` optimal; empty unless proven by someone named.
+    #[serde(default)]
+    pub proof_by: Vec<String>,
+    /// Optimal trivially: a perfect square, packed as a grid.
+    #[serde(default)]
+    pub proof_trivial: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -254,6 +268,10 @@ mod tests {
             side_expr: Some("2 + 1/sqrt(2)".to_string()),
             proven_optimal: true,
             source: "Göbel 1979".to_string(),
+            packing_by: vec!["Frits Göbel".to_string()],
+            packing_disputed: false,
+            proof_by: vec!["Frits Göbel".to_string()],
+            proof_trivial: false,
         });
     }
 
