@@ -150,12 +150,9 @@ pub async fn prepare_registration(username: &str) -> Result<Prepared, Failure> {
     })
 }
 
-/// Sign in to `username` with one of its passkeys, up to the finish.
-pub async fn prepare_sign_in(username: &str) -> Result<Prepared, Failure> {
-    let body = AuthUsername {
-        username: username.into(),
-    };
-    let started: Started = post("/api/auth/login/start", &body).await?;
+/// Let the browser choose a discoverable passkey, without a username.
+pub async fn prepare_sign_in() -> Result<Prepared, Failure> {
+    let started: Started = post("/api/auth/login/start", &serde_json::json!({})).await?;
     Ok(Prepared {
         finish: "/api/auth/login/finish",
         credential: webauthn::get(&started.options).await?,
@@ -631,4 +628,18 @@ mod tests {
             assert!(!transient_status(status), "{status}");
         }
     }
+}
+
+/// An advisory hint; register/start and the unique index remain authoritative.
+pub async fn username_available(username: &str) -> Result<bool, Failure> {
+    #[derive(serde::Deserialize)]
+    struct Available {
+        available: bool,
+    }
+    let encoded = js_sys::encode_uri_component(username);
+    let response = gloo_net::http::Request::get(&format!("/api/auth/usernames/{encoded}"))
+        .send()
+        .await
+        .map_err(network)?;
+    Ok(decode::<Available>(response).await?.available)
 }

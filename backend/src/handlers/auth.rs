@@ -115,7 +115,7 @@ pub(crate) async fn require_origin(
 }
 
 /// Spend the client's rate-limit tokens, and hand its [`RateKey`] to the
-/// handler for the per-client ceremony and username limits.
+/// handler for the per-client ceremony limits.
 async fn rate_limit(
     State(state): State<Arc<AppState>>,
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
