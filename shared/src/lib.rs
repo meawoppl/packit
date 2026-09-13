@@ -2,9 +2,9 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use ws_bridge::WsEndpoint;
 
+pub mod board;
 pub mod geometry;
 pub mod glue;
-pub mod share;
 
 // ---------------------------------------------------------------------------
 // Packing model — the coordinate conventions every crate shares
@@ -108,11 +108,12 @@ pub struct HealthResponse {
     pub status: String,
 }
 
-/// Body of `POST /api/scores`. The score is credited to the signed-in
-/// account; its username is the leaderboard name.
+/// Body of `POST /api/scores`: the board state to score, as it was when
+/// Submit was pressed. The score is credited to the signed-in account; its
+/// username is the leaderboard name.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SubmitScore {
-    pub arrangement: Arrangement,
+    pub board: BoardCode,
 }
 
 /// One leaderboard row, returned by `POST /api/scores` and `GET /api/scores`.
@@ -128,6 +129,19 @@ pub struct ScoreEntry {
     /// Whether an account submitted it, so `player` is its username. Scores
     /// from before accounts keep a name anyone could have typed.
     pub account: bool,
+    /// Token of the score's board state; [`ScoreEntry::board_link`] opens it.
+    pub board: String,
+    /// Whether the board holds the glue the score was submitted with. Scores
+    /// saved before boards existed never recorded their glue, so their board
+    /// is the packing alone.
+    pub glue_recorded: bool,
+}
+
+impl ScoreEntry {
+    /// The short link that opens exactly the submitted board.
+    pub fn board_link(&self) -> String {
+        format!("/s/{}", self.board)
+    }
 }
 
 /// Query string for `GET /api/scores`.
@@ -150,17 +164,18 @@ pub struct ApiError {
     pub error: String,
 }
 
-/// A snapshot to shorten: the existing bit-preserving share code and its n.
-/// This accepts unfinished packings and does not create a leaderboard score.
+/// A board state as its bit-preserving board code (see [`board`]) for `n`
+/// squares: the body of `POST /api/boards`, and what a score submits. Saving
+/// a board accepts unfinished packings and never creates a score.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct CreateShare {
+pub struct BoardCode {
     pub n: u32,
     pub code: String,
 }
 
-/// Permanent public URL of an immutable solution snapshot.
+/// Permanent public URL of an immutable board state, `/s/<token>`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct ShortShare {
+pub struct BoardLink {
     pub url: String,
 }
 
@@ -220,6 +235,8 @@ mod tests {
                 .naive_utc(),
             rank: 1,
             account: true,
+            board: "0123456789abcdef01234567".to_string(),
+            glue_recorded: true,
         }
     }
 
@@ -295,13 +312,21 @@ mod tests {
     #[test]
     fn submit_score_roundtrip() {
         roundtrip(SubmitScore {
-            arrangement: sample_arrangement(),
+            board: BoardCode {
+                n: 2,
+                code: board::encode(&sample_arrangement(), &[]),
+            },
         });
     }
 
     #[test]
     fn score_entry_roundtrip() {
         roundtrip(sample_entry());
+    }
+
+    #[test]
+    fn a_score_links_to_its_board() {
+        assert_eq!(sample_entry().board_link(), "/s/0123456789abcdef01234567");
     }
 
     #[test]

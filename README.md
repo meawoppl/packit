@@ -35,13 +35,13 @@ at the bottom-left. Every crate uses `shared::Placement` and
 | Method | Path | Body / query | Returns |
 | --- | --- | --- | --- |
 | GET | `/api/health` | | `HealthResponse` |
-| POST | `/api/scores` | `SubmitScore` (`{ arrangement }`) | `ScoreEntry`; needs a session |
-| GET | `/api/scores` | `?n=&limit=` | `Vec<ScoreEntry>` |
+| POST | `/api/scores` | `SubmitScore` (`{ board: { n, code } }`) | `ScoreEntry`; needs a session |
+| GET | `/api/scores` | `?n=&limit=` | `Vec<ScoreEntry>`, each with its `board` token and `glue_recorded` |
 | GET | `/api/scores/:id` | | `ScoreDetail` |
 | GET | `/api/records` | | `Vec<KnownRecord>` |
-| POST | `/api/shares` | `{ n, code }` | Durable short URL for a share-code snapshot; needs a session |
-| GET | `/s/:token` | — | Redirect to the saved solution and its preview |
-| GET | `/api/preview.png` | `?n=&s=` | 1200×630 PNG of a share code |
+| POST | `/api/boards` | `BoardCode` (`{ n, code }`) | `BoardLink` (`{ url }`), the durable short URL of a stored board; needs a session |
+| GET | `/s/:token` | — | Redirect to the stored board and its preview |
+| GET | `/api/preview.png` | `?n=&s=` | 1200×630 PNG of a board code |
 | GET | `/play/:n` | `?s=` | The app page with link-preview metadata |
 | POST | `/api/auth/register/start` | `{ username }` | Passkey creation options and a ceremony id |
 | POST | `/api/auth/register/finish` | `{ ceremony, credential }` | `{ username }`; sets the session cookie |
@@ -56,27 +56,52 @@ Submissions are validated server-side with `shared::geometry::validate`
 using `shared::VALIDATION_TOL`. A score's leaderboard name is its account's
 username.
 
-Arrangements travel and are stored as JSON, and every crate that parses them
-enables serde_json's `float_roundtrip`, so each double comes back bit for bit
-(the default parser can land a ULP off). This doesn't repair scores stored
-with drift before it. jsonb keeps numbers as Postgres `numeric`, which has no
-negative zero, so a stored `-0.0` reads back as `0.0`, an equal value.
+Submissions and shares carry their doubles as the bits of a board code. JSON
+still carries arrangements elsewhere (`scores.arrangement`, `/api/scores/:id`,
+import and export), and every crate that parses it enables serde_json's
+`float_roundtrip`, so each double comes back bit for bit (the default parser
+can land a ULP off). This doesn't repair scores stored with drift before it.
+jsonb keeps numbers as Postgres `numeric`, which has no negative zero, so a
+stored `-0.0` reads back as `0.0`, an equal value.
 
-The **Share** button saves an immutable snapshot in Postgres and copies a short
-`/s/<token>` URL, suitable for posting on social media. Identical snapshots reuse
-the same URL, whoever shares them, and the link keeps the account that first
-created it. Unfinished packings can be shared without submitting a score, and
-the snapshot keeps any glue between squares and walls. If
-a browser blocks automatic clipboard access, use **Copy link** or select the
-shown URL. Automatic settle still updates the address bar with the self-contained
-`/play/:n?s=<hex>` form; short links redirect to that form. The `solution_shares`
-table is durable app state and belongs in database backups.
+### Board states
 
-Share links (codec in `shared::share`) unfurl as the
-shared packing: the page carries Open Graph and Twitter tags whose absolute
-URLs use `PUBLIC_URL` (default `https://potatos.txcl.io`), never the request
-host. The preview image is only served for a code that fully decodes, and is
-cached as immutable.
+A board state is a stored scene: a packing and the glue between its squares
+and walls, as a board code (`shared::board`, the bit-exact hex that also
+appears in `/play/:n?s=<hex>`). The `board_states` table holds every one that
+was shared or submitted, deduplicated by the SHA-256 of its canonical code, and
+`/s/<token>` redirects to its `/play/:n?s=<hex>` page. It is durable app state
+and belongs in database backups.
+
+- The **Share** button saves the current board and copies its short
+  `/s/<token>` URL, suitable for posting on social media. Unfinished packings
+  can be shared without submitting a score. If a browser blocks automatic
+  clipboard access, use **Copy link** or select the shown URL.
+- **Submit** sends the board as it was when pressed: the certified packing
+  and the scene's glue. The server decodes and validates it, then stores the
+  board (or finds it already stored) and the score in one transaction. Each
+  score references its board by token (`scores.board_token`), and the
+  leaderboard and score pages link to it.
+- Identical boards share one row and one URL, whoever shares or submits them,
+  and the row keeps the account that first created it.
+- `scores.glue_recorded` is false for scores saved before boards existed.
+  Their boards were backfilled from the stored arrangement, so they hold the
+  packing without its glue, and the leaderboard says "glue not recorded".
+  It belongs to the score, not the board: a legacy score and a new glue-free
+  submission of the same packing share one board.
+- Both directions of the board migration lock the link table and then
+  `scores` before checking anything, so a score written meanwhile waits and
+  is then checked too. Reverting it refuses while any score has a recorded
+  board (`glue_recorded`), since its board link and glue would be lost. With only
+  legacy scores it reverts, keeping every board row as a share link, and
+  upgrading again links each score to the same board. The upgrade itself
+  refuses scores whose stored arrangement doesn't match their own `n` and
+  side, or doesn't fit a board code, rather than guessing their boards.
+
+Board links unfurl as the board's packing: the page carries Open Graph and
+Twitter tags whose absolute URLs use `PUBLIC_URL` (default
+`https://potatos.txcl.io`), never the request host. The preview image is only
+served for a code that fully decodes, and is cached as immutable.
 
 ## Accounts
 
@@ -88,7 +113,7 @@ records and the leaderboards stay public and anonymous.
 
 - On the play screen, Share or Submit while signed out opens sign-in instead
   of sending anything. The request is frozen as it was when pressed (the
-  certified packing for Submit; the snapshot and its glue for Share), kept
+  certified packing and its glue for Submit; the board for Share), kept
   in memory, and sent once if the sign-in succeeds. Dismissing sign-in,
   leaving the page or unmounting the screen drops it. Submit with no
   certified packing asks for a sign-in and then for Submit again. A 401 from
@@ -114,9 +139,9 @@ records and the leaderboards stay public and anonymous.
   sign-out starts (the dialog says "Finishing sign-in…"), and a late
   response never answers a dismissed or newer request. The startup `/me`
   counts only if nothing has happened since.
-- A short link records its creator (`solution_shares.created_by`). Sharing a
-  snapshot that already has a link returns that link unchanged, so it never
-  reveals or changes who created it, and links from before accounts stay
+- A board records its creator (`board_states.created_by`). Sharing or
+  submitting a board that is already stored reuses it unchanged, so it never
+  reveals or changes who created it, and boards from before accounts stay
   unowned.
 - The frontend calls WebAuthn from Rust (`frontend/src/webauthn.rs`): base64url
   fields in the server's options become `ArrayBuffer`s for
@@ -135,7 +160,7 @@ records and the leaderboards stay public and anonymous.
 - Sessions are 30-day `__Host-packit_session` cookies (HttpOnly, Secure,
   SameSite=Lax). The database stores only a SHA-256 of the token, and every
   sign-in issues a new one.
-- Every auth POST, and `POST /api/scores` and `POST /api/shares`, must send
+- Every auth POST, and `POST /api/scores` and `POST /api/boards`, must send
   exactly one `Origin` equal to `PUBLIC_URL` (403 otherwise), checked before
   the session cookie is read; none of them get CORS. Signed out, those two
   answer 401 once their body has passed validation. Public reads keep

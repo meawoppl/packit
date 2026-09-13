@@ -14,6 +14,8 @@ pub struct Score {
     pub arrangement: serde_json::Value,
     pub submitted_at: NaiveDateTime,
     pub user_id: Option<Uuid>,
+    pub board_token: String,
+    pub glue_recorded: bool,
 }
 
 #[derive(Debug, Insertable)]
@@ -24,4 +26,5 @@ pub struct NewScore {
     pub n: i32,
     pub side: f64,
     pub arrangement: serde_json::Value,
+    pub board_token: String,
 }

@@ -1,5 +1,6 @@
 //! In-browser tests of the leaderboards against a stubbed API: names from
-//! accounts and legacy names must read differently.
+//! accounts and legacy names must read differently, and every score links
+//! to the board it was submitted as.
 
 use super::*;
 use crate::account::browser_tests::{reply, sleep, wait_until, Api};
@@ -10,7 +11,12 @@ use web_sys::Element;
 
 wasm_bindgen_test_configure!(run_in_browser);
 
-fn score(n: u32, rank: u32, account: bool) -> Value {
+const RECORDED: &str = "0123456789abcdef01234567";
+const LEGACY: &str = "89abcdef0123456789abcdef";
+
+/// A score as the API returns it: by an account or under a legacy name, on
+/// `board`, with its glue recorded or not.
+fn score(n: u32, rank: u32, account: bool, board: &str, glue_recorded: bool) -> Value {
     json!({
         "id": format!("00000000-0000-0000-0000-{:012}", n * 10 + rank),
         "player": "ada",
@@ -19,6 +25,8 @@ fn score(n: u32, rank: u32, account: bool) -> Value {
         "submitted_at": "2026-09-13T00:00:00",
         "rank": rank,
         "account": account,
+        "board": board,
+        "glue_recorded": glue_recorded,
     })
 }
 
@@ -35,6 +43,27 @@ fn record(n: u32) -> Value {
 #[function_component(Boards)]
 fn boards() -> Html {
     html! { <BrowserRouter><Leaderboard /><LeaderboardN n={2} /></BrowserRouter> }
+}
+
+#[function_component(Ranked)]
+fn ranked() -> Html {
+    html! { <BrowserRouter><LeaderboardN n={2} /></BrowserRouter> }
+}
+
+/// The page of score 22: n = 2, rank 2.
+#[function_component(Page)]
+fn page() -> Html {
+    html! { <BrowserRouter><ScorePage id={Uuid::from_u128(0x22)} /></BrowserRouter> }
+}
+
+/// Mount `C` and wait until something matches `ready`.
+async fn mount<C: BaseComponent<Properties = ()>>(ready: &str) -> (yew::AppHandle<C>, Element) {
+    let document = web_sys::window().unwrap().document().unwrap();
+    let root = document.create_element("div").unwrap();
+    document.body().unwrap().append_child(&root).unwrap();
+    let handle = yew::Renderer::<C>::with_root(root.clone()).render();
+    wait_until(ready, || root.query_selector(ready).unwrap().is_some()).await;
+    (handle, root)
 }
 
 /// Each player cell's text, and whether it's marked as a legacy name.
@@ -60,6 +89,19 @@ fn players(root: &Element, table: &str) -> Vec<(String, bool, Option<String>)> {
         .collect()
 }
 
+/// Each board link's target, and the text around it.
+fn board_links(root: &Element) -> Vec<(String, String)> {
+    let links = root.query_selector_all(".score-board").unwrap();
+    (0..links.length())
+        .filter_map(|i| links.item(i))
+        .map(|node| {
+            let link: Element = node.unchecked_into();
+            let around = link.parent_element().unwrap().text_content().unwrap();
+            (link.get_attribute("href").unwrap(), around)
+        })
+        .collect()
+}
+
 #[wasm_bindgen_test]
 async fn legacy_names_read_apart_from_account_names() {
     let _api = Api::install(&[
@@ -71,13 +113,16 @@ async fn legacy_names_read_apart_from_account_names() {
         // n, and the n = 2 board lists both.
         (
             "/api/scores",
-            vec![reply(200, json!([score(1, 1, true), score(2, 1, false)]))],
+            vec![reply(
+                200,
+                json!([
+                    score(1, 1, true, RECORDED, true),
+                    score(2, 1, false, LEGACY, false)
+                ]),
+            )],
         ),
     ]);
-    let document = web_sys::window().unwrap().document().unwrap();
-    let root = document.create_element("div").unwrap();
-    document.body().unwrap().append_child(&root).unwrap();
-    let handle = yew::Renderer::<Boards>::with_root(root.clone()).render();
+    let (handle, root) = mount::<Boards>(".player").await;
     wait_until("both boards", || {
         root.query_selector_all(".player").unwrap().length() == 4
     })
@@ -96,6 +141,68 @@ async fn legacy_names_read_apart_from_account_names() {
         cells,
         [account.clone(), legacy(), account, legacy()],
         "overview rows, then the n = 2 board"
+    );
+    handle.destroy();
+    root.remove();
+}
+
+#[wasm_bindgen_test]
+async fn every_ranked_score_links_to_its_board() {
+    let _api = Api::install(&[
+        (
+            "/api/scores",
+            vec![reply(
+                200,
+                json!([
+                    score(2, 1, true, RECORDED, true),
+                    score(2, 2, false, LEGACY, false)
+                ]),
+            )],
+        ),
+        ("/api/records", vec![reply(200, json!([record(2)]))]),
+    ]);
+    let (handle, root) = mount::<Ranked>(".score-board").await;
+    assert_eq!(
+        board_links(&root),
+        [
+            (format!("/s/{RECORDED}"), "Open".to_string()),
+            (
+                format!("/s/{LEGACY}"),
+                "Open · glue not recorded".to_string()
+            ),
+        ]
+    );
+    handle.destroy();
+    root.remove();
+}
+
+#[wasm_bindgen_test]
+async fn a_score_page_opens_its_board() {
+    let arrangement = json!({
+        "n": 2,
+        "side": 2.5,
+        "squares": [
+            { "cx": 0.5, "cy": 0.5, "theta": 0.0 },
+            { "cx": 1.5, "cy": 0.5, "theta": 0.0 },
+        ],
+    });
+    let _api = Api::install(&[
+        (
+            "/api/scores/00000000-0000-0000-0000-000000000022",
+            vec![reply(
+                200,
+                json!({ "entry": score(2, 2, false, LEGACY, false), "arrangement": arrangement }),
+            )],
+        ),
+        ("/api/records", vec![reply(200, json!([record(2)]))]),
+    ]);
+    let (handle, root) = mount::<Page>(".score-board").await;
+    assert_eq!(
+        board_links(&root),
+        [(
+            format!("/s/{LEGACY}"),
+            "Open this board · glue not recorded".to_string()
+        )]
     );
     handle.destroy();
     root.remove();

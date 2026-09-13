@@ -1,5 +1,5 @@
-//! Link previews for share links: `/play/:n?s=` pages carry Open Graph and
-//! Twitter metadata, and `/api/preview.png` draws the shared packing.
+//! Link previews for board links: `/play/:n?s=` pages carry Open Graph and
+//! Twitter metadata, and `/api/preview.png` draws the board's packing.
 
 use crate::handlers::records::BEST_KNOWN;
 use crate::AppState;
@@ -7,7 +7,7 @@ use axum::extract::{Path, Query, State};
 use axum::http::{header, StatusCode};
 use axum::response::{Html, IntoResponse, Response};
 use serde::Deserialize;
-use shared::{geometry, share, Arrangement, MAX_N, VALIDATION_TOL};
+use shared::{board, geometry, Arrangement, MAX_N, VALIDATION_TOL};
 use std::sync::Arc;
 use tiny_skia::{Color, FillRule, Paint, PathBuilder, Pixmap, Rect, Stroke, Transform};
 
@@ -37,7 +37,7 @@ pub struct PreviewQuery {
     s: String,
 }
 
-/// The SPA page for `/play/:n`, with metadata describing the shared packing
+/// The SPA page for `/play/:n`, with metadata describing the board's packing
 /// when `s` decodes, and generic metadata otherwise.
 pub async fn play(
     State(state): State<Arc<AppState>>,
@@ -46,13 +46,13 @@ pub async fn play(
 ) -> impl IntoResponse {
     let n = n.parse().ok().filter(|n| (1..=MAX_N).contains(n));
     let code = query.and_then(|Query(q)| q.s);
-    let shared = n
+    let packing = n
         .zip(code)
-        .and_then(|(n, s)| share::decode(&s, n).ok().map(|snap| (snap.arrangement, s)));
+        .and_then(|(n, s)| board::decode(&s, n).ok().map(|b| (b.arrangement, s)));
     let tags = meta_tags(
         &state.public_url,
         n,
-        shared.as_ref().map(|(a, s)| (a, s.as_str())),
+        packing.as_ref().map(|(a, s)| (a, s.as_str())),
     );
     (
         [(header::CACHE_CONTROL, "no-cache")],
@@ -60,13 +60,13 @@ pub async fn play(
     )
 }
 
-/// PNG of a shared packing. The URL carries the whole validated payload, so
+/// PNG of a board's packing. The URL carries the whole validated payload, so
 /// the image never changes and may be cached forever.
 pub async fn preview_png(query: Option<Query<PreviewQuery>>) -> Response {
     let png = query
         .ok_or_else(|| "n and s are required".to_string())
-        .and_then(|Query(q)| share::decode(&q.s, q.n))
-        .and_then(|snap| render(&snap.arrangement));
+        .and_then(|Query(q)| board::decode(&q.s, q.n))
+        .and_then(|b| render(&b.arrangement));
     match png {
         Ok(png) => (
             [
@@ -85,8 +85,8 @@ pub async fn preview_png(query: Option<Query<PreviewQuery>>) -> Response {
     }
 }
 
-fn meta_tags(public_url: &str, n: Option<u32>, shared: Option<(&Arrangement, &str)>) -> String {
-    let (title, description, url, image) = match (n, shared) {
+fn meta_tags(public_url: &str, n: Option<u32>, packing: Option<(&Arrangement, &str)>) -> String {
+    let (title, description, url, image) = match (n, packing) {
         (Some(n), Some((a, code))) => (
             format!("{n} squares in a {:.4} box", a.side),
             describe(a),
@@ -195,7 +195,7 @@ pub fn render(a: &Arrangement) -> Result<Vec<u8>, String> {
         ..Stroke::default()
     };
     for (i, p) in a.squares.iter().enumerate() {
-        // Share codes accept any finite angle; reduce it in f64 so huge
+        // Board codes accept any finite angle; reduce it in f64 so huge
         // values don't overflow f32 degrees.
         let turn = p.theta.sin().atan2(p.theta.cos());
         let at = view
@@ -242,7 +242,7 @@ mod tests {
         };
         let huge = square(1e300);
         assert_eq!(
-            share::decode(&share::encode(&huge, &[]), 1)
+            board::decode(&board::encode(&huge, &[]), 1)
                 .unwrap()
                 .arrangement,
             huge

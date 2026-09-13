@@ -83,16 +83,18 @@ pub fn build_app(state: Arc<AppState>) -> Router {
         .into_router();
 
     // Writes credited to the signed-in account. The exact Origin is checked
-    // before the session cookie is read, as on `/api/auth`.
+    // before the session cookie is read, as on `/api/auth`. Both take a
+    // board code: room for the longest (n = 100 with every glue, about
+    // 37.6 KB) plus its JSON framing.
+    let board_limit = axum::extract::DefaultBodyLimit::max(shared::board::MAX_LEN + 1024);
     let writes = Router::new()
-        .route("/api/scores", post(handlers::scores::submit))
         .route(
-            "/api/shares",
-            // Room for the longest share code (n = 100 with every glue,
-            // about 37.6 KB) plus its JSON framing.
-            post(handlers::shares::create).layer(axum::extract::DefaultBodyLimit::max(
-                shared::share::MAX_LEN + 1024,
-            )),
+            "/api/scores",
+            post(handlers::scores::submit).layer(board_limit),
+        )
+        .route(
+            "/api/boards",
+            post(handlers::boards::save).layer(board_limit),
         )
         .route_layer(axum::middleware::from_fn_with_state(
             state.clone(),
@@ -102,7 +104,7 @@ pub fn build_app(state: Arc<AppState>) -> Router {
         .with_state(state.clone());
 
     let public = Router::new()
-        .route("/s/:token", get(handlers::shares::resolve))
+        .route("/s/:token", get(handlers::boards::resolve))
         .route("/api/health", get(handlers::health::health))
         .route("/api/records", get(handlers::records::records))
         .route("/api/scores", get(handlers::scores::list))
@@ -237,7 +239,10 @@ async fn shutdown_signal() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_support::{sign_up, state_for, test_db, unconnected_pool, Player, TEST_URL};
+    use crate::test_support::{
+        call, creatorless_board, legacy, post_as, post_json, sign_up, state_for, test_db,
+        unconnected_pool, TEST_URL,
+    };
     use axum::body::Body;
     use axum::http::{header, Request, StatusCode};
     use tower::ServiceExt;
@@ -301,47 +306,33 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::OK);
     }
 
-    async fn call<T: serde::de::DeserializeOwned>(
-        app: &Router,
-        req: Request<Body>,
-    ) -> (StatusCode, T) {
-        let resp = app.clone().oneshot(req).await.unwrap();
-        let status = resp.status();
-        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
-            .await
-            .unwrap();
-        (status, serde_json::from_slice(&bytes).unwrap())
-    }
-
-    /// A same-origin POST with no session.
-    fn post_json(uri: &str, body: &impl serde::Serialize) -> Request<Body> {
-        Request::post(uri)
-            .header(header::ORIGIN, TEST_URL)
-            .header(header::CONTENT_TYPE, "application/json")
-            .body(Body::from(serde_json::to_vec(body).unwrap()))
-            .unwrap()
-    }
-
-    /// A same-origin POST from `player`'s browser.
-    fn post_as(uri: &str, body: &impl serde::Serialize, player: &Player) -> Request<Body> {
-        let mut req = post_json(uri, body);
-        req.headers_mut()
-            .insert(header::COOKIE, player.cookie.parse().unwrap());
-        req
-    }
-
-    fn two_squares(side: f64) -> shared::SubmitScore {
+    fn two_squares(side: f64) -> shared::Arrangement {
         let sq = |cx| shared::Placement {
             cx,
             cy: 0.5,
             theta: 0.0,
         };
+        shared::Arrangement {
+            n: 2,
+            side,
+            squares: vec![sq(0.5), sq(1.5)],
+        }
+    }
+
+    fn board_code(
+        arrangement: &shared::Arrangement,
+        glues: &[shared::glue::Glue],
+    ) -> shared::BoardCode {
+        shared::BoardCode {
+            n: arrangement.n,
+            code: shared::board::encode(arrangement, glues),
+        }
+    }
+
+    /// A score submission of `arrangement` with no glue.
+    fn submission(arrangement: &shared::Arrangement) -> shared::SubmitScore {
         shared::SubmitScore {
-            arrangement: shared::Arrangement {
-                n: 2,
-                side,
-                squares: vec![sq(0.5), sq(1.5)],
-            },
+            board: board_code(arrangement, &[]),
         }
     }
 
@@ -368,7 +359,7 @@ mod tests {
 
     #[tokio::test]
     async fn shared_play_page_describes_the_packing() {
-        let code = shared::share::encode(&two_squares(2.0).arrangement, &[]);
+        let code = shared::board::encode(&two_squares(2.0), &[]);
         let req = Request::get(format!("/play/2?s={code}"))
             .header(header::HOST, "evil.example")
             .header("x-forwarded-host", "evil.example")
@@ -424,13 +415,13 @@ mod tests {
 
     #[tokio::test]
     async fn preview_png_draws_each_packing() {
-        let a = two_squares(2.0).arrangement;
+        let a = two_squares(2.0);
         let mut b = a.clone();
         b.side = 2.5;
         b.squares[1].theta = 0.3;
         let mut pngs = Vec::new();
         for arrangement in [&a, &b] {
-            let code = shared::share::encode(arrangement, &[]);
+            let code = shared::board::encode(arrangement, &[]);
             let (status, headers, png) = fetch_uri(&format!("/api/preview.png?n=2&s={code}")).await;
             assert_eq!(status, StatusCode::OK);
             assert_eq!(headers[header::CONTENT_TYPE], "image/png");
@@ -452,7 +443,7 @@ mod tests {
 
     #[tokio::test]
     async fn preview_png_rejects_invalid_codes() {
-        let code = shared::share::encode(&two_squares(2.0).arrangement, &[]);
+        let code = shared::board::encode(&two_squares(2.0), &[]);
         for uri in [
             "/api/preview.png".to_string(),
             "/api/preview.png?n=2".to_string(),
@@ -479,10 +470,13 @@ mod tests {
 
     #[tokio::test]
     async fn overlapping_submission_rejected_before_db() {
-        let mut body = two_squares(2.0);
-        body.arrangement.squares[1].cx = 1.0;
-        let (status, err): (_, shared::ApiError) =
-            call(&build_app(test_state()), post_json("/api/scores", &body)).await;
+        let mut arr = two_squares(2.0);
+        arr.squares[1].cx = 1.0;
+        let (status, err): (_, shared::ApiError) = call(
+            &build_app(test_state()),
+            post_json("/api/scores", &submission(&arr)),
+        )
+        .await;
         assert_eq!(status, StatusCode::BAD_REQUEST);
         assert!(err.error.contains("overlap"), "{}", err.error);
     }
@@ -502,18 +496,28 @@ mod tests {
         let app_pool = db_pool.clone();
         let app = build_app(state_for(db_pool));
 
-        let (status, loose): (_, shared::ScoreEntry) =
-            call(&app, post_as("/api/scores", &two_squares(3.0), &player)).await;
+        let (status, loose): (_, shared::ScoreEntry) = call(
+            &app,
+            post_as("/api/scores", &submission(&two_squares(3.0)), &player),
+        )
+        .await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(loose.player, player.username);
-        let owner: Option<uuid::Uuid> = scores::table
+        assert!(loose.glue_recorded);
+        let (owner, board): (Option<uuid::Uuid>, String) = scores::table
             .find(loose.id)
-            .select(scores::user_id)
+            .select((scores::user_id, scores::board_token))
             .first(&mut app_pool.get().unwrap())
             .unwrap();
-        assert_eq!(owner, Some(player.id));
-        let (_, tight): (_, shared::ScoreEntry) =
-            call(&app, post_as("/api/scores", &two_squares(2.0), &player)).await;
+        assert_eq!(
+            (owner, board.as_str()),
+            (Some(player.id), loose.board.as_str())
+        );
+        let (_, tight): (_, shared::ScoreEntry) = call(
+            &app,
+            post_as("/api/scores", &submission(&two_squares(2.0)), &player),
+        )
+        .await;
 
         let (status, board): (_, Vec<shared::ScoreEntry>) = call(
             &app,
@@ -545,7 +549,8 @@ mod tests {
         assert_eq!(detail.entry.side, 3.0);
         // Rank is computed at read time, so the tighter packing now outranks it.
         assert!(detail.entry.rank > tight.rank);
-        assert_eq!(detail.arrangement, two_squares(3.0).arrangement);
+        assert_eq!(detail.arrangement, two_squares(3.0));
+        assert_eq!(detail.entry.board, loose.board);
 
         let (status, _): (_, shared::ApiError) = call(
             &app,
@@ -560,14 +565,15 @@ mod tests {
     /// Awkward doubles survive `scores.arrangement` bit for bit, read back
     /// directly and through the score's page. jsonb stores numbers as
     /// `numeric`, which has no negative zero, so `-0.0` is left out: it
-    /// comes back as `0.0`, an equal value.
+    /// comes back as `0.0`, an equal value. The row isn't a valid score, so
+    /// it lives only in a transaction that never commits.
     #[tokio::test]
     async fn stored_arrangements_keep_every_bit() {
         use crate::schema::scores;
-        use crate::test_support::{arrangement_of, awkward_floats, float_bits};
+        use crate::test_support::{arrangement_of, awkward_floats, float_bits, rolled_back_pool};
         use diesel::prelude::*;
 
-        let Some(db_pool) = test_db() else {
+        let Some(db_pool) = rolled_back_pool() else {
             eprintln!("TEST_DATABASE_URL not set; skipping");
             return;
         };
@@ -578,6 +584,10 @@ mod tests {
         let arrangement = arrangement_of(&floats);
         let id = uuid::Uuid::new_v4();
         let mut conn = db_pool.get().unwrap();
+        // Any board satisfies the foreign key; a side no other run uses keeps
+        // it from colliding with a committed one.
+        let side = 3.0 + (uuid::Uuid::new_v4().as_u128() % 1_000_000) as f64 * 1e-9;
+        let board = creatorless_board(&mut conn, &two_squares(side));
         diesel::insert_into(scores::table)
             .values((
                 scores::id.eq(id),
@@ -585,6 +595,7 @@ mod tests {
                 scores::n.eq(99),
                 scores::side.eq(99.0),
                 scores::arrangement.eq(serde_json::to_value(&arrangement).unwrap()),
+                scores::board_token.eq(board),
             ))
             .execute(&mut conn)
             .unwrap();
@@ -626,13 +637,19 @@ mod tests {
             .unwrap()
             .naive_utc();
         let ids = [uuid::Uuid::new_v4(), uuid::Uuid::new_v4()];
-        let arrangement = serde_json::to_value(shared::Arrangement {
+        let arrangement = shared::Arrangement {
             n: 97,
             side,
-            squares: vec![],
-        })
-        .unwrap();
+            squares: (0..97)
+                .map(|i| shared::Placement {
+                    cx: (i % 10) as f64 + 0.5,
+                    cy: (i / 10) as f64 + 0.5,
+                    theta: 0.0,
+                })
+                .collect(),
+        };
         let mut conn = db_pool.get().unwrap();
+        let board = creatorless_board(&mut conn, &arrangement);
         for id in ids {
             diesel::insert_into(scores::table)
                 .values((
@@ -640,8 +657,9 @@ mod tests {
                     scores::player.eq("tie"),
                     scores::n.eq(97),
                     scores::side.eq(side),
-                    scores::arrangement.eq(&arrangement),
+                    scores::arrangement.eq(serde_json::to_value(&arrangement).unwrap()),
                     scores::submitted_at.eq(at),
+                    scores::board_token.eq(&board),
                 ))
                 .execute(&mut conn)
                 .unwrap();
@@ -677,72 +695,79 @@ mod tests {
         }
     }
     #[tokio::test]
-    async fn short_links_validate_before_using_the_database() {
-        let mut arr = two_squares(2.0).arrangement;
+    async fn boards_and_scores_validate_before_using_the_database() {
+        let mut arr = two_squares(2.0);
         arr.squares[0].cx = 1001.0;
         for body in [
-            shared::CreateShare {
+            shared::BoardCode {
                 n: 0,
                 code: String::new(),
             },
-            shared::CreateShare {
+            shared::BoardCode {
                 n: 101,
                 code: String::new(),
             },
-            shared::CreateShare {
+            shared::BoardCode {
                 n: 2,
                 code: "zz".into(),
             },
-            shared::CreateShare {
+            shared::BoardCode {
                 n: 3,
-                code: shared::share::encode(&two_squares(2.0).arrangement, &[]),
+                code: shared::board::encode(&two_squares(2.0), &[]),
             },
-            shared::CreateShare {
-                n: 2,
-                code: shared::share::encode(&arr, &[]),
-            },
+            board_code(&arr, &[]),
         ] {
+            let score = shared::SubmitScore {
+                board: body.clone(),
+            };
             let (status, _): (_, shared::ApiError) =
-                call(&build_app(test_state()), post_json("/api/shares", &body)).await;
+                call(&build_app(test_state()), post_json("/api/boards", &body)).await;
+            assert_eq!(status, StatusCode::BAD_REQUEST);
+            let (status, _): (_, shared::ApiError) =
+                call(&build_app(test_state()), post_json("/api/scores", &score)).await;
             assert_eq!(status, StatusCode::BAD_REQUEST);
         }
-        let oversized = shared::CreateShare {
+        let oversized = shared::BoardCode {
             n: 2,
-            code: "0".repeat(shared::share::MAX_LEN + 2048),
+            code: "0".repeat(shared::board::MAX_LEN + 2048),
         };
-        let response = build_app(test_state())
-            .oneshot(post_json("/api/shares", &oversized))
-            .await
-            .unwrap();
-        assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
+        let score = shared::SubmitScore {
+            board: oversized.clone(),
+        };
+        for request in [
+            post_json("/api/boards", &oversized),
+            post_json("/api/scores", &score),
+        ] {
+            let response = build_app(test_state()).oneshot(request).await.unwrap();
+            assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
+        }
         let (status, _, _) = fetch_uri("/s/not-a-token").await;
         assert_eq!(status, StatusCode::NOT_FOUND);
     }
 
     #[tokio::test]
-    async fn short_links_roundtrip_deduplicate_and_keep_solution_previews() {
+    async fn boards_roundtrip_deduplicate_and_keep_previews() {
         let Some(db_pool) = test_db() else {
             eprintln!("TEST_DATABASE_URL not set; skipping");
             return;
         };
         let player = sign_up(&db_pool);
         let app = build_app(state_for(db_pool));
-        // Both valid and unfinished snapshots are shareable. The full f64
-        // value survives storage and redirect without passing through f32.
-        let mut arr = two_squares(2.0 + 2e-10).arrangement;
+        // Both valid and unfinished boards are shareable. The full f64 value
+        // survives storage and redirect without passing through f32. A side
+        // no other run uses makes the concurrent pair below race to insert.
+        let side = 2.0 + 2e-10 + (uuid::Uuid::new_v4().as_u128() % 1_000_000) as f64 * 1e-9;
+        let mut arr = two_squares(side);
         arr.squares[1].cx = 1.2;
-        let code = shared::share::encode(&arr, &[]);
-        let body = shared::CreateShare {
-            n: arr.n,
-            code: code.clone(),
-        };
-        let upper = shared::CreateShare {
+        let code = shared::board::encode(&arr, &[]);
+        let body = board_code(&arr, &[]);
+        let upper = shared::BoardCode {
             n: arr.n,
             code: code.to_uppercase(),
         };
-        let ((status, a), (_, b)): ((_, shared::ShortShare), (_, shared::ShortShare)) = tokio::join!(
-            call(&app, post_as("/api/shares", &body, &player)),
-            call(&app, post_as("/api/shares", &upper, &player)),
+        let ((status, a), (_, b)): ((_, shared::BoardLink), (_, shared::BoardLink)) = tokio::join!(
+            call(&app, post_as("/api/boards", &body, &player)),
+            call(&app, post_as("/api/boards", &upper, &player)),
         );
         assert_eq!(status, StatusCode::OK);
         assert_eq!(a, b, "concurrent canonical duplicates reuse the same URL");
@@ -761,7 +786,7 @@ mod tests {
         let location = response.headers()[header::LOCATION].to_str().unwrap();
         assert_eq!(location, format!("{TEST_URL}/play/2?s={code}"));
         assert_eq!(
-            shared::share::decode(location.split("?s=").nth(1).unwrap(), 2)
+            shared::board::decode(location.split("?s=").nth(1).unwrap(), 2)
                 .unwrap()
                 .arrangement,
             arr
@@ -791,16 +816,9 @@ mod tests {
         assert_eq!(headers[header::CONTENT_TYPE], "image/png");
         assert!(png.starts_with(b"\x89PNG\r\n\x1a\n"));
         arr.squares[0].theta = 0.1;
-        let (_, different): (_, shared::ShortShare) = call(
+        let (_, different): (_, shared::BoardLink) = call(
             &app,
-            post_as(
-                "/api/shares",
-                &shared::CreateShare {
-                    n: 2,
-                    code: shared::share::encode(&arr, &[]),
-                },
-                &player,
-            ),
+            post_as("/api/boards", &board_code(&arr, &[]), &player),
         )
         .await;
         assert_ne!(a, different);
@@ -813,7 +831,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn short_links_keep_glue_through_the_redirect() {
+    async fn boards_keep_glue_through_the_redirect() {
         use shared::glue::{Feature, Glue};
         let Some(db_pool) = test_db() else {
             eprintln!("TEST_DATABASE_URL not set; skipping");
@@ -821,7 +839,7 @@ mod tests {
         };
         let player = sign_up(&db_pool);
         let app = build_app(state_for(db_pool));
-        let arr = two_squares(2.0).arrangement;
+        let arr = two_squares(2.0);
         let glues = vec![
             Glue {
                 a: Feature::Edge { square: 0, edge: 0 },
@@ -839,14 +857,14 @@ mod tests {
                 b: Feature::Midpoint { square: 0, edge: 3 },
             },
         ];
-        let code = shared::share::encode(&arr, &glues);
+        let code = shared::board::encode(&arr, &glues);
         let share = |code: String| {
             let app = app.clone();
             let player = &player;
             async move {
-                let (status, link): (_, shared::ShortShare) = call(
+                let (status, link): (_, shared::BoardLink) = call(
                     &app,
-                    post_as("/api/shares", &shared::CreateShare { n: 2, code }, player),
+                    post_as("/api/boards", &shared::BoardCode { n: 2, code }, player),
                 )
                 .await;
                 assert_eq!(status, StatusCode::OK);
@@ -857,8 +875,8 @@ mod tests {
         assert_eq!(glued, share(code.to_uppercase()).await);
         assert_ne!(
             glued,
-            share(shared::share::encode(&arr, &[])).await,
-            "glue is part of the snapshot"
+            share(shared::board::encode(&arr, &[])).await,
+            "glue is part of the board"
         );
         let response = app
             .clone()
@@ -872,9 +890,9 @@ mod tests {
         assert_eq!(response.status(), StatusCode::FOUND);
         let location = response.headers()[header::LOCATION].to_str().unwrap();
         assert_eq!(location, format!("{TEST_URL}/play/2?s={code}"));
-        let snapshot = shared::share::decode(location.split("?s=").nth(1).unwrap(), 2).unwrap();
-        assert_eq!(snapshot.arrangement, arr);
-        assert_eq!(snapshot.glues, glues);
+        let board = shared::board::decode(location.split("?s=").nth(1).unwrap(), 2).unwrap();
+        assert_eq!(board.arrangement, arr);
+        assert_eq!(board.glues, glues);
         let (status, _, png) = fetch_uri(&format!("/api/preview.png?n=2&s={code}")).await;
         assert_eq!(status, StatusCode::OK);
         assert!(png.starts_with(b"\x89PNG\r\n\x1a\n"));
@@ -882,17 +900,17 @@ mod tests {
 
     #[test]
     fn share_glue_down_migration_refuses_while_glued_codes_exist() {
-        use crate::schema::solution_shares as shares;
         use diesel::connection::SimpleConnection;
         use diesel::prelude::*;
+        use legacy::solution_shares as shares;
         use shared::glue::{Feature, Glue};
         let Some(pool) = test_db() else {
             eprintln!("TEST_DATABASE_URL not set; skipping");
             return;
         };
-        let arr = two_squares(2.0).arrangement;
-        let glue_free = shared::share::encode(&arr, &[]);
-        let glued = shared::share::encode(
+        let arr = two_squares(2.0);
+        let glue_free = shared::board::encode(&arr, &[]);
+        let glued = shared::board::encode(
             &arr,
             &[Glue {
                 a: Feature::Edge { square: 0, edge: 0 },
@@ -974,8 +992,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn the_largest_share_code_round_trips_through_a_real_server() {
-        use crate::schema::solution_shares as shares;
+    async fn the_largest_board_code_round_trips_through_a_real_server() {
+        use crate::schema::board_states as boards;
         use diesel::prelude::*;
         use shared::glue::{Feature, Glue, MAX_GLUES};
         let Some(db_pool) = test_db() else {
@@ -1014,39 +1032,44 @@ mod tests {
                 }
             })
             .collect();
-        let code = shared::share::encode(&arr, &glues);
-        assert_eq!(code.len(), shared::share::MAX_LEN);
+        let code = shared::board::encode(&arr, &glues);
+        assert_eq!(code.len(), shared::board::MAX_LEN);
         assert_eq!(code.len(), 37_598);
-        let body = serde_json::to_string(&shared::CreateShare {
-            n: 100,
-            code: code.clone(),
-        })
-        .unwrap();
-        let (status, _, reply) = raw_http(
-            addr,
+        let post = |path: &str, body: String| {
             format!(
-                "POST /api/shares HTTP/1.1\r\nHost: packit.test\r\n\
+                "POST {path} HTTP/1.1\r\nHost: packit.test\r\n\
                  Origin: {TEST_URL}\r\nCookie: {}\r\n\
                  Content-Type: application/json\r\nContent-Length: {}\r\n\
                  Connection: close\r\n\r\n{body}",
                 player.cookie,
                 body.len()
-            ),
-        )
-        .await;
+            )
+        };
+        let board = shared::BoardCode {
+            n: 100,
+            code: code.clone(),
+        };
+        let body = serde_json::to_string(&board).unwrap();
+        let (status, _, reply) = raw_http(addr, post("/api/boards", body)).await;
         assert_eq!(status, 200, "{}", String::from_utf8_lossy(&reply));
-        let link: shared::ShortShare = serde_json::from_slice(&reply).unwrap();
+        let link: shared::BoardLink = serde_json::from_slice(&reply).unwrap();
         let token = link
             .url
             .strip_prefix(&format!("{TEST_URL}/s/"))
             .unwrap()
             .to_string();
-        let stored: String = shares::table
+        let stored: String = boards::table
             .find(&token)
-            .select(shares::code)
+            .select(boards::code)
             .first(&mut db_pool.get().unwrap())
             .unwrap();
         assert_eq!(stored, code);
+        // The same board fits a score submission, and is the same row.
+        let body = serde_json::to_string(&shared::SubmitScore { board }).unwrap();
+        let (status, _, reply) = raw_http(addr, post("/api/scores", body)).await;
+        assert_eq!(status, 200, "{}", String::from_utf8_lossy(&reply));
+        let entry: shared::ScoreEntry = serde_json::from_slice(&reply).unwrap();
+        assert_eq!(entry.board, token);
 
         let get = |path: String| {
             format!("GET {path} HTTP/1.1\r\nHost: packit.test\r\nConnection: close\r\n\r\n")
@@ -1062,8 +1085,8 @@ mod tests {
             .expect("a Location header");
         assert_eq!(location, format!("{TEST_URL}/play/100?s={code}"));
         assert_eq!(
-            shared::share::decode(location.split("?s=").nth(1).unwrap(), 100).unwrap(),
-            shared::share::Snapshot {
+            shared::board::decode(location.split("?s=").nth(1).unwrap(), 100).unwrap(),
+            shared::board::BoardState {
                 arrangement: arr,
                 glues
             }

@@ -1,4 +1,5 @@
-use crate::auth::session;
+use super::boards;
+use crate::auth::session::{self, User};
 use crate::models::{NewScore, Score};
 use crate::schema::scores;
 use crate::AppState;
@@ -7,6 +8,7 @@ use axum::http::{header, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::Json;
 use diesel::prelude::*;
+use shared::board::{self, BoardState};
 use shared::geometry;
 use shared::{
     ApiError, Arrangement, ScoreDetail, ScoreEntry, ScoresQuery, SubmitScore, MAX_N, VALIDATION_TOL,
@@ -111,6 +113,8 @@ fn entry(score: &Score, rank: u32) -> ScoreEntry {
         submitted_at: score.submitted_at,
         rank,
         account: score.user_id.is_some(),
+        board: score.board_token.clone(),
+        glue_recorded: score.glue_recorded,
     }
 }
 
@@ -125,32 +129,18 @@ pub fn check_submission(arr: &Arrangement) -> Result<(), HandlerError> {
         .map_err(|v| HandlerError::bad_request(format!("invalid packing: {v}")))
 }
 
-/// Save a score for the signed-in account, named by its username. The
-/// packing is checked first, since that needs no database.
+/// Save a score for the signed-in account, named by its username, with the
+/// board state it was submitted as. The board is decoded and its packing
+/// checked first, since that needs no database.
 pub async fn submit(
     State(state): State<Arc<AppState>>,
     cookies: Cookies,
     Json(body): Json<SubmitScore>,
 ) -> HandlerResult<ScoreEntry> {
-    let arr = body.arrangement;
-    check_submission(&arr)?;
+    let board = board::decode(&body.board.code, body.board.n).map_err(HandlerError::bad_request)?;
+    check_submission(&board.arrangement)?;
     let user = session::require_user(&state, &cookies, SIGN_IN_TO_SUBMIT).await?;
-    let new = NewScore {
-        player: user.username,
-        user_id: user.id,
-        n: arr.n as i32,
-        side: arr.side,
-        arrangement: serde_json::to_value(&arr)?,
-    };
-    let result = with_conn(&state, move |conn| {
-        let score: Score = diesel::insert_into(scores::table)
-            .values(&new)
-            .returning(Score::as_returning())
-            .get_result(conn)?;
-        let rank = rank_of(conn, &score)?;
-        Ok(entry(&score, rank))
-    })
-    .await?;
+    let result = with_conn(&state, move |conn| record(conn, &board, user)).await?;
     tracing::info!(
         "score {} by {}: n={} side={} rank={}",
         result.id,
@@ -160,6 +150,34 @@ pub async fn submit(
         result.rank
     );
     Ok(Json(result))
+}
+
+/// Store `board`, or find it already stored, and a score on it for `user`,
+/// in one transaction: both or neither.
+pub(crate) fn record(
+    conn: &mut PgConnection,
+    board: &BoardState,
+    user: User,
+) -> QueryResult<ScoreEntry> {
+    let arr = &board.arrangement;
+    let arrangement = serde_json::to_value(arr)
+        .map_err(|e| diesel::result::Error::SerializationError(e.into()))?;
+    conn.transaction(|conn| {
+        let new = NewScore {
+            player: user.username,
+            user_id: user.id,
+            n: arr.n as i32,
+            side: arr.side,
+            arrangement,
+            board_token: boards::store(conn, board, user.id)?,
+        };
+        let score: Score = diesel::insert_into(scores::table)
+            .values(&new)
+            .returning(Score::as_returning())
+            .get_result(conn)?;
+        let rank = rank_of(conn, &score)?;
+        Ok(entry(&score, rank))
+    })
 }
 
 /// With `n`: the leaderboard for that `n`. Without: the current record holder
@@ -263,10 +281,17 @@ mod tests {
             let value: serde_json::Value = serde_json::from_str(&text).unwrap();
             let back: Arrangement = serde_json::from_value(value).unwrap();
             assert_eq!(float_bits(&back), bits, "{text}");
-            let body = SubmitScore { arrangement };
+            // A submission carries its doubles as board-code bits, which
+            // JSON passes through as a string.
+            let body = SubmitScore {
+                board: shared::BoardCode {
+                    n: arrangement.n,
+                    code: board::encode(&arrangement, &[]),
+                },
+            };
             let text = serde_json::to_string(&body).unwrap();
             let back: SubmitScore = serde_json::from_str(&text).unwrap();
-            assert_eq!(float_bits(&back.arrangement), bits, "{text}");
+            assert_eq!(back, body, "{text}");
         }
     }
 
@@ -280,6 +305,8 @@ mod tests {
             arrangement: serde_json::Value::Null,
             submitted_at: chrono::DateTime::from_timestamp(0, 0).unwrap().naive_utc(),
             user_id,
+            board_token: "0123456789abcdef01234567".into(),
+            glue_recorded: true,
         };
         assert!(entry(&score(Some(Uuid::new_v4())), 1).account);
         assert!(!entry(&score(None), 1).account);

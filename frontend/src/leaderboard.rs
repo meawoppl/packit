@@ -67,6 +67,20 @@ fn player_name(e: &ScoreEntry) -> Html {
     }
 }
 
+/// A link that opens exactly the board a score was submitted as. `/s/` is a
+/// server redirect, so this is a full navigation, not a router link. Scores
+/// from before boards never recorded their glue, which it says.
+fn board_link(entry: &ScoreEntry, label: &'static str) -> Html {
+    html! {
+        <>
+            <a class="score-board" href={entry.board_link()}>{ label }</a>
+            { (!entry.glue_recorded).then(|| html! {
+                <span class="muted">{ " · glue not recorded" }</span>
+            }) }
+        </>
+    }
+}
+
 fn loading_or_error<T>(state: &Option<Result<T, String>>) -> Option<Html> {
     match state {
         None => Some(html! { <p class="muted">{ "Loading..." }</p> }),
@@ -190,6 +204,7 @@ pub fn leaderboard_n(props: &LeaderboardNProps) -> Html {
                                 <th>{ "Side" }</th>
                                 <th>{ "Gap" }</th>
                                 <th>{ "When" }</th>
+                                <th>{ "Board" }</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -202,6 +217,7 @@ pub fn leaderboard_n(props: &LeaderboardNProps) -> Html {
                                     <td>{ fmt_side(e.side) }</td>
                                     <td>{ known.as_ref().map(|k| gap_pct(e.side, k.side)).unwrap_or_default() }</td>
                                     <td class="muted">{ e.submitted_at.format("%Y-%m-%d %H:%M").to_string() }</td>
+                                    <td>{ board_link(e, "Open") }</td>
                                 </tr>
                             }) }
                         </tbody>
@@ -242,6 +258,7 @@ pub fn score_page(props: &ScorePageProps) -> Html {
                 validated=true />
 
             <ArrangementSvg arrangement={arrangement.clone()} />
+            <p>{ board_link(entry, "Open this board") }</p>
             <p>
                 <Link<Route> to={Route::LeaderboardN { n: entry.n }}>{ "Back to leaderboard" }</Link<Route>>
             </p>

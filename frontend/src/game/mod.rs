@@ -15,7 +15,9 @@ use canvas::Scene;
 use gloo_events::{EventListener, EventListenerOptions};
 use gloo_render::{request_animation_frame, AnimationFrame};
 use physics::{Backend, Feature, Glue, Physics, SettlePhase, SETTLE_GLUE_ERROR};
-use shared::{share, Arrangement, KnownRecord, ScoreEntry, SubmitScore, MAX_N};
+use shared::{
+    board, Arrangement, BoardCode, BoardLink, KnownRecord, ScoreEntry, SubmitScore, MAX_N,
+};
 use std::cell::Cell;
 use std::rc::Rc;
 use std::time::Duration;
@@ -28,13 +30,13 @@ use yew::prelude::*;
 use yew_router::prelude::*;
 
 const SHARE_NOTE: &str =
-    "Sign in to share. This snapshot is kept as it is now and shared once you sign in.";
+    "Sign in to share. This board is kept as it is now and shared once you sign in.";
 const SUBMIT_NOTE: &str =
-    "Sign in to submit. This packing is kept as it is now and submitted once you sign in.";
+    "Sign in to submit. This board is kept as it is now and submitted once you sign in.";
 const SUBMIT_UNCERTIFIED_NOTE: &str =
     "Sign in to submit, then press Submit packing to settle and submit.";
-const EXPIRED_SHARE_NOTE: &str = "You're signed out. Sign in again to share this snapshot.";
-const EXPIRED_SUBMIT_NOTE: &str = "You're signed out. Sign in again to submit this packing.";
+const EXPIRED_SHARE_NOTE: &str = "You're signed out. Sign in again to share this board.";
+const EXPIRED_SUBMIT_NOTE: &str = "You're signed out. Sign in again to submit this board.";
 const UNSHARED_NOTE: &str = "Not signed in, so nothing was shared.";
 const UNSUBMITTED_NOTE: &str = "Not signed in, so nothing was submitted.";
 
@@ -139,17 +141,14 @@ pub enum Msg {
     Tighten,
     Refine,
     Submit,
-    /// A submission's result, with the packing it sent.
-    Submitted(Arrangement, Result<ScoreEntry, api::Failure>),
+    /// A submission's result, with the board it sent.
+    Submitted(BoardCode, Result<ScoreEntry, api::Failure>),
     Export,
     Share,
     /// Clipboard result for a share link; `Err` if it could not be copied.
     Shared(Result<(), ()>),
-    /// A short link's result, with the snapshot it was for.
-    ShareCreated(
-        shared::CreateShare,
-        Result<shared::ShortShare, api::RetryError>,
-    ),
+    /// A short link's result, with the board it was for.
+    ShareCreated(BoardCode, Result<BoardLink, api::RetryError>),
     CopyShare,
     Account(Account),
     /// The answer to the sign-in ask with this number: whether it signed in.
@@ -161,10 +160,11 @@ pub enum Msg {
     ClearGlue,
 }
 
-/// A Share or Submit pressed without a session, frozen as it was then.
+/// A Share or Submit pressed without a session: the board, frozen as it
+/// was then.
 enum Pending {
-    Share(shared::CreateShare),
-    Submit(Arrangement),
+    Share(BoardCode),
+    Submit(BoardCode),
 }
 
 /// The scheduled runs that share one slot: shaking anneal or gentle squeeze.
@@ -278,7 +278,7 @@ fn initial_side(n: u32) -> f64 {
     (n as f64).sqrt().ceil() + 0.5
 }
 
-/// Query string of `/play/:n`; `s` carries a share code.
+/// Query string of `/play/:n`; `s` carries a board code.
 #[derive(serde::Deserialize)]
 struct PlayQuery {
     s: Option<String>,
@@ -410,29 +410,29 @@ impl Component for Game {
             glue_resume: false,
             settling: false,
         };
-        // A shared packing opens paused and unvalidated, even if it was
-        // validated when shared; it has to be measured again here.
+        // A board opens paused and unvalidated, even if it was validated
+        // when stored; it has to be measured again here.
         let code = ctx
             .link()
             .location()
             .and_then(|l| l.query::<PlayQuery>().ok())
             .and_then(|q| q.s);
         if let Some(code) = code {
-            match share::decode(&code, n) {
-                Ok(snapshot) => {
-                    // Loading clears glue, so the shared glue goes on after it.
-                    game.physics.load(&snapshot.arrangement);
+            match board::decode(&code, n) {
+                Ok(board) => {
+                    // Loading clears glue, so the board's glue goes on after it.
+                    game.physics.load(&board.arrangement);
                     game.physics.set_paused(true);
                     game.view_side.set(game.physics.side());
-                    match game.physics.set_glues(&snapshot.glues) {
+                    match game.physics.set_glues(&board.glues) {
                         Ok(()) => game.set_status(
-                            "Shared packing loaded, not yet validated. Settle to check it.",
+                            "Board loaded, not yet validated. Settle to check it.",
                             false,
                         ),
-                        Err(e) => game.set_status(&format!("Share link glue: {e}"), true),
+                        Err(e) => game.set_status(&format!("Board glue: {e}"), true),
                     }
                 }
-                Err(e) => game.set_status(&format!("Share link: {e}"), true),
+                Err(e) => game.set_status(&format!("Board link: {e}"), true),
             }
         }
         // Fill the sidebar before the first view; later frames only re-render on change.
@@ -806,19 +806,22 @@ impl Component for Game {
                 true
             }
             Msg::Submit => {
+                // The board is the certified packing with the glue it has
+                // now.
+                let board = self.certified.as_ref().map(|a| self.board_code(a));
                 if self.account.username.is_none() {
                     // Only a certified packing can be frozen; without one,
                     // Submit is pressed again after signing in.
-                    match self.certified.clone() {
-                        Some(arrangement) => {
-                            self.ask_sign_in(ctx, Some(Pending::Submit(arrangement)), SUBMIT_NOTE)
+                    match board {
+                        Some(board) => {
+                            self.ask_sign_in(ctx, Some(Pending::Submit(board)), SUBMIT_NOTE)
                         }
                         None => self.ask_sign_in(ctx, None, SUBMIT_UNCERTIFIED_NOTE),
                     }
                     return true;
                 }
-                match self.certified.clone() {
-                    Some(arrangement) => self.send_submit(ctx, arrangement),
+                match board {
+                    Some(board) => self.send_submit(ctx, board),
                     None => {
                         self.submit_after_measure = true;
                         // A Settle in progress measures (and so submits) once
@@ -830,25 +833,23 @@ impl Component for Game {
                 }
                 true
             }
-            Msg::Submitted(arrangement, result) => {
+            Msg::Submitted(board, result) => {
                 self.submitting = false;
                 match result {
                     Ok(entry) => self.set_status(
                         &format!("Saved! Rank #{} for {n} squares.", entry.rank),
                         false,
                     ),
-                    Err(api::Failure::SignedOut(_)) => self.ask_sign_in(
-                        ctx,
-                        Some(Pending::Submit(arrangement)),
-                        EXPIRED_SUBMIT_NOTE,
-                    ),
+                    Err(api::Failure::SignedOut(_)) => {
+                        self.ask_sign_in(ctx, Some(Pending::Submit(board)), EXPIRED_SUBMIT_NOTE)
+                    }
                     Err(e) => self.set_status(&e.to_string(), true),
                 }
                 true
             }
             Msg::Export => {
                 let value = serde_json::to_value(serde_json::json!({
-                    "arrangement": self.share_arrangement()
+                    "arrangement": self.board_arrangement()
                 }));
                 let result = value
                     .map_err(|e| e.to_string())
@@ -863,13 +864,10 @@ impl Component for Game {
                 if self.sharing {
                     return false;
                 }
-                // Freeze the requested snapshot, including the solver's f64
+                // Freeze the requested board, including the solver's f64
                 // precision and the glue. Later edits never change what this
                 // link contains, even if it waits for a sign-in.
-                let body = shared::CreateShare {
-                    n: ctx.props().n,
-                    code: self.share_code(),
-                };
+                let body = self.board_code(&self.board_arrangement());
                 if self.account.username.is_none() {
                     self.ask_sign_in(ctx, Some(Pending::Share(body)), SHARE_NOTE);
                 } else {
@@ -935,7 +933,7 @@ impl Component for Game {
             Msg::Shared(copied) => {
                 self.sharing = false;
                 self.share_status = match copied {
-                    Ok(()) => "Snapshot link copied to the clipboard.".into(),
+                    Ok(()) => "Board link copied to the clipboard.".into(),
                     Err(()) => {
                         "Short link ready. Tap Copy link, or select and copy it below.".into()
                     }
@@ -1093,7 +1091,7 @@ impl Component for Game {
                             { if let Some(url) = &self.short_share {
                                 html! {
                                     <div class="pg-share-result">
-                                        <label class="pg-help" for="pg-share-link">{ "Shared snapshot" }</label>
+                                        <label class="pg-help" for="pg-share-link">{ "Board link" }</label>
                                         <input id="pg-share-link" class="pg-field" type="url" readonly=true value={url.clone()}
                                             onclick={Callback::from(|e: MouseEvent| e.target_unchecked_into::<HtmlInputElement>().select())} />
                                         <button disabled={self.sharing} onclick={link.callback(|_| Msg::CopyShare)}>{ "Copy link" }</button>
@@ -1259,15 +1257,18 @@ impl Game {
 
     /// The current solution: the certified arrangement if there is one,
     /// else the live scene.
-    fn share_arrangement(&self) -> Arrangement {
+    fn board_arrangement(&self) -> Arrangement {
         self.certified
             .clone()
             .unwrap_or_else(|| self.physics.arrangement())
     }
 
-    /// Share code for the current solution with the scene's glue.
-    fn share_code(&self) -> String {
-        share::encode(&self.share_arrangement(), &self.physics.glues())
+    /// `arrangement` with the scene's glue as it is now, as a board code.
+    fn board_code(&self, arrangement: &Arrangement) -> BoardCode {
+        BoardCode {
+            n: arrangement.n,
+            code: board::encode(arrangement, &self.physics.glues()),
+        }
     }
 
     fn copy_share(&self, ctx: &Context<Self>) {
@@ -1791,7 +1792,8 @@ impl Game {
         }
         self.set_status(&status, false);
         if submit {
-            self.send_submit(ctx, certified.clone());
+            let board = self.board_code(&certified);
+            self.send_submit(ctx, board);
         }
         self.certified = Some(certified);
     }
@@ -1838,22 +1840,22 @@ impl Game {
         self.begin_measure(ctx)
     }
 
-    /// Submit `arrangement` for the signed-in account, which names it.
-    fn send_submit(&mut self, ctx: &Context<Self>, arrangement: Arrangement) {
+    /// Submit the frozen `board` for the signed-in account, which names it.
+    fn send_submit(&mut self, ctx: &Context<Self>, board: BoardCode) {
         self.submitting = true;
         self.sign_in_note = None;
         ctx.link().send_future(async move {
             let result = api::submit_score(SubmitScore {
-                arrangement: arrangement.clone(),
+                board: board.clone(),
             })
             .await;
-            Msg::Submitted(arrangement, result)
+            Msg::Submitted(board, result)
         });
     }
 
     /// Create a short link for the frozen `body`, retrying as the policy
     /// allows. Every attempt sends the same code.
-    fn start_share(&mut self, ctx: &Context<Self>, body: shared::CreateShare) {
+    fn start_share(&mut self, ctx: &Context<Self>, body: BoardCode) {
         self.sharing = true;
         self.short_share = None;
         self.share_error = None;
@@ -1861,7 +1863,7 @@ impl Game {
         self.share_status = "Creating a short link…".into();
         let unmounted = self.unmounted.clone();
         ctx.link().send_future(async move {
-            let result = api::create_share(body.clone(), move || unmounted.get()).await;
+            let result = api::save_board(body.clone(), move || unmounted.get()).await;
             Msg::ShareCreated(body, result)
         });
     }
