@@ -462,14 +462,15 @@
       {
         "name": "Wolfram Bentz",
         "role": "proved",
-        "date": "October 2018"
+        "date": "12 June 2016"
       }
     ],
     "sources": [
+      "https://arxiv.org/abs/1606.03746",
       "https://kingbird.myphotos.cc/packing/squares_in_squares.html",
       "refs/markdown/bentz-22-33-2016.md"
     ],
-    "note": "Grid packing, no finder named. Date disagreement: KB says October 2018, but the refs paper is arXiv:1606.03746 (2016 preprint). I didn't check which arXiv revision matches the KB date."
+    "note": "Grid packing, no finder named. The proof is arXiv:1606.03746, whose only version (v1, 12 June 2016) proves both s(22) and s(33). The Squares in Squares page dates it October 2018; that discrepancy is recorded here, not resolved."
   },
   {
     "n": 23,
@@ -670,14 +671,15 @@
       {
         "name": "Wolfram Bentz",
         "role": "proved",
-        "date": "October 2018"
+        "date": "12 June 2016"
       }
     ],
     "sources": [
+      "https://arxiv.org/abs/1606.03746",
       "https://kingbird.myphotos.cc/packing/squares_in_squares.html",
       "refs/markdown/bentz-22-33-2016.md"
     ],
-    "note": "Grid packing, no finder named. Same date issue as n=22: KB says October 2018, arXiv:1606.03746 is from 2016."
+    "note": "Grid packing, no finder named. Proved with n=22 in arXiv:1606.03746 (only version v1, 12 June 2016). The Squares in Squares page dates it October 2018; that discrepancy is recorded here, not resolved."
   },
   {
     "n": 34,
