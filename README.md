@@ -43,6 +43,14 @@ at the bottom-left. Every crate uses `shared::Placement` and
 | GET | `/s/:token` | — | Redirect to the saved solution and its preview |
 | GET | `/api/preview.png` | `?n=&s=` | 1200×630 PNG of a share code |
 | GET | `/play/:n` | `?s=` | The app page with link-preview metadata |
+| POST | `/api/auth/register/start` | `{ username }` | Passkey creation options and a ceremony id |
+| POST | `/api/auth/register/finish` | `{ ceremony, credential }` | `{ username }`; sets the session cookie |
+| POST | `/api/auth/login/start` | `{ username }` | Passkey request options and a ceremony id |
+| POST | `/api/auth/login/finish` | `{ ceremony, credential }` | `{ username }`; sets the session cookie |
+| POST | `/api/auth/passkeys/start` | — | Options to add a passkey (needs a sign-in within 5 minutes) |
+| POST | `/api/auth/passkeys/finish` | `{ ceremony, credential }` | `{ username }` |
+| POST | `/api/auth/logout` | — | 204; deletes the session and clears the cookie |
+| GET | `/api/auth/me` | — | `{ username }`, or 401 |
 
 Submissions are validated server-side with `shared::geometry::validate`
 using `shared::VALIDATION_TOL`.
@@ -61,6 +69,74 @@ shared packing: the page carries Open Graph and Twitter tags whose absolute
 URLs use `PUBLIC_URL` (default `https://potatos.txcl.io`), never the request
 host. The preview image is only served for a code that fully decodes, and is
 cached as immutable.
+
+## Accounts
+
+Players can create an account with a passkey (WebAuthn, via `webauthn-rs`).
+Accounts don't gate anything yet: scores, shares and previews work
+anonymously.
+
+- `PUBLIC_URL` is the relying party. Its hostname is the RP ID and its exact
+  origin is the only one accepted. It must be a bare `https://` origin;
+  `http://localhost[:port]` is allowed only with `--dev-mode`, so try passkeys
+  locally with `PUBLIC_URL=http://localhost:3000`.
+- Usernames are trimmed and lowercased, then must be 3 to 24 of `a-z`, `0-9`,
+  `_` and `-`, starting with a letter or digit.
+- Ceremony state stays in server memory for 5 minutes, bound to a nonce cookie
+  in the browser that started it. Run a single backend instance; a restart
+  drops sign-ins in progress.
+- Sessions are 30-day `__Host-packit_session` cookies (HttpOnly, Secure,
+  SameSite=Lax). The database stores only a SHA-256 of the token, and every
+  sign-in issues a new one.
+- Every auth POST must send an `Origin` equal to `PUBLIC_URL`, and `/api/auth`
+  has no CORS. The public API keeps permissive CORS and no Origin check, so
+  before `/api/scores` or `/api/shares` start reading the session cookie
+  (PR 2) they must get the same exact-Origin check.
+- A client is an IPv4 address or an IPv6 /64, and IPv6 clients are also
+  grouped by /48. Start and finish endpoints are rate limited per client and
+  per /48; login start is also limited per username and client. Each client
+  may have 5 sign-ins in progress at once, and each /48 50.
+- Sign-in is username-first, so anyone can find out whether a username
+  exists; registration reports taken names too. That enumeration is accepted.
+- Everyone named in `refs/credits.json` has a credited profile, seeded by the
+  migration that creates the tables, so nobody can register their names
+  first. The username is the ASCII-folded surname (`goebel` for Frits Göbel),
+  with the full name in `display_name`. Credited profiles have no passkeys and
+  can't sign in.
+- Reverting that migration refuses while any player, passkey, session or
+  score/share attribution exists; it never drops sign-in data.
+
+### Behind a reverse proxy
+
+**Production behind Traefik must set `TRUSTED_PROXY_TOKEN` or
+`TRUSTED_PROXY`.** Rate limits key on the TCP peer address, so without them
+every client shares Traefik's buckets and one client can lock everyone out of
+signing in. The server logs a warning, once, when it sees `X-Forwarded-For`
+while neither is set.
+
+This assumes a single proxy hop. A trusted request takes the client IP from
+the rightmost entry of the last `X-Forwarded-For` header, which Traefik
+appends for the client it saw. Earlier entries are client-supplied and
+ignored, and a malformed last entry falls back to the socket peer.
+
+Two settings decide which requests are trusted:
+
+- `TRUSTED_PROXY_TOKEN` (preferred): a shared secret, in production 32
+  random bytes as 64 hex characters (`openssl rand -hex 32`). Traefik must
+  overwrite the `X-Packit-Proxy-Token` request header with it on every
+  request (a `headers` middleware with `customRequestHeaders`). When it is
+  set, `X-Forwarded-For` is trusted only if the request carries exactly one
+  `X-Packit-Proxy-Token` header equal to the token. It must be 32 to 256
+  visible ASCII characters with no commas; any other value stops startup.
+- `TRUSTED_PROXY`: Traefik's IP as the backend sees it, e.g. a fixed address
+  on the shared Docker network. On its own, requests from that socket peer are
+  trusted. With the token also set, both must match.
+
+With neither set, both headers are ignored and every request is keyed on its
+socket peer; leave them unset only when clients connect directly. The token
+header is removed at the outermost layer, before any handler or log sees it,
+and its value is never logged. A token header that doesn't match, or that
+arrives with no token configured, is logged once per process.
 
 ## Quick start
 
