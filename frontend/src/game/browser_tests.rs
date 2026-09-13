@@ -1028,7 +1028,7 @@ async fn letting_go_without_moving_does_nothing() {
 #[wasm_bindgen_test]
 async fn idle_squeeze_slider_follows_loaded_scenes() {
     let _gpu = NoWebGpu::install();
-    let (handle, root, physics) = mount_at(&format!("s={}", share::encode(&cramped(), &[]))).await;
+    let (handle, root, physics) = mount_at(&format!("s={}", board::encode(&cramped(), &[]))).await;
     let slider = squeeze_slider(&root);
     assert_eq!(physics.side(), 1.8);
     assert_shows_side(&root, &slider, &physics, "for a shared scene");
@@ -1058,7 +1058,7 @@ async fn squeeze_bounds_take_in_out_of_range_scenes() {
         side: 10.0,
         squares: vec![sq(4.5, 5.0), sq(5.5, 5.0)],
     };
-    let (handle, root, physics) = mount_at(&format!("s={}", share::encode(&roomy, &[]))).await;
+    let (handle, root, physics) = mount_at(&format!("s={}", board::encode(&roomy, &[]))).await;
     let slider = squeeze_slider(&root);
     assert_eq!(physics.side(), 10.0);
     assert_shows_side(&root, &slider, &physics, "for a side-10 share");
@@ -1090,7 +1090,7 @@ async fn squeeze_bounds_take_in_out_of_range_scenes() {
         side: 1.3,
         squares: vec![sq(0.5, 0.5), sq(0.8, 0.8)],
     };
-    let (handle, root, physics) = mount_at(&format!("s={}", share::encode(&overlapped, &[]))).await;
+    let (handle, root, physics) = mount_at(&format!("s={}", board::encode(&overlapped, &[]))).await;
     let slider = squeeze_slider(&root);
     assert_eq!(physics.side(), 1.3);
     assert_shows_side(&root, &slider, &physics, "below sqrt(n)");
