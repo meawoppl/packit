@@ -229,24 +229,26 @@ async fn share_attempt(
         let Ok(resp) = request.send().await else {
             return Attempt::Transient { after: None };
         };
-        // A body that never arrives is a transport failure; one that isn't a
-        // short link won't improve on retry.
+        // A failure is decided by its status and headers alone; its body is
+        // never read, so a slow or broken one can't change the outcome.
+        if !resp.ok() {
+            if !transient_status(resp.status()) {
+                return Attempt::Permanent;
+            }
+            let after = resp.headers().get("retry-after").and_then(|value| {
+                retry_after(&value, js_sys::Date::now(), |date| {
+                    let at = js_sys::Date::parse(date);
+                    at.is_finite().then_some(at)
+                })
+            });
+            return Attempt::Transient { after };
+        }
+        // A success's body that never arrives is a transport failure; one
+        // that isn't a short link won't improve on retry.
         let Ok(text) = resp.text().await else {
             return Attempt::Transient { after: None };
         };
-        if resp.ok() {
-            return serde_json::from_str(&text).map_or(Attempt::Permanent, Attempt::Done);
-        }
-        if !transient_status(resp.status()) {
-            return Attempt::Permanent;
-        }
-        let after = resp.headers().get("retry-after").and_then(|value| {
-            retry_after(&value, js_sys::Date::now(), |date| {
-                let at = js_sys::Date::parse(date);
-                at.is_finite().then_some(at)
-            })
-        });
-        Attempt::Transient { after }
+        serde_json::from_str(&text).map_or(Attempt::Permanent, Attempt::Done)
     })
     .await;
     outcome.unwrap_or_else(|| {

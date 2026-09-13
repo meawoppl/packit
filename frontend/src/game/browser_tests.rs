@@ -786,18 +786,23 @@ async fn bad_share_link_reports_an_error() {
 struct Reply {
     status: u16,
     retry_after: Option<&'static str>,
+    /// Send the headers but a body that never finishes arriving.
+    stall_body: bool,
 }
 const HANG: Reply = Reply {
     status: 0,
     retry_after: None,
+    stall_body: false,
 };
 const OK: Reply = Reply {
     status: 200,
     retry_after: None,
+    stall_body: false,
 };
 const UNAVAILABLE: Reply = Reply {
     status: 503,
     retry_after: None,
+    stall_body: false,
 };
 
 /// Stub only /api/shares; other mounted-screen requests still use fetch.
@@ -859,8 +864,20 @@ impl ShareApi {
                     } else {
                         r#"{"error":"storage unavailable"}"#
                     };
-                    let response =
-                        web_sys::Response::new_with_opt_str_and_init(Some(text), &options)?;
+                    let response: web_sys::Response = if reply.stall_body {
+                        // Headers now, then a body stream that never closes.
+                        let window = web_sys::window().unwrap();
+                        let class =
+                            |name: &str| -> Result<js_sys::Function, wasm_bindgen::JsValue> {
+                                js_sys::Reflect::get(&window, &name.into())?.dyn_into()
+                            };
+                        let open = js_sys::Array::of1(&js_sys::Object::new());
+                        let stream = js_sys::Reflect::construct(&class("ReadableStream")?, &open)?;
+                        let args = js_sys::Array::of2(&stream, options.as_ref());
+                        js_sys::Reflect::construct(&class("Response")?, &args)?.unchecked_into()
+                    } else {
+                        web_sys::Response::new_with_opt_str_and_init(Some(text), &options)?
+                    };
                     if let Some(after) = reply.retry_after {
                         response.headers().set("retry-after", after)?;
                     }
@@ -1108,6 +1125,7 @@ async fn retry_after_delays_the_next_attempt() {
     let limited = Reply {
         status: 429,
         retry_after: Some("1"),
+        stall_body: false,
     };
     let api = ShareApi::install(&[limited, OK]);
     let _clipboard = Clipboard::install(false);
@@ -1134,6 +1152,7 @@ async fn a_rejected_share_is_not_retried_and_alerts() {
     let rejected = Reply {
         status: 400,
         retry_after: None,
+        stall_body: false,
     };
     let api = ShareApi::install(&[rejected]);
     let clipboard = Clipboard::install(false);
@@ -1145,6 +1164,56 @@ async fn a_rejected_share_is_not_retried_and_alerts() {
     let alert = share_alert(&root).expect("the failure is announced");
     assert!(alert.starts_with("Couldn't create a short link"), "{alert}");
     assert!(clipboard.values.borrow().is_empty());
+    handle.destroy();
+    root.remove();
+}
+
+/// A 429's wait comes from its headers, even when its body never arrives.
+#[wasm_bindgen_test]
+async fn a_stalled_429_body_still_honors_retry_after() {
+    let _gpu = NoWebGpu::install();
+    let limited = Reply {
+        status: 429,
+        retry_after: Some("2"),
+        stall_body: true,
+    };
+    let api = ShareApi::install(&[limited, OK]);
+    let clipboard = Clipboard::install(false);
+    let (handle, root, _) = mount().await;
+    submit_button(&root, "Share").click();
+    sleep(30).await;
+    wait_share(&root).await;
+    let arrivals = api.arrivals.borrow().clone();
+    assert_eq!(arrivals.len(), 2);
+    // Reading the stalled body would time out and retry after about 1.15 s.
+    assert!(
+        arrivals[1] - arrivals[0] >= 2150.0,
+        "retried after {} ms",
+        arrivals[1] - arrivals[0]
+    );
+    assert_eq!(clipboard.values.borrow().len(), 1);
+    handle.destroy();
+    root.remove();
+}
+
+/// A 400 fails on its status alone; a stalled body doesn't turn it into a
+/// retried timeout.
+#[wasm_bindgen_test]
+async fn a_stalled_400_body_fails_at_once_without_retrying() {
+    let _gpu = NoWebGpu::install();
+    let rejected = Reply {
+        status: 400,
+        retry_after: None,
+        stall_body: true,
+    };
+    let api = ShareApi::install(&[rejected]);
+    let _clipboard = Clipboard::install(false);
+    let (handle, root, _) = mount().await;
+    submit_button(&root, "Share").click();
+    sleep(30).await;
+    wait_share(&root).await;
+    assert_eq!(api.requests.borrow().len(), 1, "not retried");
+    assert!(share_alert(&root).is_some(), "the failure is announced");
     handle.destroy();
     root.remove();
 }
