@@ -305,7 +305,11 @@ async fn centered_drag_growth_matches_cpu_on_every_wall() {
             for (p, start) in [&cpu, &gpu].into_iter().zip(shifts) {
                 let shift = (p.frame_shift() - start) as f32;
                 p.set_mouse(x + shift, y + shift, Some(0), true);
+                let old_side = p.side();
                 p.step(6).await;
+                if p.side() > old_side {
+                    assert!(p.contact_forces()[0].iter().any(|f| f.abs() > 1.0));
+                }
             }
         }
         assert!(gpu.side() > 2.1, "wall {x},{y}: {}", gpu.side());
@@ -359,5 +363,56 @@ async fn gpu_settle_resolves_contacts_and_reports_glued_jams() {
     );
     assert_eq!(gpu.glues(), links);
     assert!(gpu.paused());
+    gpu.dispose();
+}
+
+#[wasm_bindgen_test(async)]
+async fn gpu_settle_preserves_resolvable_wall_glue_chain() {
+    let gpu = Physics::new(4, 2.0);
+    gpu.init_gpu().await;
+    assert_eq!(gpu.mode(), Backend::Gpu);
+    for offset in [0.005, 0.01, 0.02, 0.05] {
+        gpu.load(&shared::Arrangement {
+            n: 4,
+            side: 2.0,
+            squares: (0..4)
+                .map(|i| shared::Placement {
+                    cx: 0.5 + (i % 2) as f64,
+                    cy: 0.5 + (i / 2) as f64 - if i >= 2 { offset } else { 0.0 },
+                    theta: 0.0,
+                })
+                .collect(),
+        });
+        let point = |square, edge| Feature::Midpoint { square, edge };
+        gpu.set_glues(&[
+            Glue {
+                a: Feature::Wall(0),
+                b: point(0, 2),
+            },
+            Glue {
+                a: point(0, 0),
+                b: point(1, 2),
+            },
+            Glue {
+                a: point(1, 0),
+                b: Feature::Wall(2),
+            },
+        ])
+        .unwrap();
+        gpu.begin_settle();
+        for _ in 0..260 {
+            gpu.step(6).await;
+            if gpu.settle_status().phase != SettlePhase::Running {
+                break;
+            }
+        }
+        assert_eq!(
+            gpu.settle_status().phase,
+            SettlePhase::Settled,
+            "offset {offset}: {:?}",
+            gpu.settle_status()
+        );
+        assert_eq!(gpu.side(), 2.0);
+    }
     gpu.dispose();
 }
