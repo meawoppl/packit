@@ -38,6 +38,7 @@ pub struct SignInAsk {
 /// What the header's account control shows and can do.
 #[derive(Clone, PartialEq)]
 struct Menu {
+    opener: Option<web_sys::Element>,
     username: Option<String>,
     /// `Some` while the sign-in dialog is open, with the reason it was
     /// opened for, if a page asked.
@@ -57,7 +58,7 @@ struct Menu {
 pub enum Action {
     Open,
     Close,
-    SignIn(String),
+    SignIn,
     Register(String),
     AddPasskey,
     SignOut,
@@ -109,6 +110,7 @@ pub struct AccountProviderProps {
 
 /// Holds the account for everything inside it.
 pub struct AccountProvider {
+    opener: Option<web_sys::Element>,
     username: Option<String>,
     dialog: Option<Option<&'static str>>,
     /// The page ask the open dialog will answer.
@@ -182,6 +184,7 @@ impl Component for AccountProvider {
         ctx.link()
             .send_future(async { Msg::Me(0, api::me().await) });
         Self {
+            opener: None,
             username: None,
             dialog: None,
             waiting: None,
@@ -206,6 +209,11 @@ impl Component for AccountProvider {
             }
             Msg::Me(..) => return false,
             Msg::Ask(ask) => {
+                if self.dialog.is_none() {
+                    self.opener = web_sys::window()
+                        .and_then(|w| w.document())
+                        .and_then(|d| d.active_element());
+                }
                 // A page asks when it has no session, or the server said it
                 // has none, so the account is signed out either way.
                 self.detach();
@@ -216,6 +224,11 @@ impl Component for AccountProvider {
                 self.error = None;
             }
             Msg::Act(Action::Open) => {
+                if self.dialog.is_none() {
+                    self.opener = web_sys::window()
+                        .and_then(|w| w.document())
+                        .and_then(|d| d.active_element());
+                }
                 self.dialog.get_or_insert(None);
                 self.error = None;
             }
@@ -227,12 +240,11 @@ impl Component for AccountProvider {
             }
             // One operation at a time, however the form is submitted.
             Msg::Act(_) if self.busy() => return false,
-            Msg::Act(Action::SignIn(name)) => {
+            Msg::Act(Action::SignIn) => {
                 let op = self.begin();
                 self.error = None;
-                ctx.link().send_future(async move {
-                    Msg::Prepared(op, api::prepare_sign_in(&name).await)
-                });
+                ctx.link()
+                    .send_future(async move { Msg::Prepared(op, api::prepare_sign_in().await) });
             }
             Msg::Act(Action::Register(name)) => {
                 let op = self.begin();
@@ -325,6 +337,7 @@ impl Component for AccountProvider {
             ask: self.ask.clone(),
         };
         let menu = Menu {
+            opener: self.opener.clone(),
             username: self.username.clone(),
             dialog: self.dialog,
             busy: self.busy(),
@@ -333,57 +346,141 @@ impl Component for AccountProvider {
             notice: self.notice.clone(),
             act: self.act.clone(),
         };
+        // Keep both sibling slots present: changing this child list would
+        // remount the page and discard its frozen pending Share or Submit.
         html! {
             <ContextProvider<Account> context={account}>
                 <ContextProvider<Menu> context={menu}>
-                    { ctx.props().children.clone() }
+                    <div class="account-page" inert={self.dialog.is_some().then_some("")}>
+                        { ctx.props().children.clone() }
+                    </div>
+                    <div class="account-modal-slot">
+                        { self.dialog.map(|_| html! { <AccountDialog /> }) }
+                    </div>
                 </ContextProvider<Menu>>
             </ContextProvider<Account>>
         }
     }
 }
 
-/// The header's account control: signed out, a Sign in button that opens
-/// the sign-in dialog; signed in, the username, Add a passkey and Sign out.
+/// The header keeps only an opener. Account actions live in the same modal.
 #[function_component(AccountMenu)]
 pub fn account_menu() -> Html {
     let menu = use_context::<Menu>().expect("AccountMenu is inside an AccountProvider");
-    let name = use_state(String::new);
+    let onclick = Callback::from(move |_| menu.act.emit(Action::Open));
+    html! {
+        <button class={classes!("account-button", if menu.username.is_some() { "account-name" } else { "account-open" })}
+            {onclick} aria-haspopup="dialog">
+            { menu.username.as_deref().unwrap_or("Sign in") }
+        </button>
+    }
+}
+
+/// Native modal semantics make the background inert, including to assistive
+/// technology. The explicit Tab loop also follows controls becoming disabled
+/// while a ceremony finishes. Unmount restores scroll and the opener's focus.
+#[function_component(AccountDialog)]
+fn account_dialog() -> Html {
+    use wasm_bindgen::JsCast;
+    use web_sys::{HtmlDialogElement, HtmlElement};
+    let menu = use_context::<Menu>().expect("dialog inside provider");
+    let dialog = use_node_ref();
     let input = use_node_ref();
+    let new_account = use_state(|| false);
+    let name = use_state(String::new);
+    let available = use_state(|| None::<(String, Result<bool, String>)>);
     {
-        // Whoever opened the dialog, the username field takes focus.
+        let dialog = dialog.clone();
+        let opener = menu.opener.clone();
+        use_effect_with((), move |_| {
+            let document = web_sys::window().unwrap().document().unwrap();
+            let body = document.body().unwrap();
+            let style = body.style();
+            let overflow = style.get_property_value("overflow").unwrap_or_default();
+            let priority = style.get_property_priority("overflow");
+            let _ = style.set_property("overflow", "hidden");
+            let element = dialog.cast::<HtmlDialogElement>().unwrap();
+            let _ = element.show_modal();
+            move || {
+                element.close();
+                if overflow.is_empty() {
+                    let _ = style.remove_property("overflow");
+                } else {
+                    let _ = style.set_property_with_priority("overflow", &overflow, &priority);
+                }
+                // Effects can unmount before the sibling loses `inert`.
+                wasm_bindgen_futures::spawn_local(async move {
+                    gloo_timers::future::sleep(std::time::Duration::ZERO).await;
+                    let target = opener
+                        .filter(|e| e.is_connected())
+                        .and_then(|e| e.dyn_into::<HtmlElement>().ok())
+                        .or_else(|| {
+                            document
+                                .query_selector(".account-name, .account-open")
+                                .ok()
+                                .flatten()
+                                .and_then(|e| e.dyn_into::<HtmlElement>().ok())
+                        });
+                    if document
+                        .query_selector("dialog[open]")
+                        .ok()
+                        .flatten()
+                        .is_none()
+                    {
+                        if let Some(target) = target.filter(|t| t.is_connected()) {
+                            let _ = target.focus();
+                        }
+                    }
+                });
+            }
+        });
+    }
+    {
         let input = input.clone();
-        use_effect_with(menu.dialog.is_some(), move |open| {
-            if *open {
+        use_effect_with(*new_account, move |new| {
+            if *new {
                 if let Some(input) = input.cast::<HtmlInputElement>() {
                     let _ = input.focus();
                 }
             }
         });
     }
+    let typed = name.trim().to_ascii_lowercase();
+    let valid_name = (3..=24).contains(&typed.len())
+        && typed.as_bytes()[0].is_ascii_alphanumeric()
+        && typed
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b'_');
+    {
+        let available = available.clone();
+        use_effect_with(
+            (typed.clone(), valid_name, *new_account),
+            move |(name, valid, new)| {
+                let alive = std::rc::Rc::new(std::cell::Cell::new(true));
+                let still_here = alive.clone();
+                if *valid && *new {
+                    let name = name.clone();
+                    wasm_bindgen_futures::spawn_local(async move {
+                        gloo_timers::future::sleep(std::time::Duration::from_millis(250)).await;
+                        if !still_here.get() {
+                            return;
+                        }
+                        let result = api::username_available(&name)
+                            .await
+                            .map_err(|e| e.to_string());
+                        if still_here.get() {
+                            available.set(Some((name, result)));
+                        }
+                    });
+                }
+                move || alive.set(false)
+            },
+        );
+    }
     let act = |action: Action| {
         let act = menu.act.clone();
         Callback::from(move |_: MouseEvent| act.emit(action.clone()))
     };
-    let status = menu.status.map(|status| {
-        html! { <p class="account-status" role="status">{ status }</p> }
-    });
-    if let Some(username) = &menu.username {
-        return html! {
-            <div class="account">
-                <span class="account-name">{ username }</span>
-                <button class="account-button account-add" disabled={menu.busy}
-                    onclick={act(Action::AddPasskey)}>{ "Add a passkey" }</button>
-                <button class="account-button account-sign-out" disabled={menu.busy}
-                    onclick={act(Action::SignOut)}>{ "Sign out" }</button>
-                { status }
-                { menu.notice.as_ref().map(|notice| html! {
-                    <p class="account-notice" role="status">{ notice }</p>
-                }) }
-            </div>
-        };
-    }
-    let typed = name.trim().to_string();
     let oninput = {
         let name = name.clone();
         Callback::from(move |e: InputEvent| {
@@ -391,59 +488,141 @@ pub fn account_menu() -> Html {
         })
     };
     let onkeydown = {
-        let act = menu.act.clone();
+        let (dialog, act) = (dialog.clone(), menu.act.clone());
         Callback::from(move |e: KeyboardEvent| {
             if e.key() == "Escape" {
+                e.prevent_default();
+                e.stop_propagation();
+                act.emit(Action::Close);
+            }
+            if e.key() == "Tab" {
+                let Some(dialog) = dialog.cast::<HtmlDialogElement>() else {
+                    return;
+                };
+                let nodes = dialog
+                    .query_selector_all(
+                        "button:not([disabled]), input:not([disabled]), a[href], [tabindex='0']",
+                    )
+                    .unwrap();
+                let controls: Vec<HtmlElement> = (0..nodes.length())
+                    .filter_map(|i| nodes.item(i)?.dyn_into().ok())
+                    .collect();
+                if controls.is_empty() {
+                    e.prevent_default();
+                    return;
+                }
+                let active = web_sys::window()
+                    .unwrap()
+                    .document()
+                    .unwrap()
+                    .active_element();
+                let at = controls
+                    .iter()
+                    .position(|c| Some(c.as_ref()) == active.as_ref());
+                let index = if e.shift_key() {
+                    at.filter(|i| *i > 0).map_or(controls.len() - 1, |i| i - 1)
+                } else {
+                    at.map_or(0, |i| (i + 1) % controls.len())
+                };
+                e.prevent_default();
+                let _ = controls[index].focus();
+            }
+        })
+    };
+    let oncancel = {
+        let act = menu.act.clone();
+        Callback::from(move |e: Event| {
+            e.prevent_default();
+            act.emit(Action::Close);
+        })
+    };
+    let onclick = {
+        let (act, dialog) = (menu.act.clone(), dialog.clone());
+        Callback::from(move |e: MouseEvent| {
+            if e.target() == dialog.cast::<HtmlDialogElement>().map(Into::into) {
                 act.emit(Action::Close);
             }
         })
     };
     let onsubmit = {
-        let (act, typed, busy) = (menu.act.clone(), typed.clone(), menu.busy);
+        let (act, typed, busy, new) = (menu.act.clone(), typed.clone(), menu.busy, *new_account);
         Callback::from(move |e: SubmitEvent| {
             e.prevent_default();
-            // Enter submits even while the buttons are disabled.
-            if !typed.is_empty() && !busy {
-                act.emit(Action::SignIn(typed.clone()));
+            if !busy {
+                if new && valid_name {
+                    act.emit(Action::Register(typed.clone()));
+                } else if !new {
+                    act.emit(Action::SignIn);
+                }
             }
         })
     };
-    let no_name = typed.is_empty();
+    let next = {
+        let new = new_account.clone();
+        Callback::from(move |_| new.set(true))
+    };
+    let back = {
+        let new = new_account.clone();
+        Callback::from(move |_| new.set(false))
+    };
+    let hint = if typed.is_empty() {
+        "Choose a unique username.".to_owned()
+    } else if !valid_name {
+        "Use 3–24 letters, digits, - or _, starting with a letter or digit.".into()
+    } else {
+        match available
+            .as_ref()
+            .filter(|(n, _)| *n == typed)
+            .map(|(_, r)| r)
+        {
+            Some(Ok(true)) => "This username is available.".into(),
+            Some(Ok(false)) => "That username is unavailable.".into(),
+            Some(Err(_)) => {
+                "Couldn't check availability. Creating the passkey will check again.".into()
+            }
+            None => "Checking availability…".into(),
+        }
+    };
     html! {
-        <div class="account">
-            { if menu.dialog.is_none() {
-                html! {
-                    <button class="account-button account-open" onclick={act(Action::Open)}>
-                        { "Sign in" }
-                    </button>
-                }
-            } else { Html::default() } }
-            { menu.dialog.map(|reason| html! {
-                <form class="account-dialog" role="dialog" aria-label="Sign in or create an account"
-                    {onsubmit} {onkeydown}>
-                    { reason.map(|reason| html! { <p class="account-reason">{ reason }</p> }) }
-                    <label for="account-username">{ "Username" }</label>
-                    <input id="account-username" ref={input.clone()} type="text"
-                        autocomplete="username webauthn" autocapitalize="none" spellcheck="false"
-                        maxlength="24" value={(*name).clone()} {oninput} />
+        <dialog ref={dialog} class="account-modal" aria-modal="true" aria-labelledby="account-title"
+            {onkeydown} {oncancel} {onclick}>
+            <form class="account-dialog" tabindex="-1" {onsubmit}>
+                <h2 id="account-title">{ if menu.username.is_some() { "Your account" } else { "Sign in" } }</h2>
+                { menu.dialog.flatten().map(|reason| html! { <p class="account-reason">{ reason }</p> }) }
+                { if let Some(username) = &menu.username { html! {
                     <div class="account-actions">
-                        <button type="submit" class="account-button account-primary account-sign-in"
-                            disabled={menu.busy || no_name}>{ "Sign in" }</button>
-                        <button type="button" class="account-button account-create"
-                            disabled={menu.busy || no_name}
-                            onclick={act(Action::Register(typed.clone()))}>{ "Create account" }</button>
-                        <button type="button" class="account-button account-cancel"
-                            onclick={act(Action::Close)}>{ "Cancel" }</button>
+                        <p>{ username }</p>
+                        <button type="button" class="account-button account-add" disabled={menu.busy} onclick={act(Action::AddPasskey)}>{ "Add a passkey" }</button>
+                        <button type="button" class="account-button account-sign-out" disabled={menu.busy} onclick={act(Action::SignOut)}>{ "Sign out" }</button>
                     </div>
-                    { status.clone() }
-                    { menu.error.as_ref().map(|error| html! {
-                        <p class="account-error" role="alert">{ error }</p>
-                    }) }
-                    <p class="account-help">
-                        { "Sign in with a passkey saved on this device or your phone. A new account needs a username of 3 to 24 letters, digits, - or _. There is no account recovery: keep the passkey in a synced password manager or add a second one, because an account whose passkeys are all lost can't be recovered." }
-                    </p>
-                </form>
-            }) }
-        </div>
+                }} else if *new_account { html! {
+                    <>
+                        <label for="account-username">{ "New username" }</label>
+                        <input id="account-username" ref={input} type="text" autocomplete="username webauthn"
+                            autocapitalize="none" spellcheck="false" maxlength="24" disabled={menu.busy}
+                            value={(*name).clone()} {oninput} aria-describedby="account-availability" />
+                        <p id="account-availability" class="account-availability" role="status">{ hint }</p>
+                        <div class="account-actions">
+                            <button type="submit" class="account-button account-primary account-create" disabled={menu.busy || !valid_name}>{ "Create passkey" }</button>
+                            <button type="button" class="account-button account-back" disabled={menu.busy} onclick={back}>{ "Back" }</button>
+                        </div>
+                    </>
+                }} else { html! {
+                    <div class="account-choices">
+                        <button type="submit" class="account-button account-primary account-sign-in" disabled={menu.busy} autofocus=true>
+                            <strong>{ "Existing" }</strong><span>{ "Choose your saved passkey" }</span>
+                        </button>
+                        <button type="button" class="account-button account-new" disabled={menu.busy} onclick={next}>
+                            <strong>{ "New" }</strong><span>{ "Choose a username and save a passkey" }</span>
+                        </button>
+                    </div>
+                }} }
+                { menu.status.map(|s| html! { <p class="account-status" role="status">{ s }</p> }) }
+                { menu.error.as_ref().map(|s| html! { <p class="account-error" role="alert">{ s }</p> }) }
+                { menu.notice.as_ref().map(|s| html! { <p class="account-notice" role="status">{ s }</p> }) }
+                <p class="account-help">{ "Use a passkey saved on this device or your phone. There is no account recovery: keep the passkey in a synced password manager or add a second one, because an account whose passkeys are all lost can't be recovered." }</p>
+                <button type="button" class="account-button account-cancel" onclick={act(Action::Close)}>{ if menu.username.is_some() { "Close" } else { "Cancel" } }</button>
+            </form>
+        </dialog>
     }
 }

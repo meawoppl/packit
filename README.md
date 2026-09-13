@@ -45,7 +45,8 @@ at the bottom-left. Every crate uses `shared::Placement` and
 | GET | `/play/:n` | `?s=` | The app page with link-preview metadata |
 | POST | `/api/auth/register/start` | `{ username }` | Passkey creation options and a ceremony id |
 | POST | `/api/auth/register/finish` | `{ ceremony, credential }` | `{ username }`; sets the session cookie |
-| POST | `/api/auth/login/start` | `{ username }` | Passkey request options and a ceremony id |
+| POST | `/api/auth/login/start` | — | Discoverable passkey request options and a ceremony id |
+| GET | `/api/auth/usernames/:name` | — | Advisory `{ available }` hint |
 | POST | `/api/auth/login/finish` | `{ ceremony, credential }` | `{ username }`; sets the session cookie |
 | POST | `/api/auth/passkeys/start` | — | Options to add a passkey (needs a sign-in within 5 minutes) |
 | POST | `/api/auth/passkeys/finish` | `{ ceremony, credential }` | `{ username }` |
@@ -106,7 +107,10 @@ served for a code that fully decodes, and is cached as immutable.
 ## Accounts
 
 Players create an account with a username and a passkey (WebAuthn, via
-`webauthn-rs`) from the header's account control, and sign in the same way.
+`webauthn-rs`) in a modal opened by Sign in, Share or Submit. Existing opens the
+browser's passkey picker without a username; New asks for a unique username,
+then saves a passkey. The username button opens account actions in that same
+modal. Escape, backdrop and Cancel all dismiss it, restoring focus and scroll.
 Submitting a score and creating a short link need an account. Playing,
 opening existing links (`/s/:token` and `/play/:n?s=`), link previews,
 records and the leaderboards stay public and anonymous.
@@ -167,10 +171,24 @@ records and the leaderboards stay public and anonymous.
   permissive CORS and no Origin check.
 - A client is an IPv4 address or an IPv6 /64, and IPv6 clients are also
   grouped by /48. Start and finish endpoints are rate limited per client and
-  per /48; login start is also limited per username and client. Each client
+  per /48; username availability shares that client limit. Each client
   may have 5 sign-ins in progress at once, and each /48 50.
-- Sign-in is username-first, so anyone can find out whether a username
-  exists; registration reports taken names too. That enumeration is accepted.
+- Username availability is advisory, rate-limited and never cached. It
+  exposes taken names; registration repeats the check and its unique index
+  remains authoritative. A taken name fails before any passkey create call.
+- Discoverable sign-in verifies both the credential ID and user handle against
+  one player, then the library verifies the assertion with user verification
+  required. Registration and adding a passkey request resident-key storage.
+  The `discoverable` database flag records this registration path; it is not
+  a cryptographic assertion that the authenticator honored storage.
+- Migration `20260914000300` intentionally resets pre-release player accounts:
+  all `kind='player'` users and their passkeys/sessions are deleted. Credited
+  profiles and all scores, boards, tokens, codes and names remain unchanged;
+  only player ownership FKs become NULL. Locks serialize existing writers and
+  a NOT NULL passkey column with no default rejects old-binary inserts, rolling
+  back their registration transaction. Down can remove the column but cannot
+  restore deleted accounts. Recount players/passkeys before release and verify
+  preserved records on a throwaway snapshot before merging.
 - Everyone named in `refs/credits.json` has a credited profile, seeded by the
   migration that creates the tables, so nobody can register their names
   first. The username is the ASCII-folded surname (`goebel` for Frits Göbel),

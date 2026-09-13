@@ -742,3 +742,26 @@ svg.arrangement .square {
         padding: 12px 4px;
     }
 }
+
+/* Native top-layer dialog: the page behind it is inert. */
+.account-modal {
+    padding: 0;
+    margin: auto;
+    width: min(34rem, calc(100vw - 2rem));
+    max-height: calc(100dvh - 2rem);
+    overflow: auto;
+    border: 1px solid #565f89;
+    border-radius: 1rem;
+    background: #1a1b26;
+    color: #c0caf5;
+    box-shadow: 0 1rem 4rem #0008;
+}
+.account-modal::backdrop { background: #090d18b8; }
+.account-modal .account-dialog { position: static; width: auto; margin: 0; border: 0; padding: 1.5rem; box-shadow: none; }
+.account-modal h2 { margin-top: 0; }
+.account-choices { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+.account-choices button { min-height: 7rem; display: flex; flex-direction: column; justify-content: center; gap: .6rem; white-space: normal; }
+.account-choices strong { font-size: 1.3rem; }
+.account-availability { font-size: .85rem; min-height: 2.5em; }
+.account-modal button { min-height: 44px; }
+@media (max-width: 450px) { .account-choices { grid-template-columns: 1fr; } }

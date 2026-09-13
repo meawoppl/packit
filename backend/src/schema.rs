@@ -14,6 +14,7 @@ diesel::table! {
         credential_id -> Bytea,
         user_id -> Uuid,
         passkey -> Jsonb,
+        discoverable -> Bool,
         created_at -> Timestamptz,
         last_used_at -> Nullable<Timestamptz>,
     }

@@ -70,6 +70,9 @@ enum Authenticator {
     /// keys and user verification that always succeeds.
     Add,
     Remove(String),
+    Credentials(String),
+    Clear(String),
+    Store(String, Value),
 }
 
 impl WebDriverCompatibleCommand for Authenticator {
@@ -78,6 +81,12 @@ impl WebDriverCompatibleCommand for Authenticator {
         let path = match self {
             Self::Add => format!("session/{session}/webauthn/authenticator"),
             Self::Remove(id) => format!("session/{session}/webauthn/authenticator/{id}"),
+            Self::Store(id, _) => {
+                format!("session/{session}/webauthn/authenticator/{id}/credential")
+            }
+            Self::Credentials(id) | Self::Clear(id) => {
+                format!("session/{session}/webauthn/authenticator/{id}/credentials")
+            }
         };
         base.join(&path)
     }
@@ -98,7 +107,9 @@ impl WebDriverCompatibleCommand for Authenticator {
                     .to_string(),
                 ),
             ),
-            Self::Remove(_) => (Method::DELETE, None),
+            Self::Remove(_) | Self::Clear(_) => (Method::DELETE, None),
+            Self::Credentials(_) => (Method::GET, None),
+            Self::Store(_, credential) => (Method::POST, Some(credential.to_string())),
         }
     }
 }
@@ -298,15 +309,22 @@ impl Browser {
         self.button(label).await.click().await.unwrap();
     }
 
-    /// Reset the scene from the Advanced panel: an edit after a request.
-    async fn reset_scene(&self) {
-        let advanced = self.find(".pg-advanced").await;
-        if advanced.attr("open").await.unwrap().is_none() {
-            self.click(".pg-advanced summary").await;
-        }
-        self.press("Reset").await;
-        self.text(".pg-status", |t| t.starts_with("Fresh grid"))
-            .await;
+    /// A pending action is covered by the modal; background edits are inert.
+    async fn assert_modal_background_inert(&self) {
+        assert!(self
+            .find(".account-page")
+            .await
+            .attr("inert")
+            .await
+            .unwrap()
+            .is_some());
+        assert!(self
+            .find(".account-modal")
+            .await
+            .attr("open")
+            .await
+            .unwrap()
+            .is_some());
     }
 
     async fn add_authenticator(&self) -> String {
@@ -327,9 +345,19 @@ impl Browser {
 
     /// Type `username` into the open sign-in dialog and press `button`.
     async fn start_sign_in(&self, username: &str, button: &str) {
-        let input = self.find("#account-username").await;
-        input.clear().await.unwrap();
-        input.send_keys(username).await.unwrap();
+        if button == ".account-create" {
+            self.click(".account-new").await;
+            let input = self.find("#account-username").await;
+            input.send_keys(username).await.unwrap();
+        } else {
+            assert!(
+                self.client
+                    .find(Locator::Css("#account-username"))
+                    .await
+                    .is_err(),
+                "Existing is username-free"
+            );
+        }
         self.click(button).await;
     }
 
@@ -376,8 +404,24 @@ impl Browser {
     }
 
     async fn sign_out(&self) {
+        if self
+            .client
+            .find(Locator::Css(".account-dialog"))
+            .await
+            .is_err()
+        {
+            self.click(".account-name").await;
+        }
         self.click(".account-sign-out").await;
         self.find(".account-open").await;
+        if self
+            .client
+            .find(Locator::Css(".account-dialog"))
+            .await
+            .is_ok()
+        {
+            self.click(".account-cancel").await;
+        }
     }
 
     fn user_id(&self, username: &str) -> Uuid {
@@ -468,7 +512,7 @@ async fn passkeys_gate_sharing_and_submitting_in_a_real_browser() {
     let username = format!("e2e-{}", &Uuid::new_v4().simple().to_string()[..12]);
 
     // A signed-out Share freezes the board and opens sign-in; creating an
-    // account then shares exactly that board, not the reset scene.
+    // account then shares exactly that board, with the page behind inert.
     let (scene, glues) = glued_scene();
     b.goto(&format!("/play/2?s={}", board::encode(&scene, &glues)))
         .await;
@@ -478,7 +522,7 @@ async fn passkeys_gate_sharing_and_submitting_in_a_real_browser() {
     b.press("Share").await;
     b.text(".account-reason", |t| t.starts_with("Sign in to share"))
         .await;
-    b.reset_scene().await;
+    b.assert_modal_background_inert().await;
     b.sign_in_with(&username, ".account-create").await;
     let owner = b.user_id(&username);
     let shared = b.wait_boards(owner, 1).await;
@@ -514,7 +558,7 @@ async fn passkeys_gate_sharing_and_submitting_in_a_real_browser() {
     b.press("Submit packing").await;
     b.text(".account-reason", |t| t.starts_with("Sign in to submit"))
         .await;
-    b.reset_scene().await;
+    b.assert_modal_background_inert().await;
     b.sign_in_with(&username, ".account-sign-in").await;
     b.text(".pg-status", |t| t.starts_with("Saved!")).await;
     let submitted: Vec<(Uuid, String, Value, String, String, bool)> = scores::table
@@ -616,6 +660,7 @@ async fn passkeys_gate_sharing_and_submitting_in_a_real_browser() {
     b.sign_in_with(&username, ".account-sign-in").await;
     b.remove_authenticator(first_key).await;
     let second_key = b.add_authenticator().await;
+    b.click(".account-name").await;
     b.click(".account-add").await;
     b.text(".account-notice", |t| t.starts_with("Passkey added"))
         .await;
@@ -645,21 +690,38 @@ async fn passkeys_gate_sharing_and_submitting_in_a_real_browser() {
 /// up agreeing on the account signed in afterwards.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_cancelled_sign_in_never_leaves_its_session_behind() {
-    let Some((_driver, b, _key)) = open().await else {
+    let Some((_driver, b, key)) = open().await else {
         return;
     };
     let tag = &Uuid::new_v4().simple().to_string()[..10];
     let (first, second) = (format!("e2e-a-{tag}"), format!("e2e-b-{tag}"));
     b.goto("/").await;
+    let mut credentials = Vec::new();
     for name in [&first, &second] {
         b.click(".account-open").await;
         b.sign_in_with(name, ".account-create").await;
+        let stored = b
+            .client
+            .issue_cmd(Authenticator::Credentials(key.clone()))
+            .await
+            .unwrap();
+        let credential = stored.as_array().expect("credential list")[0].clone();
+        assert_eq!(credential["isResidentCredential"], true);
+        credentials.push(credential);
         b.sign_out().await;
+        b.client
+            .issue_cmd(Authenticator::Clear(key.clone()))
+            .await
+            .unwrap();
     }
     let (a, bee) = (b.user_id(&first), b.user_id(&second));
 
     // A's finish reaches the server, which starts A's session, but the
     // response carrying A's cookie is held. Cancel doesn't end the wait.
+    b.client
+        .issue_cmd(Authenticator::Store(key.clone(), credentials[0].clone()))
+        .await
+        .unwrap();
     b.hold.armed.store(true, Ordering::SeqCst);
     let finishes = b.hold.finishes.load(Ordering::SeqCst);
     b.click(".account-open").await;
@@ -675,11 +737,22 @@ async fn a_cancelled_sign_in_never_leaves_its_session_behind() {
     // B can't start while A's finish is unresolved: the button stays
     // disabled and Enter does nothing, so no other finish goes out.
     b.click(".account-open").await;
-    let input = b.find("#account-username").await;
-    input.clear().await.unwrap();
-    input.send_keys(&second).await.unwrap();
+    b.client
+        .issue_cmd(Authenticator::Clear(key.clone()))
+        .await
+        .unwrap();
+    b.client
+        .issue_cmd(Authenticator::Store(key.clone(), credentials[1].clone()))
+        .await
+        .unwrap();
     assert!(b.disabled(".account-sign-in").await);
-    input.send_keys("\u{E007}").await.unwrap();
+    // The enabled Cancel button receives Enter without letting it submit
+    // another authentication (the session lock also guards every action).
+    b.find(".account-dialog")
+        .await
+        .send_keys("\u{E007}")
+        .await
+        .unwrap();
     tokio::time::sleep(Duration::from_secs(1)).await;
     assert_eq!(
         b.hold.finishes.load(Ordering::SeqCst),

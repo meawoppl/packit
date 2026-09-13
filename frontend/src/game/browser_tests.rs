@@ -4,8 +4,7 @@
 
 use super::*;
 use crate::account::browser_tests::{
-    click, empty, find, login_started, not_signed_in, reply, text_of, type_username, wait_until,
-    Api, Passkeys,
+    click, empty, find, login_started, not_signed_in, reply, text_of, wait_until, Api, Passkeys,
 };
 use crate::account::{AccountMenu, AccountProvider};
 use wasm_bindgen_test::*;
@@ -2895,7 +2894,6 @@ async fn a_share_opens_the_sign_in_dialog_and_signing_in_sends_it() {
         Some(SHARE_NOTE)
     );
     physics.set_glues(&[]).unwrap();
-    type_username(&root, "ada");
     sleep(30).await;
     click(&root, ".account-sign-in");
     wait_until("the share", || shares.requests.borrow().len() == 1).await;
@@ -2924,7 +2922,6 @@ async fn cancelling_the_sign_in_dialog_drops_the_share() {
     // Signing in afterwards sends nothing.
     click(&root, ".account-open");
     sleep(30).await;
-    type_username(&root, "ada");
     sleep(30).await;
     click(&root, ".account-sign-in");
     wait_until("the sign-in", || {
@@ -2959,7 +2956,6 @@ async fn a_stale_sign_in_does_not_share_for_a_newer_ask() {
     let (handle, root, _) = mount_site(&format!("s={}", glued_code())).await;
     submit_button(&root, "Share").click();
     sleep(50).await;
-    type_username(&root, "ada");
     sleep(30).await;
     click(&root, ".account-sign-in");
     wait_until("the first finish", || {
