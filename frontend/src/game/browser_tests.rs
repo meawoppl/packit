@@ -322,7 +322,7 @@ async fn scene_controls_close_the_glue_tool() {
         let status = text(&root, ".pg-status");
         assert!(status.contains("now tap a target"), "{control}: {status}");
         if control == "size" {
-            slide(&root, "#pg-size", "2.2");
+            slide(&root, SQUEEZE, "2.2");
         } else {
             force_button(&root, control).click();
         }
@@ -525,7 +525,7 @@ async fn finished_anneal_measures_and_releases_the_band() {
 }
 
 #[wasm_bindgen_test]
-async fn size_slider_animates_pressure_and_wakes_a_paused_scene() {
+async fn squeeze_slider_animates_pressure_and_wakes_a_paused_scene() {
     let _gpu = NoWebGpu::install();
     let (handle, root, physics) = mount().await;
     force_button(&root, "Pause").click();
@@ -534,12 +534,7 @@ async fn size_slider_animates_pressure_and_wakes_a_paused_scene() {
     assert_eq!(physics.params().band_tension, 0.0);
     let start = physics.side();
     let right_square = physics.bodies()[1].x;
-    let slider: HtmlInputElement = root
-        .query_selector("#pg-size")
-        .unwrap()
-        .unwrap()
-        .dyn_into()
-        .unwrap();
+    let slider = squeeze_slider(&root);
     slider.set_value("1.8");
     let init = web_sys::EventInit::new();
     init.set_bubbles(true);
@@ -628,14 +623,371 @@ fn slide(root: &Element, selector: &str, value: &str) -> f64 {
     slider.value().parse().unwrap()
 }
 
+/// The Squeeze slider, in the main panel beside Settle.
+const SQUEEZE: &str = ".pg-submit #pg-size";
+
+fn squeeze_slider(root: &Element) -> HtmlInputElement {
+    root.query_selector(SQUEEZE)
+        .unwrap()
+        .expect("Squeeze slider in the main panel")
+        .dyn_into()
+        .unwrap()
+}
+
+fn key_event(kind: &str, key: &str, repeat: bool) -> KeyboardEvent {
+    let init = web_sys::KeyboardEventInit::new();
+    init.set_bubbles(true);
+    init.set_key(key);
+    init.set_repeat(repeat);
+    KeyboardEvent::new_with_keyboard_event_init_dict(kind, &init).unwrap()
+}
+
+/// Fire `kind` at `slider` as the browser would: pointer and key events
+/// bubble, `blur` doesn't.
+fn fire(slider: &HtmlInputElement, kind: &str) {
+    let event: Event = match kind {
+        "pointerup" | "pointercancel" => {
+            let init = PointerEventInit::new();
+            init.set_bubbles(true);
+            init.set_pointer_id(1);
+            init.set_is_primary(true);
+            PointerEvent::new_with_event_init_dict(kind, &init)
+                .unwrap()
+                .into()
+        }
+        "keyup" => key_event(kind, "ArrowDown", false).into(),
+        "blur" => Event::new(kind).unwrap(),
+        _ => {
+            let init = web_sys::EventInit::new();
+            init.set_bubbles(true);
+            Event::new_with_event_init_dict(kind, &init).unwrap()
+        }
+    };
+    slider.dispatch_event(&event).unwrap();
+}
+
+/// The live side every 5 ms for `ms` milliseconds.
+async fn sample_sides(physics: &Physics, ms: u64) -> Vec<f64> {
+    let mut sides = Vec::new();
+    for _ in 0..ms / 5 {
+        sleep(5).await;
+        sides.push(physics.side());
+    }
+    sides
+}
+
+/// Largest change in the side between neighbouring samples. A teleport to
+/// the band's target is at least its 0.3 reach; a slow frame's worth of
+/// band motion stays well under this.
+const NO_JUMP: f64 = 0.05;
+
+fn assert_continuous(sides: &[f64], at: &str) {
+    let worst = sides
+        .windows(2)
+        .map(|w| (w[1] - w[0]).abs())
+        .fold(0.0, f64::max);
+    assert!(
+        worst < NO_JUMP,
+        "the side jumped by {worst} {at}: {sides:?}"
+    );
+}
+
+/// The Squeeze slider's thumb and readout sit on the live side, to the
+/// slider's step.
+fn assert_shows_side(root: &Element, slider: &HtmlInputElement, physics: &Physics, at: &str) {
+    let side = physics.side();
+    let thumb: f64 = slider.value().parse().unwrap();
+    assert!(
+        (thumb - side).abs() <= 0.0005 + 1e-9,
+        "thumb {thumb} on side {side} {at}"
+    );
+    assert_eq!(
+        text(root, "label[for=pg-size] output"),
+        format!("{side:.3}"),
+        "readout {at}"
+    );
+}
+
 #[wasm_bindgen_test]
-async fn size_scrub_reach_follows_band_pressure() {
+async fn the_squeeze_slider_is_the_only_size_control() {
+    let _gpu = NoWebGpu::install();
+    let (handle, root, _) = mount().await;
+    assert_eq!(root.query_selector_all("#pg-size").unwrap().length(), 1);
+    squeeze_slider(&root);
+    assert!(text(&root, "label[for=pg-size]").starts_with("Squeeze"));
+    let ranges = root
+        .query_selector_all(".pg-advanced input[type=range]")
+        .unwrap();
+    let ids: Vec<String> = (0..ranges.length())
+        .filter_map(|i| ranges.item(i))
+        .filter_map(|r| r.dyn_into::<Element>().ok())
+        .map(|r| r.id())
+        .collect();
+    assert_eq!(
+        ids,
+        [
+            "pg-band",
+            "pg-edge-attraction",
+            "pg-damping",
+            "pg-stiffness"
+        ],
+        "Advanced keeps the band slider and no size slider"
+    );
+    handle.destroy();
+    root.remove();
+}
+
+/// Held, the Squeeze slider presses the band in on the squares. Let go, the
+/// band releases and Settle lets their pressure push the box back out until
+/// nothing overlaps, with the slider riding the box's side.
+#[wasm_bindgen_test]
+async fn squeeze_slider_springs_back_when_let_go() {
+    let _gpu = NoWebGpu::install();
+    let (handle, root, physics) = mount().await;
+    let mut steps = Vec::new();
+    wait_ready(&root, &physics, &mut steps, "before squeezing").await;
+    let slider = squeeze_slider(&root);
+    let start = physics.side();
+    // A drag down the track, one input per move.
+    let mut sides = vec![start];
+    for value in ["2.3", "2.1", "1.9", "1.7"] {
+        slide(&root, SQUEEZE, value);
+        sides.extend(sample_sides(&physics, 50).await);
+    }
+    assert_continuous(&sides, "as the squeeze engages");
+    let params = physics.params();
+    assert_eq!(params.band_tension, 30.0, "the band engages");
+    assert!(params.target_side < start, "target {}", params.target_side);
+    // Hold until the band stops gaining on the squares.
+    let mut squeezed = start;
+    for _ in 0..80 {
+        sleep(100).await;
+        let side = physics.side();
+        let stalled = side > squeezed - 1e-4;
+        squeezed = squeezed.min(side);
+        if stalled && squeezed < start - 0.05 {
+            break;
+        }
+    }
+    assert!(
+        squeezed < start - 0.05,
+        "pressure shrinks the box: {start} -> {squeezed}"
+    );
+    assert_eq!(physics.params().band_tension, 30.0, "still held");
+    assert_eq!(
+        physics.settle_status().phase,
+        SettlePhase::Idle,
+        "a held squeeze doesn't settle: {}",
+        screen_state(&root, &physics)
+    );
+
+    let mut sides = vec![physics.side()];
+    fire(&slider, "change");
+    sides.extend(sample_sides(&physics, 30).await);
+    assert_eq!(
+        physics.params().band_tension,
+        0.0,
+        "letting go releases the band"
+    );
+    assert_eq!(
+        physics.settle_status().phase,
+        SettlePhase::Running,
+        "and settles"
+    );
+    let released = physics.side();
+    let (mut lowest, mut lag) = (released, 0.0_f64);
+    for _ in 0..600 {
+        if TEST_REPORT.with(|r| r.borrow().is_some()) {
+            break;
+        }
+        let thumb: f64 = slider.value().parse().unwrap();
+        let side = physics.side();
+        lag = lag.max((thumb - side).abs());
+        lowest = lowest.min(side);
+        sides.push(side);
+        sleep(20).await;
+    }
+    let report = TEST_REPORT
+        .with(|r| r.borrow().clone())
+        .unwrap_or_else(|| panic!("no certified report: {}", screen_state(&root, &physics)));
+    assert_continuous(&sides, "as the box springs back");
+    assert!(
+        lowest >= released - 1e-9,
+        "the box never closes in after letting go: {released} -> {lowest}"
+    );
+    assert!(lag < 0.01, "the slider rides the side, {lag} behind");
+    assert!(
+        report.side >= released - 1e-9 && report.side >= squeezed - 1e-9,
+        "settled at {} from {released}, squeezed to {squeezed}",
+        report.side
+    );
+    sleep(100).await;
+    assert_shows_side(&root, &slider, &physics, "once certified");
+    let status = text(&root, ".pg-status");
+    assert!(status.starts_with("Ready"), "{status}");
+
+    // The squeeze was released once; later let-go events change nothing.
+    for kind in ["pointerup", "keyup", "change", "blur"] {
+        fire(&slider, kind);
+    }
+    sleep(100).await;
+    assert!(physics.paused(), "still at the certified packing");
+    assert_eq!(physics.settle_status().phase, SettlePhase::Idle);
+    assert_eq!(text(&root, ".pg-status"), status);
+    handle.destroy();
+    root.remove();
+}
+
+/// A held arrow key squeezes. Chrome fires `change` with every step a key
+/// makes, so only the key's release lets go.
+#[wasm_bindgen_test]
+async fn squeeze_slider_works_from_the_keyboard() {
+    let _gpu = NoWebGpu::install();
+    let (handle, root, physics) = mount().await;
+    let mut steps = Vec::new();
+    wait_ready(&root, &physics, &mut steps, "before the keys").await;
+    let slider = squeeze_slider(&root);
+    slider.focus().unwrap();
+    let start = physics.side();
+    // Synthetic keys don't move a range input, so each repeat does what
+    // the browser would: step the value, then fire input and change.
+    for i in 0..300 {
+        slider
+            .dispatch_event(&key_event("keydown", "ArrowDown", i > 0))
+            .unwrap();
+        let stepped = slider.value().parse::<f64>().unwrap() - 0.001;
+        slider.set_value(&format!("{stepped:.3}"));
+        fire(&slider, "input");
+        fire(&slider, "change");
+        if i % 10 == 9 {
+            sleep(10).await;
+        }
+    }
+    for _ in 0..60 {
+        if physics.side() < start - 0.05 {
+            break;
+        }
+        sleep(50).await;
+    }
+    assert!(
+        physics.side() < start - 0.05,
+        "the held key squeezes: {start} -> {}",
+        physics.side()
+    );
+    assert_eq!(
+        physics.params().band_tension,
+        30.0,
+        "a step's change doesn't let go while the key is held"
+    );
+    assert_eq!(physics.settle_status().phase, SettlePhase::Idle);
+
+    let mut sides = vec![physics.side()];
+    fire(&slider, "keyup");
+    sides.extend(sample_sides(&physics, 30).await);
+    assert_continuous(&sides, "as the key lets go");
+    assert_eq!(
+        physics.params().band_tension,
+        0.0,
+        "key up releases the band"
+    );
+    assert_eq!(physics.settle_status().phase, SettlePhase::Running);
+    let released = physics.side();
+    wait_for_report(12_000).await;
+    let report = TEST_REPORT.with(|r| r.borrow().clone()).unwrap();
+    assert!(
+        report.side >= released - 1e-9,
+        "{released} -> {}",
+        report.side
+    );
+    handle.destroy();
+    root.remove();
+}
+
+/// Pointer up, pointer cancel and blur let go too, so pressure can't stay
+/// latched when a touch or focus leaves the slider.
+#[wasm_bindgen_test]
+async fn every_way_off_the_slider_lets_go() {
+    let _gpu = NoWebGpu::install();
+    for kind in ["pointerup", "pointercancel", "blur"] {
+        let (handle, root, physics) = mount().await;
+        let mut steps = Vec::new();
+        wait_ready(&root, &physics, &mut steps, kind).await;
+        slide(&root, SQUEEZE, "1.9");
+        sleep(200).await;
+        assert_eq!(physics.params().band_tension, 30.0, "{kind}: held");
+        let mut sides = vec![physics.side()];
+        fire(&squeeze_slider(&root), kind);
+        sides.extend(sample_sides(&physics, 30).await);
+        assert_continuous(&sides, kind);
+        assert_eq!(physics.params().band_tension, 0.0, "{kind} releases");
+        assert_eq!(
+            physics.settle_status().phase,
+            SettlePhase::Running,
+            "{kind} settles"
+        );
+        handle.destroy();
+        root.remove();
+    }
+}
+
+/// Letting go of a slider that never moved, or an unrelated key, starts
+/// nothing.
+#[wasm_bindgen_test]
+async fn letting_go_without_moving_does_nothing() {
+    let _gpu = NoWebGpu::install();
+    let (handle, root, physics) = mount().await;
+    force_button(&root, "Pause").click();
+    sleep(30).await;
+    assert!(physics.paused());
+    let (status, side) = (text(&root, ".pg-status"), physics.side());
+    let slider = squeeze_slider(&root);
+    slider
+        .dispatch_event(&key_event("keydown", "Shift", false))
+        .unwrap();
+    for kind in ["keyup", "pointerup", "pointercancel", "change", "blur"] {
+        fire(&slider, kind);
+    }
+    sleep(100).await;
+    assert!(physics.paused(), "nothing woke the scene");
+    assert_eq!(physics.settle_status().phase, SettlePhase::Idle);
+    assert_eq!(physics.params().band_tension, 0.0);
+    assert_eq!(physics.side(), side);
+    assert_eq!(text(&root, ".pg-status"), status);
+    assert_eq!(settle_button(&root).text_content().unwrap(), "Settle");
+    handle.destroy();
+    root.remove();
+}
+
+/// When idle, the slider sits on the live side of whatever scene loads.
+#[wasm_bindgen_test]
+async fn idle_squeeze_slider_follows_loaded_scenes() {
+    let _gpu = NoWebGpu::install();
+    let (handle, root, physics) = mount_at(&format!("s={}", share::encode(&cramped(), &[]))).await;
+    let slider = squeeze_slider(&root);
+    assert_eq!(physics.side(), 1.8);
+    assert_shows_side(&root, &slider, &physics, "for a shared scene");
+    choose_import(&root, &serde_json::to_string(&two_squares()).unwrap());
+    for _ in 0..60 {
+        if text(&root, ".pg-status").starts_with("Imported") {
+            break;
+        }
+        sleep(30).await;
+    }
+    sleep(100).await;
+    assert_eq!(physics.side(), 2.5);
+    assert_shows_side(&root, &slider, &physics, "for an imported scene");
+    handle.destroy();
+    root.remove();
+}
+
+#[wasm_bindgen_test]
+async fn squeeze_reach_follows_band_pressure() {
     let _gpu = NoWebGpu::install();
     let (handle, root, physics) = mount().await;
     // Two squares side by side hold the container near 2.0, so the smallest
     // request the slider allows (sqrt(2)) can't be reached at tension 30; the
     // target may only lead the side by the 0.3 reach.
-    let desired = slide(&root, "#pg-size", "1.2");
+    let desired = slide(&root, SQUEEZE, "1.2");
     for _ in 0..40 {
         sleep(50).await;
         let (target, side) = (physics.params().target_side, physics.side());

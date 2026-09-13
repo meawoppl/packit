@@ -395,6 +395,21 @@ svg.arrangement .square {
     margin-top: 18px;
 }
 
+/* The Squeeze slider beside Settle: held, it presses the band in; let go,
+   the box springs back out. */
+.pg-squeeze .pg-row {
+    margin: 12px 0 0;
+    font-weight: 700;
+}
+
+.pg-squeeze output {
+    font-variant-numeric: tabular-nums;
+}
+
+.pg-squeeze .pg-help {
+    margin: 0 0 12px;
+}
+
 .pg-wide {
     width: 100%;
 }
