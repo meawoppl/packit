@@ -1,5 +1,6 @@
 //! Helpers for tests that drive the whole app in-process.
 
+use crate::auth::proxy::ProxyTrust;
 use crate::config::PublicOrigin;
 use crate::db::{self, DbPool};
 use crate::AppState;
@@ -11,7 +12,7 @@ pub const TEST_URL: &str = "https://packit.test";
 
 pub fn state_for(db_pool: DbPool) -> Arc<AppState> {
     let origin = PublicOrigin::parse(TEST_URL, false).unwrap();
-    Arc::new(AppState::new(true, db_pool, origin, None).unwrap())
+    Arc::new(AppState::new(true, db_pool, origin, ProxyTrust::default()).unwrap())
 }
 
 /// A pool that never connects, for routes that don't touch the database.

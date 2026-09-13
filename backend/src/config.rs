@@ -1,3 +1,4 @@
+use crate::auth::proxy::{ProxyToken, ProxyTrust};
 use anyhow::Context;
 use std::env;
 use std::net::IpAddr;
@@ -14,13 +15,15 @@ pub struct Config {
     /// The site origin from `PUBLIC_URL`. Configured rather than taken from
     /// request headers.
     pub public: PublicOrigin,
-    /// The one peer allowed to report client addresses via X-Forwarded-For.
-    pub trusted_proxy: Option<IpAddr>,
+    /// How to recognize the proxy allowed to report client addresses via
+    /// X-Forwarded-For: `TRUSTED_PROXY` and `TRUSTED_PROXY_TOKEN`.
+    pub proxy: ProxyTrust,
 }
 
 impl Config {
     /// Read configuration from the environment, applying defaults and logging
-    /// each resolved value. Fails on an unusable `PUBLIC_URL` or `TRUSTED_PROXY`.
+    /// each resolved value. Fails on an unusable `PUBLIC_URL`,
+    /// `TRUSTED_PROXY` or `TRUSTED_PROXY_TOKEN`.
     pub fn from_env(dev_mode: bool) -> anyhow::Result<Self> {
         let host = env::var("HOST").unwrap_or_else(|_| "0.0.0.0".to_string());
         let port = env::var("PORT")
@@ -37,6 +40,15 @@ impl Config {
             ),
             _ => None,
         };
+        // Any value that is set must be valid, so a typo can't quietly turn
+        // token checking off.
+        let proxy_token = match env::var("TRUSTED_PROXY_TOKEN") {
+            Ok(v) => Some(ProxyToken::parse(&v).map_err(anyhow::Error::msg)?),
+            Err(env::VarError::NotPresent) => None,
+            Err(env::VarError::NotUnicode(_)) => {
+                anyhow::bail!("TRUSTED_PROXY_TOKEN is not valid text")
+            }
+        };
 
         tracing::info!("Config: HOST={host}");
         tracing::info!("Config: PORT={port}");
@@ -47,14 +59,23 @@ impl Config {
         );
         match trusted_proxy {
             Some(ip) => tracing::info!("Config: TRUSTED_PROXY={ip}"),
-            None => tracing::info!("Config: TRUSTED_PROXY unset; X-Forwarded-For is ignored"),
+            None => tracing::info!("Config: TRUSTED_PROXY unset"),
+        }
+        // Never log the token itself.
+        if proxy_token.is_some() {
+            tracing::info!("Config: TRUSTED_PROXY_TOKEN set; X-Forwarded-For needs it");
+        } else if trusted_proxy.is_none() {
+            tracing::info!("Config: TRUSTED_PROXY_TOKEN unset; X-Forwarded-For is ignored");
         }
 
         Ok(Self {
             host,
             port,
             public,
-            trusted_proxy,
+            proxy: ProxyTrust {
+                ip: trusted_proxy,
+                token: proxy_token,
+            },
         })
     }
 

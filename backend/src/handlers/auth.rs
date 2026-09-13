@@ -6,6 +6,7 @@
 
 use super::scores::{with_conn, HandlerError};
 use crate::auth::ceremony::{Ceremony, CeremonyId, InsertError};
+use crate::auth::proxy::ViaTrustedProxy;
 use crate::auth::ratelimit::RateKey;
 use crate::auth::session::{self, Session, REAUTH_WINDOW};
 use crate::auth::{hex, random_bytes, username, Pending};
@@ -112,10 +113,11 @@ async fn require_origin(State(state): State<Arc<AppState>>, req: Request, next: 
 async fn rate_limit(
     State(state): State<Arc<AppState>>,
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    Extension(ViaTrustedProxy(trusted)): Extension<ViaTrustedProxy>,
     mut req: Request,
     next: Next,
 ) -> Response {
-    let client = state.auth.client(peer.ip(), req.headers());
+    let client = state.auth.client(peer.ip(), req.headers(), trusted);
     if let Err(wait) = state.auth.check_client(client, Instant::now()) {
         return too_many(wait).into_response();
     }

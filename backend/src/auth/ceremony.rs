@@ -6,10 +6,11 @@
 //! few live ceremonies, so no one network can fill the map.
 
 use super::ratelimit::RateKey;
-use super::{constant_time_eq, hex, random_bytes};
+use super::{hex, random_bytes};
 use std::collections::hash_map::{Entry as MapEntry, HashMap};
 use std::sync::{Mutex, PoisonError};
 use std::time::{Duration, Instant};
+use subtle::ConstantTimeEq;
 use uuid::Uuid;
 
 /// Random 128-bit ceremony handle, sent to the client as 32 hex digits.
@@ -144,7 +145,7 @@ impl<S> CeremonyStore<S> {
         if entry.expires <= now {
             return Err(TakeError::Expired);
         }
-        if !nonce.is_some_and(|n| constant_time_eq(&n, &entry.nonce)) {
+        if !nonce.is_some_and(|n| bool::from(n.ct_eq(&entry.nonce))) {
             return Err(TakeError::WrongBrowser);
         }
         let state = pick(entry.state).ok_or(TakeError::WrongOperation)?;

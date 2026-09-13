@@ -63,18 +63,18 @@ impl<K: Eq + Hash + Clone> RateLimiter<K> {
     }
 }
 
-/// The address a request came from.
+/// The address a request came from. `trusted` says whether it came through
+/// the trusted proxy (see [`super::proxy`]); otherwise X-Forwarded-For is
+/// ignored.
 ///
-/// This assumes exactly one proxy hop: clients reach the configured trusted
-/// proxy (Traefik) directly, and it appends the address it saw to
-/// X-Forwarded-For. So only the rightmost entry of the last X-Forwarded-For
-/// header is trusted, and only when the socket peer is that proxy. Everything
+/// This assumes exactly one proxy hop: clients reach the proxy (Traefik)
+/// directly, and it appends the address it saw to X-Forwarded-For. So only
+/// the rightmost entry of the last X-Forwarded-For header is used; everything
 /// to its left is client-supplied. If that entry is empty or not an IP
-/// address, the peer is used rather than any other entry. Without a trusted
-/// proxy, or from any other peer, the header is ignored.
-pub fn client_ip(peer: IpAddr, headers: &HeaderMap, trusted_proxy: Option<IpAddr>) -> IpAddr {
+/// address, the peer is used rather than any other entry.
+pub fn client_ip(peer: IpAddr, headers: &HeaderMap, trusted: bool) -> IpAddr {
     let peer = peer.to_canonical();
-    if trusted_proxy.map(|p| p.to_canonical()) != Some(peer) {
+    if !trusted {
         return peer;
     }
     headers
@@ -179,7 +179,7 @@ mod tests {
     }
 
     fn via_proxy(values: &[&str]) -> IpAddr {
-        client_ip(ip(PROXY), &xff(values), Some(ip(PROXY)))
+        client_ip(ip(PROXY), &xff(values), true)
     }
 
     #[test]
@@ -228,30 +228,24 @@ mod tests {
             "x-forwarded-for",
             axum::http::HeaderValue::from_bytes(b"1.2.3.4, \xff").unwrap(),
         );
-        assert_eq!(client_ip(ip(PROXY), &h, Some(ip(PROXY))), ip(PROXY));
+        assert_eq!(client_ip(ip(PROXY), &h, true), ip(PROXY));
     }
 
+    /// Which requests count as trusted is decided in `proxy`, covering
+    /// TRUSTED_PROXY and TRUSTED_PROXY_TOKEN; untrusted ones ignore the header.
     #[test]
-    fn forwarded_for_ignored_unless_peer_is_the_trusted_proxy() {
+    fn forwarded_for_ignored_unless_trusted() {
         let spoof = xff(&["1.2.3.4, 203.0.113.9"]);
-        // No proxy configured: always the peer.
-        assert_eq!(client_ip(ip(REAL), &spoof, None), ip(REAL));
-        assert_eq!(client_ip(ip(PROXY), &spoof, None), ip(PROXY));
-        // A proxy configured, but this peer is someone else.
-        let other = ip("198.51.100.5");
-        assert_eq!(client_ip(other, &spoof, Some(ip(PROXY))), other);
+        assert_eq!(client_ip(ip(REAL), &spoof, false), ip(REAL));
+        assert_eq!(client_ip(ip(PROXY), &spoof, false), ip(PROXY));
     }
 
     #[test]
     fn mapped_addresses_are_canonical() {
-        let proxy: IpAddr = "10.0.0.2".parse().unwrap();
-        let mapped_proxy: IpAddr = "::ffff:10.0.0.2".parse().unwrap();
+        let mapped_proxy = ip("::ffff:10.0.0.2");
         let h = xff(&["::ffff:203.0.113.9"]);
-        assert_eq!(
-            client_ip(mapped_proxy, &h, Some(proxy)),
-            "203.0.113.9".parse::<IpAddr>().unwrap()
-        );
-        assert_eq!(client_ip(mapped_proxy, &HeaderMap::new(), None), proxy);
+        assert_eq!(client_ip(mapped_proxy, &h, true), ip(REAL));
+        assert_eq!(client_ip(mapped_proxy, &HeaderMap::new(), false), ip(PROXY));
     }
 
     #[test]

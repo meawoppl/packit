@@ -51,6 +51,7 @@ sha2 = "0.10"
 webauthn-rs = { version = "0.5", features = ["danger-credential-internals"] }
 getrandom = "0.2"
 webauthn-rs-proto = "0.5"
+subtle = "2"
 
 [dev-dependencies]
 openssl = "0.10"

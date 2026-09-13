@@ -1,6 +1,7 @@
 //! End-to-end passkey flows through the real router, with software
 //! authenticators. Database tests skip when TEST_DATABASE_URL is unset.
 
+use super::proxy::{ProxyToken, ProxyTrust, TOKEN_HEADER};
 use super::{
     hex, random_bytes, session, username, CEREMONIES_PER_CLIENT, CEREMONIES_PER_SITE, IP_BURST,
     SITE_BURST, USERNAME_BURST,
@@ -1355,7 +1356,11 @@ async fn start_and_finish_are_rate_limited_per_client() {
 async fn forwarded_for_counts_only_from_the_trusted_proxy() {
     let proxy: IpAddr = "10.200.0.1".parse().unwrap();
     let origin = PublicOrigin::parse(TEST_URL, false).unwrap();
-    let state = AppState::new(true, unconnected_pool(), origin, Some(proxy)).unwrap();
+    let trust = ProxyTrust {
+        ip: Some(proxy),
+        token: None,
+    };
+    let state = AppState::new(true, unconnected_pool(), origin, trust).unwrap();
     let app = build_app(Arc::new(state));
     let forwarded = |b: &Browser, chain: &str| {
         let mut req = b.request(
@@ -1388,6 +1393,58 @@ async fn forwarded_for_counts_only_from_the_trusted_proxy() {
     }
     let req = forwarded(&direct, "203.0.113.200");
     assert_eq!(call(&app, req).await.status, StatusCode::TOO_MANY_REQUESTS);
+}
+
+#[tokio::test]
+async fn with_a_proxy_token_forwarded_for_needs_it() {
+    let token = "f".repeat(64);
+    let origin = PublicOrigin::parse(TEST_URL, false).unwrap();
+    let trust = ProxyTrust {
+        ip: None,
+        token: Some(ProxyToken::parse(&token).unwrap()),
+    };
+    let app = build_app(Arc::new(
+        AppState::new(true, unconnected_pool(), origin, trust).unwrap(),
+    ));
+    let peer = Browser::new();
+    let send = |sent: Option<&str>, chain: &str| {
+        let mut req = peer.request(
+            Method::POST,
+            REGISTER_START,
+            Some(&json!({ "username": "x" })),
+        );
+        if let Some(t) = sent {
+            req.headers_mut().insert(TOKEN_HEADER, t.parse().unwrap());
+        }
+        req.headers_mut()
+            .insert("x-forwarded-for", chain.parse().unwrap());
+        req
+    };
+
+    // With the token, each forwarded client has its own bucket, keyed on the
+    // rightmost entry.
+    for _ in 0..IP_BURST {
+        let r = call(&app, send(Some(&token), "1.2.3.4, 203.0.113.1")).await;
+        assert_eq!(r.status, StatusCode::BAD_REQUEST);
+    }
+    let r = call(&app, send(Some(&token), "203.0.113.1")).await;
+    assert_eq!(r.status, StatusCode::TOO_MANY_REQUESTS);
+    let r = call(&app, send(Some(&token), "203.0.113.2")).await;
+    assert_eq!(r.status, StatusCode::BAD_REQUEST);
+
+    // Forged or missing tokens are keyed on the socket peer, whatever
+    // X-Forwarded-For says...
+    let forged = "e".repeat(64);
+    for i in 0..IP_BURST {
+        let sent = (i % 2 == 0).then_some(forged.as_str());
+        let r = call(&app, send(sent, &format!("203.0.113.{}", 10 + i))).await;
+        assert_eq!(r.status, StatusCode::BAD_REQUEST);
+    }
+    let r = call(&app, send(None, "203.0.113.99")).await;
+    assert_eq!(r.status, StatusCode::TOO_MANY_REQUESTS);
+    // ...and so is a trusted request whose last entry is garbage.
+    let r = call(&app, send(Some(&token), "203.0.113.3, junk")).await;
+    assert_eq!(r.status, StatusCode::TOO_MANY_REQUESTS);
 }
 
 fn ipv6_browser(site: u16, subnet: u16) -> Browser {
@@ -1556,7 +1613,11 @@ async fn untrusted_forwarded_for_is_reported_once() {
 
     // With a trusted proxy configured the header is expected: no warning.
     let origin = PublicOrigin::parse(TEST_URL, false).unwrap();
-    let proxied = Arc::new(AppState::new(true, unconnected_pool(), origin, Some(b.ip)).unwrap());
+    let trust = ProxyTrust {
+        ip: Some(b.ip),
+        token: None,
+    };
+    let proxied = Arc::new(AppState::new(true, unconnected_pool(), origin, trust).unwrap());
     let app = build_app(proxied.clone());
     call(&app, send(Some("203.0.113.7"))).await;
     assert!(!proxied.auth.warned_forwarded.load(Ordering::Relaxed));

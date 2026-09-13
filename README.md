@@ -100,18 +100,35 @@ anonymously.
 
 ### Behind a reverse proxy
 
-**Production behind Traefik must set `TRUSTED_PROXY`.** Rate limits key on the
-TCP peer address, so without it every client shares Traefik's buckets and one
-client can lock everyone out of signing in. The server logs a warning, once,
-when it sees `X-Forwarded-For` while `TRUSTED_PROXY` is unset.
+**Production behind Traefik must set `TRUSTED_PROXY_TOKEN` or
+`TRUSTED_PROXY`.** Rate limits key on the TCP peer address, so without them
+every client shares Traefik's buckets and one client can lock everyone out of
+signing in. The server logs a warning, once, when it sees `X-Forwarded-For`
+while neither is set.
 
-Set it to Traefik's IP as the backend sees it, e.g. a fixed address for the
-Traefik container on the shared Docker network. This assumes a single proxy
-hop. Only requests from that exact address take the client IP from
-`X-Forwarded-For`, and then only the rightmost entry of the last header,
-which Traefik appends for the client it saw. Earlier entries are
-client-supplied and ignored, and a malformed last entry falls back to the
-proxy's own address. Leave it unset only when clients connect directly.
+This assumes a single proxy hop. A trusted request takes the client IP from
+the rightmost entry of the last `X-Forwarded-For` header, which Traefik
+appends for the client it saw. Earlier entries are client-supplied and
+ignored, and a malformed last entry falls back to the socket peer.
+
+Two settings decide which requests are trusted:
+
+- `TRUSTED_PROXY_TOKEN` (preferred): a shared secret, in production 32
+  random bytes as 64 hex characters (`openssl rand -hex 32`). Traefik must
+  overwrite the `X-Packit-Proxy-Token` request header with it on every
+  request (a `headers` middleware with `customRequestHeaders`). When it is
+  set, `X-Forwarded-For` is trusted only if the request carries exactly one
+  `X-Packit-Proxy-Token` header equal to the token. It must be 32 to 256
+  visible ASCII characters with no commas; any other value stops startup.
+- `TRUSTED_PROXY`: Traefik's IP as the backend sees it, e.g. a fixed address
+  on the shared Docker network. On its own, requests from that socket peer are
+  trusted. With the token also set, both must match.
+
+With neither set, both headers are ignored and every request is keyed on its
+socket peer; leave them unset only when clients connect directly. The token
+header is removed at the outermost layer, before any handler or log sees it,
+and its value is never logged. A token header that doesn't match, or that
+arrives with no token configured, is logged once per process.
 
 ## Quick start
 

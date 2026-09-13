@@ -7,6 +7,7 @@ mod schema;
 #[cfg(test)]
 mod test_support;
 
+use crate::auth::proxy::ProxyTrust;
 use crate::config::{Config, PublicOrigin};
 use crate::db::DbPool;
 use axum::http::StatusCode;
@@ -16,7 +17,7 @@ use axum::{
 };
 use clap::Parser;
 use memory_serve::{load_assets, CacheControl, MemoryServe};
-use std::net::{IpAddr, SocketAddr};
+use std::net::SocketAddr;
 use std::sync::Arc;
 use tower_http::cors::{Any, CorsLayer};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
@@ -44,13 +45,13 @@ impl AppState {
         dev_mode: bool,
         db_pool: DbPool,
         public: PublicOrigin,
-        trusted_proxy: Option<IpAddr>,
+        proxy: ProxyTrust,
     ) -> anyhow::Result<Self> {
         Ok(Self {
             dev_mode,
             db_pool,
             public_url: public.origin.clone(),
-            auth: auth::Auth::new(public, trusted_proxy)?,
+            auth: auth::Auth::new(public, proxy)?,
         })
     }
 }
@@ -98,7 +99,14 @@ pub fn build_app(state: Arc<AppState>) -> Router {
         .merge(frontend)
         .layer(cors);
 
-    handlers::auth::router(state).merge(public)
+    handlers::auth::router(state.clone())
+        .merge(public)
+        // Outermost, so no layer or handler below ever sees the proxy token.
+        // Request logging, if added, belongs inside this.
+        .layer(axum::middleware::from_fn_with_state(
+            state,
+            auth::proxy::edge,
+        ))
 }
 
 #[tokio::main]
@@ -165,7 +173,7 @@ async fn main() -> anyhow::Result<()> {
         args.dev_mode,
         pool,
         config.public.clone(),
-        config.trusted_proxy,
+        config.proxy.clone(),
     )?);
 
     let app = build_app(app_state);

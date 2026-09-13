@@ -2,6 +2,7 @@
 //! state, sessions and rate limits. Nothing outside `/api/auth` is gated.
 
 pub mod ceremony;
+pub mod proxy;
 pub mod ratelimit;
 pub mod session;
 pub mod username;
@@ -12,6 +13,7 @@ mod tests;
 use crate::config::PublicOrigin;
 use axum::http::HeaderMap;
 use ceremony::CeremonyStore;
+use proxy::ProxyTrust;
 use ratelimit::{client_ip, RateKey, RateLimiter};
 use std::net::IpAddr;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -52,16 +54,17 @@ pub enum Pending {
 pub struct Auth {
     pub webauthn: Webauthn,
     pub origin: PublicOrigin,
-    trusted_proxy: Option<IpAddr>,
+    proxy: ProxyTrust,
     pub ceremonies: CeremonyStore<Pending>,
     ip_limiter: RateLimiter<IpAddr>,
     site_limiter: RateLimiter<IpAddr>,
     username_limiter: RateLimiter<(String, IpAddr)>,
     warned_forwarded: AtomicBool,
+    warned_token: AtomicBool,
 }
 
 impl Auth {
-    pub fn new(origin: PublicOrigin, trusted_proxy: Option<IpAddr>) -> anyhow::Result<Self> {
+    pub fn new(origin: PublicOrigin, proxy: ProxyTrust) -> anyhow::Result<Self> {
         let rp_origin = Url::parse(&origin.origin)?;
         // Exactly this origin: subdomains and other ports stay disallowed.
         let webauthn = WebauthnBuilder::new(&origin.host, &rp_origin)?
@@ -70,7 +73,7 @@ impl Auth {
         Ok(Self {
             webauthn,
             origin,
-            trusted_proxy,
+            proxy,
             ceremonies: CeremonyStore::new(
                 CEREMONY_CAP,
                 CEREMONIES_PER_CLIENT,
@@ -81,21 +84,38 @@ impl Auth {
             site_limiter: RateLimiter::new(SITE_BURST, SITE_REFILL, MAX_RATE_KEYS),
             username_limiter: RateLimiter::new(USERNAME_BURST, USERNAME_REFILL, MAX_RATE_KEYS),
             warned_forwarded: AtomicBool::new(false),
+            warned_token: AtomicBool::new(false),
         })
     }
 
-    /// The rate-limit identity of a request from `peer`.
-    pub fn client(&self, peer: IpAddr, headers: &HeaderMap) -> RateKey {
-        if self.trusted_proxy.is_none()
+    /// Whether a request from `peer` came through the trusted proxy. A token
+    /// header that doesn't match is logged, once per process, without its
+    /// value.
+    pub fn via_trusted_proxy(&self, peer: Option<IpAddr>, headers: &HeaderMap) -> bool {
+        let verdict = self.proxy.check(peer, headers);
+        if verdict.bad_token && !self.warned_token.swap(true, Ordering::Relaxed) {
+            tracing::warn!(
+                "a request carried an X-Packit-Proxy-Token that TRUSTED_PROXY_TOKEN doesn't \
+                 match, or none is configured; its X-Forwarded-For was not trusted on that basis"
+            );
+        }
+        verdict.trusted
+    }
+
+    /// The rate-limit identity of a request from `peer`; `trusted` is
+    /// [`Self::via_trusted_proxy`], decided at the edge.
+    pub fn client(&self, peer: IpAddr, headers: &HeaderMap, trusted: bool) -> RateKey {
+        if !self.proxy.is_configured()
             && headers.contains_key("x-forwarded-for")
             && !self.warned_forwarded.swap(true, Ordering::Relaxed)
         {
             tracing::warn!(
-                "requests carry X-Forwarded-For but TRUSTED_PROXY is unset, so every client \
-                 behind the proxy shares one rate limit; set TRUSTED_PROXY to the proxy's IP"
+                "requests carry X-Forwarded-For but neither TRUSTED_PROXY nor \
+                 TRUSTED_PROXY_TOKEN is set, so every client behind the proxy shares one \
+                 rate limit"
             );
         }
-        RateKey::of(client_ip(peer, headers, self.trusted_proxy))
+        RateKey::of(client_ip(peer, headers, trusted))
     }
 
     /// Spend a token from the client's bucket and, for IPv6, its /48's.
@@ -124,10 +144,6 @@ pub fn random_bytes<const N: usize>() -> [u8; N] {
     let mut buf = [0; N];
     getrandom::getrandom(&mut buf).expect("the OS random number generator failed");
     buf
-}
-
-pub fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
-    a.len() == b.len() && a.iter().zip(b).fold(0, |acc, (x, y)| acc | (x ^ y)) == 0
 }
 
 pub mod hex {
