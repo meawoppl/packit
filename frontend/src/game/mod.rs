@@ -1198,7 +1198,7 @@ impl Game {
             return false;
         }
         // The physics drops mouse and rotation input; end the drag here too.
-        self.selected = None;
+        // The selection stays, so keys and turn buttons still act on it.
         self.dragging = false;
         self.rotating = false;
         self.last_pointer = None;

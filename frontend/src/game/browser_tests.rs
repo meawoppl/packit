@@ -1719,6 +1719,46 @@ async fn tighten_loads_the_solvers_smaller_box_on_request() {
     root.remove();
 }
 
+/// A settle the user didn't start, like the automatic one on a calm scene,
+/// keeps the selected square, so a key still turns it.
+#[wasm_bindgen_test]
+async fn an_automatic_settle_keeps_the_selection() {
+    let _gpu = NoWebGpu::install();
+    let (handle, root, physics) = mount().await;
+    let canvas = canvas_of(&root);
+    let b = physics.bodies()[0];
+    tap_at(&canvas, (b.x as f64, b.y as f64), physics.side()).await;
+    // The fresh grid is calm, so it settles and measures itself.
+    wait_for_report(8000).await;
+    assert!(physics.paused(), "measuring pauses the scene");
+    let start = physics.bodies()[0].theta;
+    let key = web_sys::KeyboardEventInit::new();
+    key.set_bubbles(true);
+    key.set_key("e");
+    canvas
+        .dispatch_event(&KeyboardEvent::new_with_keyboard_event_init_dict("keydown", &key).unwrap())
+        .unwrap();
+    for _ in 0..50 {
+        if !physics.paused() {
+            break;
+        }
+        sleep(10).await;
+    }
+    assert!(
+        !physics.paused(),
+        "the key still acts on the selected square"
+    );
+    for _ in 0..60 {
+        if physics.bodies()[0].theta > start + 0.015 {
+            break;
+        }
+        sleep(30).await;
+    }
+    assert!(physics.bodies()[0].theta > start + 0.015, "and turns it");
+    handle.destroy();
+    root.remove();
+}
+
 fn tighten_button(root: &Element) -> HtmlElement {
     let buttons = root.query_selector_all(".pg-submit button").unwrap();
     (0..buttons.length())
