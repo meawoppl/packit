@@ -10,7 +10,9 @@ mod contacts;
 mod cpu;
 mod edges;
 mod glue;
+mod violations;
 pub use glue::{Feature, Glue, MAX_GLUES};
+pub use violations::{PairViolation, ViolationReport, WallViolation};
 #[cfg(target_arch = "wasm32")]
 mod gpu;
 #[cfg(test)]
