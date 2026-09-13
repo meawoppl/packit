@@ -1778,7 +1778,7 @@ async fn ownership_columns_are_indexed() {
         return;
     };
     let found: i64 = diesel::select(diesel::dsl::sql::<diesel::sql_types::BigInt>(
-        "(SELECT count(*) FROM pg_indexes WHERE indexname IN \
+        "(SELECT count(*) FROM pg_indexes WHERE schemaname = current_schema() AND indexname IN \
          ('scores_user_id_idx', 'board_states_created_by_idx'))",
     ))
     .get_result(&mut conn(&state))
