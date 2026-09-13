@@ -1,19 +1,26 @@
 //! Canvas rendering, pointer mapping, and hit testing for the play screen.
 
 use super::glue::{self, Anchor};
-use physics::{Body, Feature, Glue};
+use physics::{Body, Feature, Glue, ViolationReport};
 use wasm_bindgen::{JsCast, JsValue};
 use web_sys::{CanvasRenderingContext2d, HtmlCanvasElement};
 
 /// Margin around the playfield as a fraction of the canvas width.
 const PAD_FRACTION: f64 = 0.045;
 const PALETTE: [&str; 5] = ["#c7f36b", "#7dd5ce", "#b2a0ef", "#f0b578", "#8dabf2"];
+const PULSE: &str = "#ff4d5e";
+/// Violations shallower than this are springy contact, not worth flagging.
+const PULSE_DEPTH: f64 = 2e-3;
+/// Violations this deep pulse at full strength.
+const PULSE_FULL: f64 = 0.05;
+const PULSE_PERIOD_MS: f64 = 1600.0;
 
 /// Everything the renderer needs for one frame.
 pub struct Scene<'a> {
     pub bodies: &'a [Body],
     pub side: f64,
-    /// Side length the viewport is scaled to; the band may contract inside it.
+    /// Side length the viewport is scaled to. The band may contract inside
+    /// it, and during a drag the box may outgrow it.
     pub view_side: f64,
     pub band_on: bool,
     pub band_tension: f32,
@@ -28,17 +35,40 @@ pub struct Scene<'a> {
     pub glues: &'a [Glue],
     /// While the glue tool is open: the first pick, if chosen yet.
     pub glue_tool: Option<Option<Feature>>,
+    /// Overlaps and unmet glue, pulsed in red on squares and walls.
+    pub violations: &'a ViolationReport,
+    /// Animation clock for the pulse, in milliseconds.
+    pub now_ms: f64,
+    /// The best-known side and its credit, drawn over a settled packing.
+    pub best: Option<(f64, &'a str)>,
+}
+
+/// Opacity of the red pulse over a violation `depth` deep at `now_ms`, or
+/// `None` when it's too shallow to show. Deeper violations pulse stronger.
+fn pulse_alpha(depth: f64, now_ms: f64) -> Option<f64> {
+    if depth < PULSE_DEPTH {
+        return None;
+    }
+    let strength = 0.4 + 0.6 * (depth / PULSE_FULL).min(1.0);
+    let wave = 0.5 - 0.5 * (std::f64::consts::TAU * now_ms / PULSE_PERIOD_MS).cos();
+    Some(strength * (0.25 + 0.35 * wave))
 }
 
 /// Map a client-space pointer position to world coordinates (origin
-/// bottom-left) for a viewport showing `[0, extent]^2`.
-pub fn to_world(canvas: &HtmlCanvasElement, client: (f64, f64), extent: f64) -> (f64, f64) {
+/// bottom-left) for a viewport `extent` wide around a box of `side`, which
+/// stays centered on the canvas.
+pub fn to_world(
+    canvas: &HtmlCanvasElement,
+    client: (f64, f64),
+    extent: f64,
+    side: f64,
+) -> (f64, f64) {
     let r = canvas.get_bounding_client_rect();
-    let pad = r.width() * PAD_FRACTION;
-    let scale = (r.width() - 2.0 * pad) / extent;
+    let scale = r.width() * (1.0 - 2.0 * PAD_FRACTION) / extent;
+    let center = (r.left() + r.width() / 2.0, r.top() + r.height() / 2.0);
     (
-        (client.0 - r.left() - pad) / scale,
-        (r.bottom() - client.1 - pad) / scale,
+        side / 2.0 + (client.0 - center.0) / scale,
+        side / 2.0 - (client.1 - center.1) / scale,
     )
 }
 
@@ -85,11 +115,12 @@ pub fn draw(canvas: &HtmlCanvasElement, scene: &Scene) {
     };
 
     let w = size as f64;
-    let pad = w * PAD_FRACTION;
-    let scale = (w - 2.0 * pad) / scene.view_side.max(scene.side);
-    let sx = |x: f64| pad + x * scale;
-    let sy = |y: f64| w - pad - y * scale;
     let side = scene.side;
+    let scale = w * (1.0 - 2.0 * PAD_FRACTION) / scene.view_side;
+    // The box stays centered, so growing it on every side leaves the squares
+    // where they were on screen.
+    let sx = |x: f64| w / 2.0 + (x - side / 2.0) * scale;
+    let sy = |y: f64| w / 2.0 - (y - side / 2.0) * scale;
 
     ctx.clear_rect(0.0, 0.0, w, w);
     ctx.set_fill_style_str("#101722");
@@ -104,7 +135,7 @@ pub fn draw(canvas: &HtmlCanvasElement, scene: &Scene) {
 
     ctx.set_stroke_style_str(if scene.band_on { "#c7f36b" } else { "#819376" });
     ctx.set_line_width(if scene.band_on { 3.0 } else { 2.0 });
-    ctx.stroke_rect(pad, sy(side), side * scale, side * scale);
+    ctx.stroke_rect(sx(0.0), sy(side), side * scale, side * scale);
 
     // Draw the spring's rest boundary and inward pressure marks. The solid
     // boundary always remains the actual collision square.
@@ -114,11 +145,11 @@ pub fn draw(canvas: &HtmlCanvasElement, scene: &Scene) {
         ctx.set_stroke_style_str("#c7f36b");
         ctx.set_global_alpha(0.15 + 0.55 * stress);
         ctx.set_line_width(4.0 + 10.0 * stress);
-        ctx.stroke_rect(pad, sy(side), side * scale, side * scale);
+        ctx.stroke_rect(sx(0.0), sy(side), side * scale, side * scale);
         ctx.set_line_width(1.0);
         let target = scene.target_side.min(scene.view_side.max(side));
         let _ = ctx.set_line_dash(&js_sys::Array::of2(&4.into(), &6.into()));
-        ctx.stroke_rect(pad, sy(target), target * scale, target * scale);
+        ctx.stroke_rect(sx(0.0), sy(target), target * scale, target * scale);
         let _ = ctx.set_line_dash(&JsValue::from(js_sys::Array::new()));
         if stress > 0.01 {
             let inward = if side > scene.target_side { 1.0 } else { -1.0 };
@@ -157,6 +188,39 @@ pub fn draw(canvas: &HtmlCanvasElement, scene: &Scene) {
     }
 
     ctx.save();
+    ctx.set_fill_style_str(PULSE);
+    ctx.set_stroke_style_str(PULSE);
+    for (b, depth) in scene.bodies.iter().zip(&scene.violations.bodies) {
+        let Some(alpha) = pulse_alpha(*depth, scene.now_ms) else {
+            continue;
+        };
+        ctx.save();
+        let _ = ctx.translate(sx(b.x as f64), sy(b.y as f64));
+        let _ = ctx.rotate(-(b.theta as f64));
+        ctx.set_global_alpha(alpha);
+        ctx.fill_rect(-half + 1.0, -half + 1.0, scale - 2.0, scale - 2.0);
+        ctx.set_global_alpha((alpha * 2.0).min(1.0));
+        ctx.set_line_width(2.0 * dpr);
+        ctx.stroke_rect(-half + 1.0, -half + 1.0, scale - 2.0, scale - 2.0);
+        ctx.restore();
+    }
+    // Walls in glue order: left, bottom, right, top.
+    let walls = [
+        ((0.0, 0.0), (0.0, side)),
+        ((0.0, 0.0), (side, 0.0)),
+        ((side, 0.0), (side, side)),
+        ((0.0, side), (side, side)),
+    ];
+    ctx.set_line_width(5.0 * dpr);
+    for ((a, b), depth) in walls.into_iter().zip(scene.violations.walls) {
+        if let Some(alpha) = pulse_alpha(depth, scene.now_ms) {
+            ctx.set_global_alpha((alpha * 2.0).min(1.0));
+            line(&ctx, (sx(a.0), sy(a.1)), (sx(b.0), sy(b.1)));
+        }
+    }
+    ctx.restore();
+
+    ctx.save();
     ctx.set_stroke_style_str("#ffcf4d");
     ctx.set_fill_style_str("#ffcf4d");
     ctx.set_line_width(3.0 * dpr);
@@ -171,6 +235,29 @@ pub fn draw(canvas: &HtmlCanvasElement, scene: &Scene) {
         }
     }
     ctx.restore();
+
+    // The best-known container, centered on this one for comparison.
+    if let Some((best, label)) = scene.best {
+        let (x, y, size) = (
+            sx(side / 2.0 - best / 2.0),
+            sy(side / 2.0 + best / 2.0),
+            best * scale,
+        );
+        ctx.save();
+        ctx.set_fill_style_str(PULSE);
+        ctx.set_global_alpha(0.1);
+        ctx.fill_rect(x, y, size, size);
+        ctx.set_global_alpha(0.85);
+        ctx.set_stroke_style_str("#ff9aa4");
+        ctx.set_line_width(2.0 * dpr);
+        ctx.stroke_rect(x, y, size, size);
+        ctx.set_fill_style_str("#ffc4ca");
+        ctx.set_font(&format!("600 {}px system-ui", 12.0 * dpr));
+        ctx.set_text_align("left");
+        ctx.set_text_baseline("bottom");
+        let _ = ctx.fill_text_with_max_width(label, x + 4.0 * dpr, y - 3.0 * dpr, size - 8.0 * dpr);
+        ctx.restore();
+    }
 
     // With the glue tool open, show every target the next tap can take,
     // and the first pick in gold.
@@ -299,6 +386,24 @@ mod tests {
             theta,
             ..Body::default()
         }
+    }
+
+    #[test]
+    fn pulse_skips_springy_contact_and_grows_with_depth() {
+        assert_eq!(pulse_alpha(1e-3, 0.0), None);
+        let (dim, bright) = (0.0, PULSE_PERIOD_MS / 2.0);
+        let shallow = (
+            pulse_alpha(PULSE_DEPTH, dim),
+            pulse_alpha(PULSE_DEPTH, bright),
+        );
+        let deep = (pulse_alpha(0.2, dim), pulse_alpha(0.2, bright));
+        assert!(shallow.0 < shallow.1, "it pulses");
+        assert!(
+            shallow.0 < deep.0 && shallow.1 < deep.1,
+            "deeper is stronger"
+        );
+        assert!(deep.1.unwrap() <= 0.6, "gentle even at full strength");
+        assert!(shallow.0.unwrap() > 0.0, "never fades out entirely");
     }
 
     #[test]

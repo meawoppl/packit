@@ -13,9 +13,8 @@ use crate::{api, Route};
 use canvas::Scene;
 use gloo_events::{EventListener, EventListenerOptions};
 use gloo_render::{request_animation_frame, AnimationFrame};
-use physics::{Backend, Feature, Glue, Physics};
-use shared::{geometry, share, Arrangement, KnownRecord, ScoreEntry, SubmitScore, MAX_N};
-use solver::SolveReport;
+use physics::{Backend, Feature, Glue, Physics, SettlePhase, SETTLE_GLUE_ERROR};
+use shared::{share, Arrangement, KnownRecord, ScoreEntry, SubmitScore, MAX_N};
 use std::cell::Cell;
 use std::rc::Rc;
 use std::time::Duration;
@@ -33,11 +32,13 @@ thread_local! {
     static TEST_PHYSICS: std::cell::RefCell<Option<Physics>> = const { std::cell::RefCell::new(None) };
     /// The last validated arrangement, for exact comparisons in browser tests.
     static TEST_REPORT: std::cell::RefCell<Option<Arrangement>> = const { std::cell::RefCell::new(None) };
+    /// The viewport extent the last frame was drawn at.
+    static TEST_EXTENT: Cell<f64> = const { Cell::new(0.0) };
 }
 
 const STEP_HZ: f64 = 120.0;
 const MAX_SUBSTEPS: u32 = 6;
-/// Frames of near-zero motion before "Settle & measure" runs by itself.
+/// Frames of near-zero motion before "Settle" runs by itself.
 const SETTLE_FRAMES: u32 = 150;
 const NUDGE: f32 = 0.025;
 const ROTATE_STEP: f32 = 0.04;
@@ -46,19 +47,34 @@ const TOUCH_TURN: f32 = 0.12;
 /// How far the effective size target may lead the actual container at full
 /// band tension (100); lower tension shortens the reach proportionally.
 const MAX_SCRUB: f64 = 1.0;
-/// Before measuring an overlapping scene, the band's target grows at this
-/// rate (side units per second) until nothing overlaps, so the measurement
-/// doesn't pop the squares apart.
-const RELAX_RATE: f64 = 0.1;
-const RELAX_TENSION: f32 = 20.0;
-/// Overlap or wall protrusion small enough to measure: well under a pixel.
-const RELAX_TOL: f64 = 2e-3;
-/// Frames the scene must stay clear before measuring.
-const RELAX_CLEAR_FRAMES: u32 = 8;
-/// Give up relaxing after this long. Glue or a jam can hold an overlap the
-/// band can't clear, and measuring it then would pop the squares apart.
-const RELAX_MAX_SECS: f64 = 8.0;
+/// Farthest certification may nudge any square, in square widths, to clear
+/// the numerical overlap a settled contact leaves. Past this the packing
+/// isn't certified rather than moved.
+const CERTIFY_MOVE: f64 = 1e-4;
 
+/// Largest residual `glues` would leave on `arrangement`, measured on a
+/// scratch simulation so the live one is untouched.
+fn glue_error(arrangement: &Arrangement, glues: &[Glue]) -> f64 {
+    let scratch = Physics::new(arrangement.n, arrangement.side);
+    scratch.load(arrangement);
+    match scratch.set_glues(glues) {
+        Ok(()) => scratch.violations().max_glue_error,
+        Err(_) => f64::INFINITY,
+    }
+}
+
+/// Whether two arrangements are the same packing to within rounding, so a
+/// solver result for one describes the other.
+fn same_packing(a: &Arrangement, b: &Arrangement) -> bool {
+    const SAME: f64 = 1e-9;
+    (a.side - b.side).abs() <= SAME
+        && a.squares.len() == b.squares.len()
+        && a.squares.iter().zip(&b.squares).all(|(p, q)| {
+            (p.cx - q.cx).abs() <= SAME
+                && (p.cy - q.cy).abs() <= SAME
+                && (p.theta - q.theta).abs() <= SAME
+        })
+}
 /// The band's size target for a requested `desired` side: it can only run
 /// ahead of the actual `side` as far as the band pressure reaches.
 fn scrub_target(desired: f64, side: f64, tension: f32) -> f64 {
@@ -97,6 +113,8 @@ pub enum Msg {
     Squeeze,
     SqueezeDown,
     Measure,
+    /// Load the solver's smaller packing of the certified scene.
+    Tighten,
     Refine,
     Player(String),
     Submit,
@@ -115,14 +133,6 @@ pub enum Msg {
 }
 
 /// The scheduled runs that share one slot: shaking anneal or gentle squeeze.
-/// The band relaxing outward before a measurement.
-struct Relax {
-    start_side: f64,
-    elapsed: f64,
-    /// Consecutive frames with nothing overlapping.
-    clear_frames: u32,
-}
-
 #[derive(Clone, Copy, PartialEq)]
 enum RunKind {
     Anneal,
@@ -152,6 +162,10 @@ pub struct Game {
     wheel: Option<EventListener>,
     /// Side the viewport is scaled to, so a contracting band stays in view.
     view_side: Rc<Cell<f64>>,
+    /// Side length the last frame was drawn at, which pointer mapping
+    /// shares. It holds for a whole drag, so growth under the pointer can't
+    /// rescale the view and chase it.
+    extent: Rc<Cell<f64>>,
     last_time: Option<f64>,
     accumulator: f64,
     stepping: bool,
@@ -164,7 +178,14 @@ pub struct Game {
     mouse: (f64, f64),
     record: Option<KnownRecord>,
     record_note: String,
-    last_report: Option<SolveReport>,
+    /// Credit drawn beside the best-known square.
+    best_label: String,
+    /// The settled packing certified where it stands: the score, and what
+    /// Submit and Share send. Any change to the scene clears it.
+    certified: Option<Arrangement>,
+    /// A smaller valid packing the solver found for the certified one, which
+    /// Tighten loads on request.
+    tighter: Option<Arrangement>,
     bound: String,
     status: String,
     status_error: bool,
@@ -195,8 +216,8 @@ pub struct Game {
     glue_tool: Option<Option<Feature>>,
     /// Whether closing the glue tool resumes the simulation it paused.
     glue_resume: bool,
-    /// Set while the band relaxes out of overlap before a measurement.
-    relax: Option<Relax>,
+    /// Set while this screen's Settle runs in the physics.
+    settling: bool,
 }
 
 fn initial_side(n: u32) -> f64 {
@@ -253,6 +274,9 @@ impl Component for Game {
         let n = ctx.props().n;
         let side = initial_side(n);
         let physics = Physics::new(n, side);
+        // Pushing hard against the walls grows the box around its center,
+        // which the canvas keeps fixed on screen.
+        physics.set_drag_expansion(true);
         #[cfg(all(test, target_arch = "wasm32"))]
         TEST_PHYSICS.with(|p| p.replace(Some(physics.clone())));
         let gpu = physics.clone();
@@ -269,6 +293,7 @@ impl Component for Game {
             frame: None,
             wheel: None,
             view_side: Rc::new(Cell::new(side)),
+            extent: Rc::new(Cell::new(side)),
             last_time: None,
             accumulator: 0.0,
             stepping: false,
@@ -281,7 +306,9 @@ impl Component for Game {
             mouse: (0.0, 0.0),
             record: None,
             record_note: "Loading reference record…".into(),
-            last_report: None,
+            best_label: String::new(),
+            certified: None,
+            tighter: None,
             bound: String::new(),
             status: "Find your rhythm. Then squeeze a little.".into(),
             status_error: false,
@@ -303,7 +330,7 @@ impl Component for Game {
             taps: tap::DoubleTap::default(),
             glue_tool: None,
             glue_resume: false,
-            relax: None,
+            settling: false,
         };
         // A shared packing opens paused and unvalidated, even if it was
         // validated when shared; it has to be measured again here.
@@ -321,7 +348,7 @@ impl Component for Game {
                     game.view_side.set(game.physics.side());
                     match game.physics.set_glues(&snapshot.glues) {
                         Ok(()) => game.set_status(
-                            "Shared packing loaded, not yet validated. Settle & measure to check it.",
+                            "Shared packing loaded, not yet validated. Settle to check it.",
                             false,
                         ),
                         Err(e) => game.set_status(&format!("Share link glue: {e}"), true),
@@ -341,9 +368,9 @@ impl Component for Game {
         }
         if let Some(canvas) = self.canvas.cast::<HtmlCanvasElement>() {
             // Registered by hand: wheel needs a non-passive listener to stop page scroll.
-            let (physics, view_side, link) = (
+            let (physics, extent, link) = (
                 self.physics.clone(),
-                self.view_side.clone(),
+                self.extent.clone(),
                 ctx.link().clone(),
             );
             let target = canvas.clone();
@@ -355,11 +382,11 @@ impl Component for Game {
                     let Some(e) = e.dyn_ref::<WheelEvent>() else {
                         return;
                     };
-                    let extent = view_side.get().max(physics.side());
                     let p = canvas::to_world(
                         &target,
                         (e.client_x() as f64, e.client_y() as f64),
-                        extent,
+                        extent.get(),
+                        physics.side(),
                     );
                     if let Some(i) = canvas::hit(&physics.bodies(), p) {
                         e.prevent_default();
@@ -405,8 +432,8 @@ impl Component for Game {
                     .last_time
                     .map_or(0.0, |last| ((time - last) / 1000.0).clamp(0.0, 0.05));
                 self.last_time = Some(time);
-                self.tick_anneal(ctx, elapsed);
-                self.tick_relax(ctx, elapsed);
+                // Either can change the status, which the readout doesn't track.
+                let changed = self.tick_anneal(elapsed) | self.tick_settle(ctx);
                 if self.physics.paused() {
                     self.accumulator = 0.0;
                 } else {
@@ -420,10 +447,10 @@ impl Component for Game {
                             physics.step(steps).await;
                             Msg::Stepped
                         });
-                        return false;
+                        return changed;
                     }
                 }
-                self.after_frame(ctx)
+                self.after_frame(ctx) || changed
             }
             Msg::Stepped => {
                 self.stepping = false;
@@ -437,7 +464,9 @@ impl Component for Game {
                 match rows {
                     Ok(rows) => {
                         self.record = rows.into_iter().find(|r| r.n == n);
-                        if self.record.is_none() {
+                        if let Some(r) = &self.record {
+                            self.best_label = best_label(r);
+                        } else {
                             self.record_note = "No reference loaded for this square count.".into();
                         }
                     }
@@ -674,8 +703,9 @@ impl Component for Game {
             Msg::SqueezeDown => self.toggle_run(n, RunKind::SqueezeDown),
             Msg::Measure => {
                 self.stop_anneal();
-                self.settle(ctx)
+                self.settle()
             }
+            Msg::Tighten => self.tighten(ctx),
             Msg::Refine => {
                 if self.stepping {
                     ctx.link().send_future(async {
@@ -697,20 +727,13 @@ impl Component for Game {
                     self.set_status("Choose a leaderboard name first.", true);
                     return true;
                 }
-                match &self.last_report {
-                    Some(r) if r.valid => {
-                        let arrangement = r.arrangement.clone();
-                        self.send_submit(ctx, player, arrangement);
-                    }
-                    Some(_) => self.set_status(
-                        "This packing still has overlaps. Give it a little more room.",
-                        true,
-                    ),
+                match self.certified.clone() {
+                    Some(arrangement) => self.send_submit(ctx, player, arrangement),
                     None => {
                         self.submit_after_measure = true;
-                        // A relax in progress measures (and so submits) once
-                        // it clears; restarting it would drop this request.
-                        if self.relax.is_none() {
+                        // A Settle in progress measures (and so submits) once
+                        // it settles; restarting it would drop this request.
+                        if !self.settling {
                             ctx.link().send_message(Msg::Measure);
                         }
                     }
@@ -729,12 +752,9 @@ impl Component for Game {
                 true
             }
             Msg::Export => {
-                let value = match &self.last_report {
-                    Some(report) => serde_json::to_value(report),
-                    None => serde_json::to_value(serde_json::json!({
-                        "arrangement": self.physics.arrangement()
-                    })),
-                };
+                let value = serde_json::to_value(serde_json::json!({
+                    "arrangement": self.share_arrangement()
+                }));
                 let result = value
                     .map_err(|e| e.to_string())
                     .and_then(|v| files::download_json(&format!("packit-{n}.json"), &v));
@@ -855,9 +875,9 @@ impl Component for Game {
         let size_max = (n as f64).sqrt().ceil() + 3.0;
         let status_class = classes!("pg-status", self.status_error.then_some("pg-invalid"));
         // Compare the refined f64 side once validated; otherwise the live side.
-        let (bench_side, validated) = match &self.last_report {
-            Some(report) if report.valid => (report.arrangement.side, true),
-            _ => (self.physics.side(), false),
+        let (bench_side, validated) = match &self.certified {
+            Some(arrangement) => (arrangement.side, true),
+            None => (self.physics.side(), false),
         };
         html! {
             <div class="packing-game">
@@ -907,7 +927,7 @@ impl Component for Game {
                         <details class="pg-details">
                             <summary>{ "How to play & what the score means" }</summary>
                             <p>{ "Each square has side length 1. Make the container smaller while keeping every square inside and avoiding overlap. Dragging and rotating resume physics, push neighbors, and resist blocked motion. Lower the container target with outer band tension enabled to squeeze the packing. Turn on forces, or use Q/E to rotate a selected square. Arrow keys nudge it. Space pauses." }</p>
-                            <p>{ "The simulation has springy contacts. “Settle & measure” first relaxes the box until nothing overlaps, then pauses the scene and refines its contacts with a numerical polynomial solver. Only an independently validated arrangement can be submitted. A best-known packing is an upper bound, not necessarily a proven optimum. A numerical match is not an exact proof." }</p>
+                            <p>{ "The simulation has springy contacts. “Settle” lets the contacts resolve, opening the box only while squares still overlap, then pauses the scene and refines its contacts with a numerical polynomial solver. Only an independently validated arrangement can be submitted. A best-known packing is an upper bound, not necessarily a proven optimum. A numerical match is not an exact proof." }</p>
                             <p>
                                 <a href="https://kingbird.myphotos.cc/packing/squares_in_squares.html" target="_blank" rel="noopener">
                                     { "Explore the research records ↗" }
@@ -916,21 +936,56 @@ impl Component for Game {
                         </details>
                     </div>
                     <aside class="pg-sidebar">
-                        <section class="pg-panel">
+                        <section class="pg-panel pg-submit">
                             <h2>{ "Your packing" }</h2>
                             <div class="pg-stat">{ &r.side }<small>{ " side length" }</small></div>
                             <div class="pg-meter"><span style={format!("width: {}", r.meter)}></span></div>
                             <div class="pg-row"><span>{ "Area filled" }</span><strong>{ &r.density }</strong></div>
                             <div class="pg-help">{ &r.record }</div>
+                            <div class="pg-actions">
+                                <button class="pg-primary" disabled={self.busy} onclick={link.callback(|_| Msg::Measure)}>
+                                    { if self.settling { "Settling…" } else { "Settle" } }
+                                </button>
+                                { self.tighter.as_ref().map(|t| html! {
+                                    <button disabled={self.busy} onclick={link.callback(|_| Msg::Tighten)}>
+                                        { format!("Tighten to {:.4}", t.side) }
+                                    </button>
+                                }) }
+                                <button disabled={self.sharing} onclick={link.callback(|_| Msg::Share)}>{ if self.sharing { "Sharing…" } else { "Share" } }</button>
+                            </div>
+                            <p class="pg-share-status pg-help" role="status" aria-live="polite">{ &self.share_status }</p>
+                            { self.share_error.map(|error| html! { <p class="pg-share-error" role="alert">{ error }</p> }) }
+                            { if let Some(url) = &self.short_share {
+                                html! {
+                                    <div class="pg-share-result">
+                                        <label class="pg-help" for="pg-share-link">{ "Shared snapshot" }</label>
+                                        <input id="pg-share-link" class="pg-field" type="url" readonly=true value={url.clone()}
+                                            onclick={Callback::from(|e: MouseEvent| e.target_unchecked_into::<HtmlInputElement>().select())} />
+                                        <button disabled={self.sharing} onclick={link.callback(|_| Msg::CopyShare)}>{ "Copy link" }</button>
+                                    </div>
+                                }
+                            } else { Html::default() } }
+                            <p class="pg-help">{ &self.bound }</p>
+                            <p class={status_class} role="status" aria-live="polite">{ &self.status }</p>
+                            <label class="pg-help" for="pg-player">{ "Leaderboard name" }</label>
+                            <input id="pg-player" class="pg-field" type="text" maxlength="32" placeholder="Your name"
+                                autocomplete="nickname" value={self.player.clone()}
+                                oninput={link.callback(|e: InputEvent| Msg::Player(input_value(&e)))} />
+                            <button class="pg-primary pg-wide" disabled={self.submitting} onclick={link.callback(|_| Msg::Submit)}>
+                                { "Submit packing" }
+                            </button>
+                            <p class="pg-help">
+                                <Link<Route> to={Route::LeaderboardN { n }}>{ "See the leaderboard ↗" }</Link<Route>>
+                            </p>
+                        </section>
+                        <details class="pg-panel pg-advanced">
+                            <summary>{ "Advanced" }</summary>
                             <label class="pg-row" for="pg-size">
                                 { "Container target side " }<output>{ format!("{:.3}", r.size_value) }</output>
                             </label>
                             <input id="pg-size" type="range" min={size_min.to_string()} max={size_max.to_string()} step="0.001"
                                 value={r.size_value.to_string()}
                                 oninput={link.callback(|e: InputEvent| Msg::TargetSide(input_value(&e).parse().unwrap_or(1.0)))} />
-                        </section>
-                        <section class="pg-panel">
-                            <h2>{ "Play with forces" }</h2>
                             <label class="pg-row" for="pg-band">
                                 { "Outer band tension " }
                                 <output>{ if params.band_tension > 0.0 { format!("{}", params.band_tension) } else { "Off".into() } }</output>
@@ -978,44 +1033,13 @@ impl Component for Game {
                                     }
                                 }) }
                             </div>
-                        </section>
-                        <section class="pg-panel pg-submit">
-                            <h2>{ "Chase the record" }</h2>
                             <div class="pg-actions">
-                                <button class="pg-primary" disabled={self.busy} onclick={link.callback(|_| Msg::Measure)}>
-                                    { "Settle & measure" }
-                                </button>
                                 <button onclick={link.callback(|_| Msg::Export)}>{ "Export" }</button>
-                                <button disabled={self.sharing} onclick={link.callback(|_| Msg::Share)}>{ if self.sharing { "Sharing…" } else { "Share" } }</button>
                                 <button onclick={link.callback(|_| Msg::ImportPick)}>{ "Import" }</button>
                                 <input ref={self.file_input.clone()} type="file" accept="application/json,.json" hidden=true
                                     onchange={link.callback(Msg::ImportFile)} />
                             </div>
-                            <p class="pg-share-status pg-help" role="status" aria-live="polite">{ &self.share_status }</p>
-                            { self.share_error.map(|error| html! { <p class="pg-share-error" role="alert">{ error }</p> }) }
-                            { if let Some(url) = &self.short_share {
-                                html! {
-                                    <div class="pg-share-result">
-                                        <label class="pg-help" for="pg-share-link">{ "Shared snapshot" }</label>
-                                        <input id="pg-share-link" class="pg-field" type="url" readonly=true value={url.clone()}
-                                            onclick={Callback::from(|e: MouseEvent| e.target_unchecked_into::<HtmlInputElement>().select())} />
-                                        <button disabled={self.sharing} onclick={link.callback(|_| Msg::CopyShare)}>{ "Copy link" }</button>
-                                    </div>
-                                }
-                            } else { Html::default() } }
-                            <p class="pg-help">{ &self.bound }</p>
-                            <p class={status_class} role="status" aria-live="polite">{ &self.status }</p>
-                            <label class="pg-help" for="pg-player">{ "Leaderboard name" }</label>
-                            <input id="pg-player" class="pg-field" type="text" maxlength="32" placeholder="Your name"
-                                autocomplete="nickname" value={self.player.clone()}
-                                oninput={link.callback(|e: InputEvent| Msg::Player(input_value(&e)))} />
-                            <button class="pg-primary pg-wide" disabled={self.submitting} onclick={link.callback(|_| Msg::Submit)}>
-                                { "Submit packing" }
-                            </button>
-                            <p class="pg-help">
-                                <Link<Route> to={Route::LeaderboardN { n }}>{ "See the leaderboard ↗" }</Link<Route>>
-                            </p>
-                        </section>
+                        </details>
                     </aside>
                 </div>
             </div>
@@ -1030,9 +1054,10 @@ impl Component for Game {
 
 impl Game {
     /// Advance an annealing run by `dt` seconds and apply its commands.
-    fn tick_anneal(&mut self, ctx: &Context<Self>, dt: f64) {
+    /// Returns whether the run ended in a settle, which sets the status.
+    fn tick_anneal(&mut self, dt: f64) -> bool {
         let Some(anneal) = self.anneal.as_mut() else {
-            return;
+            return false;
         };
         let commands = anneal.advance(dt);
         if anneal.is_finished() {
@@ -1051,22 +1076,25 @@ impl Game {
                     self.physics.set_params(params);
                 }
                 Command::Measure => {
-                    // Release the band so it stops compressing once the run
-                    // ends, then relax out of any overlap and measure.
+                    // The run ends here: a later band update would cancel
+                    // the settle. Release the band, then settle and measure.
+                    self.anneal = None;
                     let mut params = self.physics.params();
                     params.band_tension = 0.0;
                     self.physics.set_params(params);
-                    self.settle(ctx);
+                    self.settle();
+                    return true;
                 }
             }
         }
+        false
     }
 
     /// Start a scheduled run of `kind`, or stop it if it is the active one.
     /// Clicking the other run's button switches runs.
     fn toggle_run(&mut self, n: u32, kind: RunKind) -> bool {
-        // A run takes the band over from a relax in progress.
-        self.stop_relax();
+        // A run takes over from a Settle in progress.
+        self.stop_settle();
         if self.anneal.is_some() {
             let same = self.run_kind == kind;
             self.stop_anneal();
@@ -1104,14 +1132,17 @@ impl Game {
         true
     }
 
-    /// Share code for the current solution (the validated arrangement if
-    /// there is one, else the live scene) with the scene's glue.
+    /// The current solution: the certified arrangement if there is one,
+    /// else the live scene.
+    fn share_arrangement(&self) -> Arrangement {
+        self.certified
+            .clone()
+            .unwrap_or_else(|| self.physics.arrangement())
+    }
+
+    /// Share code for the current solution with the scene's glue.
     fn share_code(&self) -> String {
-        let arrangement = match &self.last_report {
-            Some(r) if r.valid => r.arrangement.clone(),
-            _ => self.physics.arrangement(),
-        };
-        share::encode(&arrangement, &self.physics.glues())
+        share::encode(&self.share_arrangement(), &self.physics.glues())
     }
 
     fn copy_share(&self, ctx: &Context<Self>) {
@@ -1147,76 +1178,76 @@ impl Game {
             };
             self.set_status(stopped, false);
         }
-        self.stop_relax();
+        self.stop_settle();
     }
 
-    /// Cancel a relax in progress and release the band. A submission waiting
-    /// on its measurement is dropped too, so a later settle of a different
-    /// scene can't submit it.
-    fn stop_relax(&mut self) {
-        if self.relax.take().is_some() {
-            let mut params = self.physics.params();
-            params.band_tension = 0.0;
-            self.physics.set_params(params);
+    /// Cancel a Settle in progress. A submission waiting on its measurement
+    /// is dropped too, so a later settle of a different scene can't submit it.
+    fn stop_settle(&mut self) {
+        if std::mem::take(&mut self.settling) {
+            self.physics.cancel_settle();
             self.submit_after_measure = false;
-            self.set_status("Relaxing stopped. Settle & measure when ready.", false);
+            self.set_status("Settle stopped. Press Settle when ready.", false);
         }
     }
 
-    /// Settle before measuring. If anything overlaps, relax the band outward
-    /// until nothing does, so the measured packing doesn't pop the squares
-    /// apart; a clear scene is measured right away.
-    fn settle(&mut self, ctx: &Context<Self>) -> bool {
+    /// Settle: the physics lets the constraints resolve (opening the box
+    /// only while squares still overlap), then the settled pose is measured.
+    fn settle(&mut self) -> bool {
         if self.busy {
             return false;
         }
-        if geometry::worst_violation(&self.physics.arrangement()) <= RELAX_TOL {
-            return self.begin_measure(ctx);
-        }
-        self.relax = Some(Relax {
-            start_side: self.physics.side(),
-            elapsed: 0.0,
-            clear_frames: 0,
-        });
+        // The physics drops mouse and rotation input; end the drag here too.
+        // The selection stays, so keys and turn buttons still act on it.
+        self.dragging = false;
+        self.rotating = false;
+        self.last_pointer = None;
         self.desired_side = None;
-        self.set_pause(false);
-        self.set_status("Relaxing the box until nothing overlaps…", false);
+        self.physics.begin_settle();
+        self.settling = true;
+        self.invalidate();
+        self.set_status("Settling…", false);
         true
     }
 
-    /// Grow the band's target while relaxing, and measure once the scene
-    /// has stayed clear for a few frames (or the relax runs out of time).
-    fn tick_relax(&mut self, ctx: &Context<Self>, dt: f64) {
-        let Some(relax) = self.relax.as_mut() else {
-            return;
-        };
-        relax.elapsed += dt;
-        let clear = geometry::worst_violation(&self.physics.arrangement()) <= RELAX_TOL;
-        relax.clear_frames = if clear { relax.clear_frames + 1 } else { 0 };
-        let mut params = self.physics.params();
-        let clear = relax.clear_frames >= RELAX_CLEAR_FRAMES;
-        if clear || relax.elapsed >= RELAX_MAX_SECS {
-            self.relax = None;
-            // Zero tension holds the relaxed size.
-            params.band_tension = 0.0;
-            self.physics.set_params(params);
-            if clear {
+    /// Follow the physics Settle each frame: measure once it settles, and
+    /// explain when it can't. Returns whether it changed the status.
+    fn tick_settle(&mut self, ctx: &Context<Self>) -> bool {
+        if !self.settling {
+            return false;
+        }
+        let status = self.physics.settle_status();
+        match status.phase {
+            SettlePhase::Running => return false,
+            // Direct interaction cancelled it.
+            SettlePhase::Idle => {
+                self.settling = false;
+                self.set_status("Settle stopped. Press Settle when ready.", false);
+            }
+            SettlePhase::Settled => {
+                self.settling = false;
                 self.begin_measure(ctx);
-            } else {
-                // Measuring a scene that still overlaps would pop the
-                // squares apart, which is what relaxing is meant to avoid.
+            }
+            SettlePhase::Blocked | SettlePhase::TimedOut => {
+                self.settling = false;
                 self.auto_measured = true;
                 self.submit_after_measure = false;
+                let why = if status.max_glue_error > SETTLE_GLUE_ERROR {
+                    "some glue can't be satisfied"
+                } else if status.phase == SettlePhase::TimedOut {
+                    "the squares kept moving"
+                } else {
+                    "squares still overlap"
+                };
                 self.set_status(
-                    "Couldn't relax out of the overlap; glue or a jam is holding it. Loosen it, then Settle & measure.",
+                    &format!(
+                        "Couldn't settle: {why}. Adjust the packing, then press Settle again."
+                    ),
                     true,
                 );
             }
-            return;
         }
-        params.band_tension = RELAX_TENSION;
-        params.target_side = relax.start_side + RELAX_RATE * relax.elapsed;
-        self.physics.set_params(params);
+        true
     }
 
     /// Pause and refine the current scene, once the status has painted.
@@ -1265,15 +1296,28 @@ impl Game {
         } else {
             self.physics.side()
         };
-        if extent > self.view_side.get() {
-            self.view_side
-                .set(self.view_side.get() + (extent - self.view_side.get()) * 0.12);
+        // Hold the scale during a drag: a refit would move the pointer's
+        // world position outward and the box would chase it. The box may
+        // outgrow the view until the square is let go.
+        if !self.dragging {
+            if extent > self.view_side.get() {
+                self.view_side
+                    .set(self.view_side.get() + (extent - self.view_side.get()) * 0.12);
+            }
+            self.extent
+                .set(self.view_side.get().max(self.physics.side()));
         }
+        #[cfg(all(test, target_arch = "wasm32"))]
+        TEST_EXTENT.with(|e| e.set(self.extent.get()));
         let forces = self.physics.contact_forces();
         let show_forces = self.dragging
             || self.rotating
             || (self.selected.is_some() && self.physics.motion() > 0.002 * bodies.len() as f32);
         let glues = self.physics.glues();
+        let violations = self.physics.violations();
+        let now_ms = web_sys::window()
+            .and_then(|w| w.performance())
+            .map_or(0.0, |p| p.now());
         canvas::draw(
             &canvas,
             &Scene {
@@ -1281,7 +1325,7 @@ impl Game {
                 glue_tool: self.glue_tool,
                 bodies: &bodies,
                 side: self.physics.side(),
-                view_side: self.view_side.get(),
+                view_side: self.extent.get(),
                 band_on: params.band_tension > 0.0,
                 band_tension: params.band_tension,
                 target_side: params.target_side,
@@ -1289,6 +1333,13 @@ impl Game {
                 mouse_force: self.physics.mouse_force(),
                 selected: self.selected,
                 tether: self.dragging.then_some(self.mouse),
+                violations: &violations,
+                now_ms,
+                best: self
+                    .record
+                    .as_ref()
+                    .filter(|_| self.certified.is_some())
+                    .map(|r| (r.side, self.best_label.as_str())),
             },
         );
     }
@@ -1300,7 +1351,7 @@ impl Game {
             || self.busy
             || self.auto_measured
             || self.anneal.is_some()
-            || self.relax.is_some()
+            || self.settling
         {
             return;
         }
@@ -1364,8 +1415,13 @@ impl Game {
     }
 
     fn world(&self, canvas: &HtmlCanvasElement, e: &PointerEvent) -> (f64, f64) {
-        let extent = self.view_side.get().max(self.physics.side());
-        canvas::to_world(canvas, (e.client_x() as f64, e.client_y() as f64), extent)
+        let extent = self.extent.get();
+        canvas::to_world(
+            canvas,
+            (e.client_x() as f64, e.client_y() as f64),
+            extent,
+            self.physics.side(),
+        )
     }
 
     fn push_mouse(&self) {
@@ -1379,7 +1435,8 @@ impl Game {
 
     /// Any change to the scene makes the last measurement stale.
     fn invalidate(&mut self) {
-        self.last_report = None;
+        self.certified = None;
+        self.tighter = None;
         self.auto_measured = false;
         self.settled_frames = 0;
     }
@@ -1403,7 +1460,7 @@ impl Game {
         } else {
             12.0
         };
-        canvas::px_to_world(canvas, px, self.view_side.get().max(self.physics.side()))
+        canvas::px_to_world(canvas, px, self.extent.get())
     }
 
     /// Open the glue tool on a double tap: end any drag, pause the scene,
@@ -1515,30 +1572,46 @@ impl Game {
         self.physics.load(a);
         self.view_side.set(self.physics.side());
         self.invalidate();
-        self.set_status("Imported. Settle & measure to validate.", false);
+        self.set_status("Imported. Settle to validate.", false);
     }
 
+    /// Certify the settled packing where it stands: that's the score, and
+    /// what Submit and Share send. The solver then reports how it compares,
+    /// but its own packing is never loaded or credited to this one.
     fn refine(&mut self, ctx: &Context<Self>) {
         let submit = std::mem::take(&mut self.submit_after_measure);
-        match solver::refine(&self.physics.arrangement()) {
+        self.busy = false;
+        self.tighter = None;
+        let live = self.physics.arrangement();
+        let glues = self.physics.glues();
+        let Some((certified, moved)) = self.certify(&live, &glues) else {
+            self.certified = None;
+            self.set_status(
+                "Couldn't certify: squares still overlap. Adjust the packing, then press Settle again.",
+                true,
+            );
+            return;
+        };
+        #[cfg(all(test, target_arch = "wasm32"))]
+        TEST_REPORT.with(|r| r.replace(Some(certified.clone())));
+        // Stay at the certified packing; don't resume squeezing.
+        self.desired_side = None;
+        let side = certified.side;
+        let mut status = format!("Ready · {side:.9} side");
+        if moved > 0.0 {
+            status += &format!(" · nudged {moved:.1e} to clear contacts");
+        }
+        status += ".";
+        match solver::refine(&certified) {
             Ok(report) => {
-                let side = report.arrangement.side;
                 self.bound = format!(
                     "Lower bound {:.6} · gap {:.3}%",
                     report.lower_bound,
                     100.0 * (side / report.lower_bound - 1.0)
                 );
-                if report.valid {
-                    #[cfg(all(test, target_arch = "wasm32"))]
-                    TEST_REPORT.with(|r| r.replace(Some(report.arrangement.clone())));
-                    // Settle at the measured packing; don't resume squeezing.
-                    self.desired_side = None;
-                    // Loading clears glue; the measured packing has the same
-                    // squares, so every link still applies.
-                    let glues = self.physics.glues();
-                    self.physics.load(&report.arrangement);
-                    let _ = self.physics.set_glues(&glues);
-                    self.view_side.set(self.physics.side());
+                // An exact form or residual describes the solver's packing,
+                // so it's shown only when that's the one displayed.
+                if report.valid && same_packing(&report.arrangement, &certified) {
                     let exact = report
                         .algebraic
                         .as_ref()
@@ -1550,30 +1623,68 @@ impl Game {
                         })
                         .or_else(|| report.candidate_expression.clone())
                         .unwrap_or_else(|| "Numerical local solution.".into());
-                    self.set_status(
-                        &format!(
-                            "Ready · {side:.9} side · contact residual {:.1e}. {exact}",
-                            report.contacts.max_residual
-                        ),
-                        false,
+                    status += &format!(
+                        " Contact residual {:.1e}. {exact}",
+                        report.contacts.max_residual
                     );
-                    if submit {
-                        let player = self.player.trim().to_string();
-                        self.send_submit(ctx, player, report.arrangement.clone());
-                    }
-                } else if submit {
-                    self.set_status(
-                        "This packing still has overlaps. Give it a little more room.",
-                        true,
+                } else if report.valid && report.arrangement.side < side - 1e-6 {
+                    status += &format!(
+                        " The solver can tighten this to {:.6}. Press Tighten to use it.",
+                        report.arrangement.side
                     );
-                } else {
-                    self.set_status(&report.status, true);
+                    self.tighter = Some(report.arrangement);
                 }
-                self.last_report = Some(report);
             }
-            Err(e) => self.set_status(&e, true),
+            Err(_) => self.bound.clear(),
         }
-        self.busy = false;
+        self.set_status(&status, false);
+        if submit {
+            let player = self.player.trim().to_string();
+            self.send_submit(ctx, player, certified.clone());
+        }
+        self.certified = Some(certified);
+    }
+
+    /// `live` certified where it stands, and the farthest any square was
+    /// nudged to clear the settle's numerical contact overlap. Every glue
+    /// must still hold on it, which is checked before the live scene is
+    /// touched; only a nudged packing is loaded.
+    fn certify(&mut self, live: &Arrangement, glues: &[Glue]) -> Option<(Arrangement, f64)> {
+        let (certified, moved) =
+            shared::geometry::certify(live, shared::VALIDATION_TOL, CERTIFY_MOVE)?;
+        if glue_error(&certified, glues) > SETTLE_GLUE_ERROR {
+            return None;
+        }
+        if moved > 0.0 {
+            // Loading clears glue; the nudged packing has the same squares.
+            self.physics.load(&certified);
+            let _ = self.physics.set_glues(glues);
+            self.physics.set_paused(true);
+        }
+        Some((certified, moved))
+    }
+
+    /// On request, jump to the solver's smaller packing and certify it like
+    /// any other, unless the jump would break a glue link, in which case
+    /// the live scene is never touched.
+    fn tighten(&mut self, ctx: &Context<Self>) -> bool {
+        let Some(tighter) = self.tighter.take() else {
+            return false;
+        };
+        let glues = self.physics.glues();
+        if glue_error(&tighter, &glues) > SETTLE_GLUE_ERROR {
+            self.set_status(
+                "Tightening would break a glue link, so the packing stays as it is.",
+                true,
+            );
+            return true;
+        }
+        // Loading clears glue; the smaller packing has the same squares.
+        self.physics.load(&tighter);
+        let _ = self.physics.set_glues(&glues);
+        self.physics.set_paused(true);
+        self.certified = None;
+        self.begin_measure(ctx)
     }
 
     fn send_submit(&mut self, ctx: &Context<Self>, player: String, arrangement: Arrangement) {
@@ -1590,9 +1701,113 @@ impl Game {
     }
 }
 
+/// "Best known 3.7071 · found by … · proved optimal by …", naming everyone
+/// the sources credit, and every candidate when they disagree.
+fn best_label(r: &KnownRecord) -> String {
+    let mut label = format!("Best known {:.4}", r.side);
+    if !r.packing_by.is_empty() {
+        let join = if r.packing_disputed { " or " } else { ", " };
+        label += &format!(" · found by {}", r.packing_by.join(join));
+    }
+    if r.proof_trivial {
+        label += " · optimal";
+    } else if !r.proof_by.is_empty() {
+        label += &format!(" · proved optimal by {}", r.proof_by.join(", "));
+    } else if r.proven_optimal {
+        label += " · proved optimal";
+    }
+    label
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn glue_error_is_measured_on_the_candidate() {
+        let sq = |cx| shared::Placement {
+            cx,
+            cy: 0.5,
+            theta: 0.0,
+        };
+        let touching = Arrangement {
+            n: 2,
+            side: 2.0,
+            squares: vec![sq(0.5), sq(1.5)],
+        };
+        // Square 1's right edge on square 2's left edge.
+        let glue = Glue {
+            a: Feature::Edge { square: 0, edge: 0 },
+            b: Feature::Edge { square: 1, edge: 2 },
+        };
+        assert!(glue_error(&touching, &[glue]) < 1e-6);
+        assert_eq!(glue_error(&touching, &[]), 0.0);
+        let apart = Arrangement {
+            side: 3.0,
+            squares: vec![sq(0.5), sq(2.5)],
+            ..touching
+        };
+        assert!(glue_error(&apart, &[glue]) > 0.9);
+    }
+
+    #[test]
+    fn same_packing_allows_only_rounding() {
+        let sq = |cx| shared::Placement {
+            cx,
+            cy: 0.5,
+            theta: 0.0,
+        };
+        let a = Arrangement {
+            n: 2,
+            side: 2.0,
+            squares: vec![sq(0.5), sq(1.5)],
+        };
+        let mut b = a.clone();
+        b.squares[1].cx += 1e-12;
+        assert!(same_packing(&a, &b));
+        b.squares[1].cx += 1e-6;
+        assert!(!same_packing(&a, &b), "a slid square");
+        let mut c = a.clone();
+        c.side -= 1e-6;
+        assert!(!same_packing(&a, &c), "a tighter box");
+    }
+
+    #[test]
+    fn best_label_credits_finders_and_provers() {
+        let record = |packing_by: &[&str], disputed, proof_by: &[&str], trivial| KnownRecord {
+            n: 10,
+            side: 3.0 + std::f64::consts::FRAC_1_SQRT_2,
+            side_expr: None,
+            proven_optimal: trivial || !proof_by.is_empty(),
+            source: String::new(),
+            packing_by: packing_by.iter().map(|s| s.to_string()).collect(),
+            packing_disputed: disputed,
+            proof_by: proof_by.iter().map(|s| s.to_string()).collect(),
+            proof_trivial: trivial,
+        };
+        assert_eq!(
+            best_label(&record(
+                &["Frits Göbel"],
+                false,
+                &["Walter Stromquist"],
+                false
+            )),
+            "Best known 3.7071 · found by Frits Göbel · proved optimal by Walter Stromquist"
+        );
+        assert_eq!(
+            best_label(&record(
+                &["Evert Stenlund", "Frits Göbel"],
+                true,
+                &[],
+                false
+            )),
+            "Best known 3.7071 · found by Evert Stenlund or Frits Göbel"
+        );
+        assert_eq!(
+            best_label(&record(&[], false, &[], true)),
+            "Best known 3.7071 · optimal"
+        );
+    }
 
     #[test]
     fn scrub_reach_scales_with_band_pressure() {
