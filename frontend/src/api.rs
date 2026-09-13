@@ -1,31 +1,191 @@
 //! Typed wrappers around the backend HTTP API.
 
-use gloo_net::http::{Request, Response};
+use crate::webauthn;
+use gloo_net::http::{Request, RequestBuilder, Response};
 use serde::de::DeserializeOwned;
-use shared::{ApiError, KnownRecord, ScoreDetail, ScoreEntry, SubmitScore};
+use serde::{Deserialize, Serialize};
+use shared::{ApiError, AuthMe, AuthUsername, KnownRecord, ScoreDetail, ScoreEntry, SubmitScore};
+use std::fmt;
 use std::future::Future;
 use std::time::Duration;
 use uuid::Uuid;
+use web_sys::RequestCredentials;
 
-async fn decode<T: DeserializeOwned>(resp: Response) -> Result<T, String> {
-    if resp.ok() {
-        resp.json::<T>().await.map_err(|e| e.to_string())
-    } else {
-        match resp.json::<ApiError>().await {
-            Ok(err) => Err(err.error),
-            Err(_) => Err(format!("HTTP {}", resp.status())),
+/// Why a request failed, sorted by what the caller should do about it.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Failure {
+    /// 401: not signed in, the session expired, or a sign-in was refused.
+    SignedOut(String),
+    /// 429: try again after the server's Retry-After, if it sent one.
+    RateLimited(Option<Duration>),
+    /// Anything else, as a message to show.
+    Other(String),
+}
+
+impl fmt::Display for Failure {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::SignedOut(message) | Self::Other(message) => f.write_str(message),
+            Self::RateLimited(Some(wait)) => write!(
+                f,
+                "Too many attempts. Try again in {} seconds.",
+                wait.as_secs().max(1)
+            ),
+            Self::RateLimited(None) => f.write_str("Too many attempts. Try again later."),
         }
     }
 }
 
-pub async fn submit_score(body: SubmitScore) -> Result<ScoreEntry, String> {
-    let resp = Request::post("/api/scores")
-        .json(&body)
-        .map_err(|e| e.to_string())?
+/// The session cookie goes with every request that may need it.
+/// Same-origin is fetch's default; it's stated so it stays that way.
+fn with_session(request: RequestBuilder) -> RequestBuilder {
+    request.credentials(RequestCredentials::SameOrigin)
+}
+
+fn network(e: gloo_net::Error) -> Failure {
+    Failure::Other(e.to_string())
+}
+
+/// A response's Retry-After as a wait, if it has a readable one.
+fn wait_from(resp: &Response) -> Option<Duration> {
+    let value = resp.headers().get("retry-after")?;
+    retry_after(&value, js_sys::Date::now(), |date| {
+        let at = js_sys::Date::parse(date);
+        at.is_finite().then_some(at)
+    })
+}
+
+/// Classify a failed response by its status, with the server's message.
+async fn failure(resp: Response) -> Failure {
+    let status = resp.status();
+    if status == 429 {
+        return Failure::RateLimited(wait_from(&resp));
+    }
+    let message = match resp.json::<ApiError>().await {
+        Ok(err) => err.error,
+        Err(_) => format!("HTTP {status}"),
+    };
+    if status == 401 {
+        Failure::SignedOut(message)
+    } else {
+        Failure::Other(message)
+    }
+}
+
+async fn decode<T: DeserializeOwned>(resp: Response) -> Result<T, Failure> {
+    if resp.ok() {
+        resp.json::<T>()
+            .await
+            .map_err(|e| Failure::Other(e.to_string()))
+    } else {
+        Err(failure(resp).await)
+    }
+}
+
+async fn post<B: Serialize + ?Sized, T: DeserializeOwned>(
+    url: &str,
+    body: &B,
+) -> Result<T, Failure> {
+    let resp = with_session(Request::post(url))
+        .json(body)
+        .map_err(network)?
         .send()
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(network)?;
     decode(resp).await
+}
+
+/// Save a score for the signed-in account.
+pub async fn submit_score(body: SubmitScore) -> Result<ScoreEntry, Failure> {
+    post("/api/scores", &body).await
+}
+
+/// Options for the browser's passkey call, and the ceremony to finish.
+#[derive(Deserialize)]
+struct Started {
+    ceremony: String,
+    options: serde_json::Value,
+}
+
+#[derive(Serialize)]
+struct Finish {
+    ceremony: String,
+    credential: serde_json::Value,
+}
+
+/// The signed-in username, or `None` when signed out.
+pub async fn me() -> Result<Option<String>, Failure> {
+    let resp = with_session(Request::get("/api/auth/me"))
+        .send()
+        .await
+        .map_err(network)?;
+    match decode::<AuthMe>(resp).await {
+        Ok(me) => Ok(Some(me.username)),
+        Err(Failure::SignedOut(_)) => Ok(None),
+        Err(e) => Err(e),
+    }
+}
+
+/// Create an account with a new passkey, which also signs in. Returns the
+/// username as the server stored it.
+pub async fn register(username: &str) -> Result<String, Failure> {
+    let body = AuthUsername {
+        username: username.into(),
+    };
+    let started: Started = post("/api/auth/register/start", &body).await?;
+    let credential = webauthn::create(&started.options).await?;
+    finish("/api/auth/register/finish", started.ceremony, credential).await
+}
+
+/// Sign in to `username` with one of its passkeys.
+pub async fn sign_in(username: &str) -> Result<String, Failure> {
+    let body = AuthUsername {
+        username: username.into(),
+    };
+    let started: Started = post("/api/auth/login/start", &body).await?;
+    let credential = webauthn::get(&started.options).await?;
+    finish("/api/auth/login/finish", started.ceremony, credential).await
+}
+
+/// Add another passkey to the signed-in account. The server wants a recent
+/// sign-in for this.
+pub async fn add_passkey() -> Result<(), Failure> {
+    let resp = with_session(Request::post("/api/auth/passkeys/start"))
+        .send()
+        .await
+        .map_err(network)?;
+    let started: Started = decode(resp).await?;
+    let credential = webauthn::create(&started.options).await?;
+    finish("/api/auth/passkeys/finish", started.ceremony, credential).await?;
+    Ok(())
+}
+
+async fn finish(
+    url: &str,
+    ceremony: String,
+    credential: serde_json::Value,
+) -> Result<String, Failure> {
+    let me: AuthMe = post(
+        url,
+        &Finish {
+            ceremony,
+            credential,
+        },
+    )
+    .await?;
+    Ok(me.username)
+}
+
+pub async fn sign_out() -> Result<(), Failure> {
+    let resp = with_session(Request::post("/api/auth/logout"))
+        .send()
+        .await
+        .map_err(network)?;
+    if resp.ok() {
+        Ok(())
+    } else {
+        Err(failure(resp).await)
+    }
 }
 
 pub async fn list_scores(n: Option<u32>, limit: Option<u32>) -> Result<Vec<ScoreEntry>, String> {
@@ -38,7 +198,7 @@ pub async fn list_scores(n: Option<u32>, limit: Option<u32>) -> Result<Vec<Score
     }
     let url = format!("/api/scores?{}", query.join("&"));
     let resp = Request::get(&url).send().await.map_err(|e| e.to_string())?;
-    decode(resp).await
+    decode(resp).await.map_err(|e| e.to_string())
 }
 
 pub async fn get_score(id: Uuid) -> Result<ScoreDetail, String> {
@@ -46,7 +206,7 @@ pub async fn get_score(id: Uuid) -> Result<ScoreDetail, String> {
         .send()
         .await
         .map_err(|e| e.to_string())?;
-    decode(resp).await
+    decode(resp).await.map_err(|e| e.to_string())
 }
 
 pub async fn known_records() -> Result<Vec<KnownRecord>, String> {
@@ -54,7 +214,7 @@ pub async fn known_records() -> Result<Vec<KnownRecord>, String> {
         .send()
         .await
         .map_err(|e| e.to_string())?;
-    decode(resp).await
+    decode(resp).await.map_err(|e| e.to_string())
 }
 
 /// Bounded retries: at most `attempts` requests, each cut off after
@@ -96,12 +256,16 @@ pub enum Attempt<T> {
     },
     /// Retrying won't help: the server rejected the request.
     Permanent,
+    /// A 401: only signing in again will help.
+    SignedOut,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum RetryError {
     /// Attempts or time ran out, or the server refused.
     Failed,
+    /// The server needs a sign-in first.
+    SignedOut,
     /// The caller went away, so nothing more should happen.
     Cancelled,
 }
@@ -134,6 +298,7 @@ where
         }
         let after = match attempt(left.min(policy.timeout)).await {
             Attempt::Done(value) => return Ok(value),
+            Attempt::SignedOut => return Err(RetryError::SignedOut),
             Attempt::Permanent => break,
             Attempt::Transient { after } => after,
         };
@@ -219,7 +384,7 @@ async fn share_attempt(
     // drop the request, when AbortController is available.
     let controller = web_sys::AbortController::new().ok();
     let signal = controller.as_ref().map(|c| c.signal());
-    let Ok(request) = Request::post("/api/shares")
+    let Ok(request) = with_session(Request::post("/api/shares"))
         .abort_signal(signal.as_ref())
         .json(body)
     else {
@@ -232,16 +397,15 @@ async fn share_attempt(
         // A failure is decided by its status and headers alone; its body is
         // never read, so a slow or broken one can't change the outcome.
         if !resp.ok() {
+            if resp.status() == 401 {
+                return Attempt::SignedOut;
+            }
             if !transient_status(resp.status()) {
                 return Attempt::Permanent;
             }
-            let after = resp.headers().get("retry-after").and_then(|value| {
-                retry_after(&value, js_sys::Date::now(), |date| {
-                    let at = js_sys::Date::parse(date);
-                    at.is_finite().then_some(at)
-                })
-            });
-            return Attempt::Transient { after };
+            return Attempt::Transient {
+                after: wait_from(&resp),
+            };
         }
         // A success's body that never arrives is a transport failure; one
         // that isn't a short link won't improve on retry.
@@ -336,6 +500,31 @@ mod tests {
         assert_eq!(result, Err(RetryError::Failed));
         assert_eq!(timeouts.len(), 1);
         assert!(waits.is_empty());
+    }
+
+    #[test]
+    fn a_sign_in_request_is_not_retried() {
+        let (result, timeouts, waits) = run(vec![(FAST, Attempt::SignedOut)], None);
+        assert_eq!(result, Err(RetryError::SignedOut));
+        assert_eq!(timeouts.len(), 1);
+        assert!(waits.is_empty());
+    }
+
+    #[test]
+    fn failures_read_as_messages() {
+        let wait = Failure::RateLimited(Some(Duration::from_secs(7)));
+        assert_eq!(
+            wait.to_string(),
+            "Too many attempts. Try again in 7 seconds."
+        );
+        assert_eq!(
+            Failure::RateLimited(None).to_string(),
+            "Too many attempts. Try again later."
+        );
+        assert_eq!(
+            Failure::SignedOut("Sign-in failed".into()).to_string(),
+            "Sign-in failed"
+        );
     }
 
     #[test]

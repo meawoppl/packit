@@ -1,3 +1,4 @@
+use crate::auth::session;
 use crate::models::{NewScore, Score};
 use crate::schema::scores;
 use crate::AppState;
@@ -12,9 +13,10 @@ use shared::{
 };
 use std::sync::Arc;
 use std::time::Duration;
+use tower_cookies::Cookies;
 use uuid::Uuid;
 
-pub const MAX_PLAYER_LEN: usize = 32;
+pub const SIGN_IN_TO_SUBMIT: &str = "Sign in to submit a score";
 pub const DEFAULT_LIMIT: u32 = 50;
 pub const MAX_LIMIT: u32 = 200;
 
@@ -112,32 +114,29 @@ fn entry(score: &Score, rank: u32) -> ScoreEntry {
 }
 
 /// Check a submission before it touches the database.
-pub fn check_submission(body: &SubmitScore) -> Result<String, HandlerError> {
-    let player = body.player.trim();
-    if player.is_empty() || player.chars().count() > MAX_PLAYER_LEN {
-        return Err(HandlerError::bad_request(format!(
-            "player name must be 1 to {MAX_PLAYER_LEN} characters"
-        )));
-    }
-    let arr = &body.arrangement;
+pub fn check_submission(arr: &Arrangement) -> Result<(), HandlerError> {
     if !(1..=MAX_N).contains(&arr.n) {
         return Err(HandlerError::bad_request(format!(
             "n must be between 1 and {MAX_N}"
         )));
     }
     geometry::validate(arr, VALIDATION_TOL)
-        .map_err(|v| HandlerError::bad_request(format!("invalid packing: {v}")))?;
-    Ok(player.to_string())
+        .map_err(|v| HandlerError::bad_request(format!("invalid packing: {v}")))
 }
 
+/// Save a score for the signed-in account, named by its username. The
+/// packing is checked first, since that needs no database.
 pub async fn submit(
     State(state): State<Arc<AppState>>,
+    cookies: Cookies,
     Json(body): Json<SubmitScore>,
 ) -> HandlerResult<ScoreEntry> {
-    let player = check_submission(&body)?;
     let arr = body.arrangement;
+    check_submission(&arr)?;
+    let user = session::require_user(&state, &cookies, SIGN_IN_TO_SUBMIT).await?;
     let new = NewScore {
-        player,
+        player: user.username,
+        user_id: user.id,
         n: arr.n as i32,
         side: arr.side,
         arrangement: serde_json::to_value(&arr)?,
@@ -235,42 +234,29 @@ mod tests {
     use super::*;
     use shared::Placement;
 
-    fn submission(player: &str, squares: Vec<(f64, f64)>, side: f64) -> SubmitScore {
-        SubmitScore {
-            player: player.to_string(),
-            arrangement: Arrangement {
-                n: squares.len() as u32,
-                side,
-                squares: squares
-                    .into_iter()
-                    .map(|(cx, cy)| Placement { cx, cy, theta: 0.0 })
-                    .collect(),
-            },
+    fn packing(squares: Vec<(f64, f64)>, side: f64) -> Arrangement {
+        Arrangement {
+            n: squares.len() as u32,
+            side,
+            squares: squares
+                .into_iter()
+                .map(|(cx, cy)| Placement { cx, cy, theta: 0.0 })
+                .collect(),
         }
     }
 
     #[test]
-    fn accepts_valid_packing_and_trims_name() {
-        let body = submission("  ada ", vec![(0.5, 0.5), (1.5, 0.5)], 2.0);
-        assert_eq!(check_submission(&body).unwrap(), "ada");
-    }
-
-    #[test]
-    fn rejects_bad_names() {
-        let body = submission("   ", vec![(0.5, 0.5)], 1.0);
-        assert!(check_submission(&body).is_err());
-        let body = submission(&"x".repeat(MAX_PLAYER_LEN + 1), vec![(0.5, 0.5)], 1.0);
-        assert!(check_submission(&body).is_err());
+    fn accepts_a_valid_packing() {
+        assert!(check_submission(&packing(vec![(0.5, 0.5), (1.5, 0.5)], 2.0)).is_ok());
     }
 
     #[test]
     fn rejects_overlap_and_empty() {
-        let body = submission("ada", vec![(0.5, 0.5), (1.2, 0.5)], 2.0);
+        let overlap = packing(vec![(0.5, 0.5), (1.2, 0.5)], 2.0);
         assert_eq!(
-            check_submission(&body).unwrap_err().0,
+            check_submission(&overlap).unwrap_err().0,
             StatusCode::BAD_REQUEST
         );
-        let body = submission("ada", vec![], 1.0);
-        assert!(check_submission(&body).is_err());
+        assert!(check_submission(&packing(vec![], 1.0)).is_err());
     }
 }

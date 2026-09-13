@@ -11,7 +11,9 @@ use crate::config::PublicOrigin;
 use crate::handlers::auth::{
     CEREMONY_INVALID, NOT_SIGNED_IN, PASSKEY_TAKEN, REAUTH, SIGN_IN_FAILED, TOO_MANY, VERIFY_FAILED,
 };
-use crate::schema::{passkeys, sessions, users};
+use crate::handlers::scores::SIGN_IN_TO_SUBMIT;
+use crate::handlers::shares::SIGN_IN_TO_SHARE;
+use crate::schema::{passkeys, scores, sessions, solution_shares, users};
 use crate::test_support::{state_for, test_db, unconnected_pool, TEST_URL};
 use crate::AppState;
 use axum::body::Body;
@@ -1754,33 +1756,273 @@ async fn ownership_columns_are_indexed() {
     assert_eq!(found, 2);
 }
 
-/// Accounts gate nothing else: the public API works with no Origin, from
-/// another origin, and with no, malformed or unknown session cookies.
+/// Two squares in a box no other run uses, so a share of it never dedupes
+/// onto another test's row.
+fn unique_squares() -> shared::Arrangement {
+    let side = 2.0 + (Uuid::new_v4().as_u128() % 1_000_000) as f64 * 1e-7;
+    let sq = |cx| shared::Placement {
+        cx,
+        cy: 0.5,
+        theta: 0.0,
+    };
+    shared::Arrangement {
+        n: 2,
+        side,
+        squares: vec![sq(0.5), sq(1.5)],
+    }
+}
+
+fn share_body(arrangement: &shared::Arrangement) -> Value {
+    json!({ "n": 2, "code": shared::share::encode(arrangement, &[]) })
+}
+
+fn share_owner(state: &AppState, url: &Value) -> Option<Uuid> {
+    let token = url.as_str().unwrap().rsplit('/').next().unwrap().to_owned();
+    solution_shares::table
+        .find(token)
+        .select(solution_shares::created_by)
+        .first(&mut conn(state))
+        .unwrap()
+}
+
+/// Submitting and sharing need the site's exact Origin, which is checked
+/// first, and then a session. Neither answers other origins with CORS.
 #[tokio::test]
-async fn existing_endpoints_still_work_anonymously() {
+async fn signed_in_writes_need_the_exact_origin_and_a_session() {
+    let Some((state, app)) = db_app() else {
+        return;
+    };
+    let name = fresh("writer");
+    let mut b = Browser::new();
+    assert_eq!(
+        register(&app, &mut b, &mut soft(), &name).await.status,
+        StatusCode::OK
+    );
+    let arrangement = unique_squares();
+    let score = json!({ "arrangement": arrangement });
+    let share = share_body(&arrangement);
+    for (uri, body, why) in [
+        ("/api/scores", &score, SIGN_IN_TO_SUBMIT),
+        ("/api/shares", &share, SIGN_IN_TO_SHARE),
+    ] {
+        let r = Browser::new().post(&app, uri, body.clone()).await;
+        assert_eq!((r.status, r.error()), (StatusCode::UNAUTHORIZED, why));
+        for origin in [None, Some("https://evil.test"), Some("http://packit.test")] {
+            let mut elsewhere = b.clone();
+            elsewhere.origin = origin;
+            let r = elsewhere.post(&app, uri, body.clone()).await;
+            assert_eq!(r.status, StatusCode::FORBIDDEN, "{uri} from {origin:?}");
+            assert!(r.headers.get(header::ACCESS_CONTROL_ALLOW_ORIGIN).is_none());
+        }
+        let mut twice = b.request(Method::POST, uri, Some(body));
+        twice
+            .headers_mut()
+            .append(header::ORIGIN, TEST_URL.parse().unwrap());
+        assert_eq!(call(&app, twice).await.status, StatusCode::FORBIDDEN);
+    }
+
+    let owner = user_id(&state, &name);
+    let r = b.post(&app, "/api/scores", score).await;
+    assert_eq!(r.status, StatusCode::OK, "{:?}", r.body);
+    assert!(r.headers.get(header::ACCESS_CONTROL_ALLOW_ORIGIN).is_none());
+    let id: Uuid = serde_json::from_value(r.body["id"].clone()).unwrap();
+    let credited: Option<Uuid> = scores::table
+        .find(id)
+        .select(scores::user_id)
+        .first(&mut conn(&state))
+        .unwrap();
+    assert_eq!(credited, Some(owner));
+    let r = b.post(&app, "/api/shares", share).await;
+    assert_eq!(r.status, StatusCode::OK, "{:?}", r.body);
+    assert!(r.headers.get(header::ACCESS_CONTROL_ALLOW_ORIGIN).is_none());
+    assert_eq!(share_owner(&state, &r.body["url"]), Some(owner));
+
+    // Reads keep their permissive CORS.
+    let mut reader = Browser::new();
+    reader.origin = Some("https://evil.test");
+    let r = reader.get(&app, "/api/scores?n=2").await;
+    assert_eq!(r.status, StatusCode::OK);
+    assert_eq!(r.headers[header::ACCESS_CONTROL_ALLOW_ORIGIN], "*");
+}
+
+/// The leaderboard name is the account's username; a name in the body is
+/// ignored.
+#[tokio::test]
+async fn scores_are_named_by_the_account() {
+    let Some((state, app)) = db_app() else {
+        return;
+    };
+    let name = fresh("ada");
+    let mut b = Browser::new();
+    assert_eq!(
+        register(&app, &mut b, &mut soft(), &name).await.status,
+        StatusCode::OK
+    );
+    let body = json!({ "player": "mallory", "arrangement": unique_squares() });
+    let r = b.post(&app, "/api/scores", body).await;
+    assert_eq!(r.status, StatusCode::OK, "{:?}", r.body);
+    assert_eq!(r.body["player"], name.as_str());
+    let id = r.body["id"].as_str().unwrap().to_owned();
+    let detail = Browser::new().get(&app, &format!("/api/scores/{id}")).await;
+    assert_eq!(detail.body["entry"]["player"], name.as_str());
+    let stored: String = scores::table
+        .find(Uuid::parse_str(&id).unwrap())
+        .select(scores::player)
+        .first(&mut conn(&state))
+        .unwrap();
+    assert_eq!(stored, name);
+}
+
+/// Anonymous scores from before accounts keep their names and stay
+/// unowned, even when an account later takes the same name.
+#[tokio::test]
+async fn legacy_scores_stay_unclaimed() {
+    let Some((state, app)) = db_app() else {
+        return;
+    };
+    let name = fresh("legacy");
+    let legacy = Uuid::new_v4();
+    diesel::insert_into(scores::table)
+        .values((
+            scores::id.eq(legacy),
+            scores::player.eq(&name),
+            scores::n.eq(2),
+            scores::side.eq(2.5),
+            scores::arrangement.eq(serde_json::to_value(unique_squares()).unwrap()),
+        ))
+        .execute(&mut conn(&state))
+        .unwrap();
+    let mut b = Browser::new();
+    assert_eq!(
+        register(&app, &mut b, &mut soft(), &name).await.status,
+        StatusCode::OK
+    );
+    let r = b
+        .post(
+            &app,
+            "/api/scores",
+            json!({ "arrangement": unique_squares() }),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{:?}", r.body);
+    let owners: Vec<(Uuid, Option<Uuid>)> = scores::table
+        .filter(scores::player.eq(&name))
+        .select((scores::id, scores::user_id))
+        .load(&mut conn(&state))
+        .unwrap();
+    assert_eq!(owners.len(), 2);
+    for (id, owner) in owners {
+        let expected = (id != legacy).then(|| user_id(&state, &name));
+        assert_eq!(owner, expected, "{id}");
+    }
+    let detail = Browser::new()
+        .get(&app, &format!("/api/scores/{legacy}"))
+        .await;
+    assert_eq!(detail.body["entry"]["player"], name.as_str());
+}
+
+/// Sharing a snapshot that already has a link returns that link and leaves
+/// its creator alone, whether it has none (a legacy row) or another
+/// account. Every account gets the same response.
+#[tokio::test]
+async fn a_reshared_snapshot_keeps_its_original_creator() {
+    let Some((state, app)) = db_app() else {
+        return;
+    };
+    let (mut first, mut second) = (Browser::new(), Browser::new());
+    let first_name = fresh("first");
+    for (b, name) in [(&mut first, &first_name), (&mut second, &fresh("second"))] {
+        assert_eq!(
+            register(&app, b, &mut soft(), name).await.status,
+            StatusCode::OK
+        );
+    }
+
+    let legacy = unique_squares();
+    let code = shared::share::encode(&legacy, &[]);
+    let token = Uuid::new_v4().simple().to_string()[..24].to_owned();
+    diesel::insert_into(solution_shares::table)
+        .values((
+            solution_shares::token.eq(&token),
+            solution_shares::payload_hash.eq(Sha256::digest(code.as_bytes()).to_vec()),
+            solution_shares::n.eq(2),
+            solution_shares::code.eq(&code),
+        ))
+        .execute(&mut conn(&state))
+        .unwrap();
+    let r = second.post(&app, "/api/shares", share_body(&legacy)).await;
+    assert_eq!(r.status, StatusCode::OK, "{:?}", r.body);
+    assert_eq!(r.body["url"], format!("{TEST_URL}/s/{token}"));
+    assert_eq!(share_owner(&state, &r.body["url"]), None);
+
+    let snapshot = share_body(&unique_squares());
+    let original = first.post(&app, "/api/shares", snapshot.clone()).await;
+    assert_eq!(original.status, StatusCode::OK);
+    let again = second.post(&app, "/api/shares", snapshot).await;
+    assert_eq!(
+        (again.status, &again.body),
+        (original.status, &original.body)
+    );
+    assert_eq!(
+        share_owner(&state, &again.body["url"]),
+        Some(user_id(&state, &first_name))
+    );
+}
+
+/// A credited profile can't sign in, and a session row forged for one is
+/// refused and removed.
+#[tokio::test]
+async fn credited_profiles_cannot_submit_or_share() {
+    let Some((state, app)) = db_app() else {
+        return;
+    };
+    let friedman = user_id(&state, "friedman");
+    let arrangement = unique_squares();
+    for (uri, body, why) in [
+        (
+            "/api/scores",
+            json!({ "arrangement": arrangement }),
+            SIGN_IN_TO_SUBMIT,
+        ),
+        ("/api/shares", share_body(&arrangement), SIGN_IN_TO_SHARE),
+    ] {
+        let token = session::create(&mut conn(&state), friedman, None).unwrap();
+        let mut b = Browser::new();
+        b.cookies.insert(SESSION.into(), hex::encode(&token));
+        let r = b.post(&app, uri, body).await;
+        assert_eq!((r.status, r.error()), (StatusCode::UNAUTHORIZED, why));
+        assert!(!session_hashes(&state, friedman).contains(&session::hash_token(&token)));
+    }
+}
+
+/// Reads and existing links stay public: they work with no Origin or
+/// another one, and with no, malformed or unknown session cookies, and never
+/// set a cookie. Writes from the same browsers are refused.
+#[tokio::test]
+async fn reads_and_existing_links_stay_anonymous() {
     let Some((_state, app)) = db_app() else {
         return;
     };
-    let squares = shared::Arrangement {
-        n: 2,
-        side: 2.0,
-        squares: vec![
-            shared::Placement {
-                cx: 0.5,
-                cy: 0.5,
-                theta: 0.0,
-            },
-            shared::Placement {
-                cx: 1.5,
-                cy: 0.5,
-                theta: 0.0,
-            },
-        ],
-    };
+    let mut owner = Browser::new();
+    assert_eq!(
+        register(&app, &mut owner, &mut soft(), &fresh("linker"))
+            .await
+            .status,
+        StatusCode::OK
+    );
+    let squares = unique_squares();
     let code = shared::share::encode(&squares, &[]);
+    let r = owner.post(&app, "/api/shares", share_body(&squares)).await;
+    assert_eq!(r.status, StatusCode::OK);
+    let link = r.body["url"]
+        .as_str()
+        .unwrap()
+        .strip_prefix(TEST_URL)
+        .unwrap()
+        .to_owned();
     let unknown = format!("{SESSION}={}", "00".repeat(32));
     for cookie in [None, Some(format!("{SESSION}=zz")), Some(unknown)] {
-        for origin in [None, Some("https://evil.test")] {
+        for origin in [None, Some("https://evil.test"), Some(TEST_URL)] {
             let req = |method: Method, uri: &str, body: Option<Value>| {
                 let mut req = Request::builder().method(method).uri(uri);
                 if let Some(c) = &cookie {
@@ -1797,25 +2039,39 @@ async fn existing_endpoints_still_work_anonymously() {
                 }
                 .unwrap()
             };
-            let r = call(&app, req(Method::GET, "/api/records", None)).await;
-            assert_eq!(r.status, StatusCode::OK);
-            let score = json!({ "player": "anon", "arrangement": squares });
-            let r = call(&app, req(Method::POST, "/api/scores", Some(score))).await;
-            assert_eq!(r.status, StatusCode::OK, "{:?}", r.body);
-            let share = json!({ "n": 2, "code": code });
-            let r = call(&app, req(Method::POST, "/api/shares", Some(share))).await;
-            assert_eq!(r.status, StatusCode::OK, "{:?}", r.body);
-            let path = r.body["url"]
-                .as_str()
-                .unwrap()
-                .strip_prefix(TEST_URL)
-                .unwrap()
-                .to_owned();
-            let r = call(&app, req(Method::GET, &path, None)).await;
+            for uri in ["/api/records", "/api/scores", "/api/scores?n=2"] {
+                let r = call(&app, req(Method::GET, uri, None)).await;
+                assert_eq!(r.status, StatusCode::OK, "{uri}");
+            }
+            let r = call(&app, req(Method::GET, &link, None)).await;
             assert_eq!(r.status, StatusCode::FOUND);
+            assert_eq!(
+                r.headers[header::LOCATION],
+                format!("{TEST_URL}/play/2?s={code}")
+            );
             let r = call(&app, req(Method::GET, &format!("/play/2?s={code}"), None)).await;
             assert_eq!(r.status, StatusCode::OK);
             assert!(r.body.as_str().unwrap().contains("og:image"));
+            let preview = format!("/api/preview.png?n=2&s={code}");
+            let r = call(&app, req(Method::GET, &preview, None)).await;
+            assert_eq!(r.status, StatusCode::OK);
+            assert_eq!(r.headers[header::CONTENT_TYPE], "image/png");
+            assert!(r.headers.get(header::SET_COOKIE).is_none());
+
+            let refused = if origin == Some(TEST_URL) {
+                StatusCode::UNAUTHORIZED
+            } else {
+                StatusCode::FORBIDDEN
+            };
+            let score = json!({ "arrangement": squares });
+            let r = call(&app, req(Method::POST, "/api/scores", Some(score))).await;
+            assert_eq!(r.status, refused, "{:?}", r.body);
+            let r = call(
+                &app,
+                req(Method::POST, "/api/shares", Some(share_body(&squares))),
+            )
+            .await;
+            assert_eq!(r.status, refused, "{:?}", r.body);
             assert!(r.headers.get(header::SET_COOKIE).is_none());
         }
     }

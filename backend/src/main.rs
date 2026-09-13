@@ -1,6 +1,8 @@
 mod auth;
 mod config;
 mod db;
+#[cfg(test)]
+mod e2e;
 mod handlers;
 mod models;
 mod schema;
@@ -19,6 +21,7 @@ use clap::Parser;
 use memory_serve::{load_assets, CacheControl, MemoryServe};
 use std::net::SocketAddr;
 use std::sync::Arc;
+use tower_cookies::CookieManagerLayer;
 use tower_http::cors::{Any, CorsLayer};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use ws_bridge::WsEndpoint;
@@ -61,8 +64,8 @@ impl AppState {
 /// Kept as a pure function of `AppState` so tests can drive the entire app
 /// in-process via `tower::ServiceExt::oneshot` — no bound port, no network.
 pub fn build_app(state: Arc<AppState>) -> Router {
-    // Permissive CORS covers the public API only. `/api/auth` gets none, so
-    // other sites can't read its responses.
+    // Permissive CORS covers public reads only. `/api/auth` and the signed-in
+    // writes get none, so other sites can't read their responses.
     let cors = CorsLayer::new()
         .allow_origin(Any)
         .allow_methods(Any)
@@ -79,7 +82,10 @@ pub fn build_app(state: Arc<AppState>) -> Router {
         .cache_control(CacheControl::Long)
         .into_router();
 
-    let public = Router::new()
+    // Writes credited to the signed-in account. The exact Origin is checked
+    // before the session cookie is read, as on `/api/auth`.
+    let writes = Router::new()
+        .route("/api/scores", post(handlers::scores::submit))
         .route(
             "/api/shares",
             // Room for the longest share code (n = 100 with every glue,
@@ -88,13 +94,18 @@ pub fn build_app(state: Arc<AppState>) -> Router {
                 shared::share::MAX_LEN + 1024,
             )),
         )
+        .route_layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            handlers::auth::require_origin,
+        ))
+        .layer(CookieManagerLayer::new())
+        .with_state(state.clone());
+
+    let public = Router::new()
         .route("/s/:token", get(handlers::shares::resolve))
         .route("/api/health", get(handlers::health::health))
         .route("/api/records", get(handlers::records::records))
-        .route(
-            "/api/scores",
-            get(handlers::scores::list).post(handlers::scores::submit),
-        )
+        .route("/api/scores", get(handlers::scores::list))
         .route("/api/scores/:id", get(handlers::scores::detail))
         .route("/api/preview.png", get(handlers::preview::preview_png))
         .route("/play/:n", get(handlers::preview::play))
@@ -103,7 +114,10 @@ pub fn build_app(state: Arc<AppState>) -> Router {
         .merge(frontend)
         .layer(cors);
 
+    // `/api/scores` is in both: merging keeps POST without CORS and GET
+    // with it.
     handlers::auth::router(state.clone())
+        .merge(writes)
         .merge(public)
         // Outermost, so no layer or handler below ever sees the proxy token.
         // Request logging, if added, belongs inside this.
@@ -223,7 +237,7 @@ async fn shutdown_signal() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_support::{state_for, test_db, unconnected_pool, TEST_URL};
+    use crate::test_support::{sign_up, state_for, test_db, unconnected_pool, Player, TEST_URL};
     use axum::body::Body;
     use axum::http::{header, Request, StatusCode};
     use tower::ServiceExt;
@@ -299,21 +313,30 @@ mod tests {
         (status, serde_json::from_slice(&bytes).unwrap())
     }
 
+    /// A same-origin POST with no session.
     fn post_json(uri: &str, body: &impl serde::Serialize) -> Request<Body> {
         Request::post(uri)
+            .header(header::ORIGIN, TEST_URL)
             .header(header::CONTENT_TYPE, "application/json")
             .body(Body::from(serde_json::to_vec(body).unwrap()))
             .unwrap()
     }
 
-    fn two_squares(player: &str, side: f64) -> shared::SubmitScore {
+    /// A same-origin POST from `player`'s browser.
+    fn post_as(uri: &str, body: &impl serde::Serialize, player: &Player) -> Request<Body> {
+        let mut req = post_json(uri, body);
+        req.headers_mut()
+            .insert(header::COOKIE, player.cookie.parse().unwrap());
+        req
+    }
+
+    fn two_squares(side: f64) -> shared::SubmitScore {
         let sq = |cx| shared::Placement {
             cx,
             cy: 0.5,
             theta: 0.0,
         };
         shared::SubmitScore {
-            player: player.to_string(),
             arrangement: shared::Arrangement {
                 n: 2,
                 side,
@@ -345,7 +368,7 @@ mod tests {
 
     #[tokio::test]
     async fn shared_play_page_describes_the_packing() {
-        let code = shared::share::encode(&two_squares("", 2.0).arrangement, &[]);
+        let code = shared::share::encode(&two_squares(2.0).arrangement, &[]);
         let req = Request::get(format!("/play/2?s={code}"))
             .header(header::HOST, "evil.example")
             .header("x-forwarded-host", "evil.example")
@@ -401,7 +424,7 @@ mod tests {
 
     #[tokio::test]
     async fn preview_png_draws_each_packing() {
-        let a = two_squares("", 2.0).arrangement;
+        let a = two_squares(2.0).arrangement;
         let mut b = a.clone();
         b.side = 2.5;
         b.squares[1].theta = 0.3;
@@ -429,7 +452,7 @@ mod tests {
 
     #[tokio::test]
     async fn preview_png_rejects_invalid_codes() {
-        let code = shared::share::encode(&two_squares("", 2.0).arrangement, &[]);
+        let code = shared::share::encode(&two_squares(2.0).arrangement, &[]);
         for uri in [
             "/api/preview.png".to_string(),
             "/api/preview.png?n=2".to_string(),
@@ -456,7 +479,7 @@ mod tests {
 
     #[tokio::test]
     async fn overlapping_submission_rejected_before_db() {
-        let mut body = two_squares("ada", 2.0);
+        let mut body = two_squares(2.0);
         body.arrangement.squares[1].cx = 1.0;
         let (status, err): (_, shared::ApiError) =
             call(&build_app(test_state()), post_json("/api/scores", &body)).await;
@@ -468,17 +491,29 @@ mod tests {
     /// TEST_DATABASE_URL is set; CI provides one.
     #[tokio::test]
     async fn scores_roundtrip_against_postgres() {
+        use crate::schema::scores;
+        use diesel::prelude::*;
+
         let Some(db_pool) = test_db() else {
             eprintln!("TEST_DATABASE_URL not set; skipping");
             return;
         };
+        let player = sign_up(&db_pool);
+        let app_pool = db_pool.clone();
         let app = build_app(state_for(db_pool));
 
         let (status, loose): (_, shared::ScoreEntry) =
-            call(&app, post_json("/api/scores", &two_squares("loose", 3.0))).await;
+            call(&app, post_as("/api/scores", &two_squares(3.0), &player)).await;
         assert_eq!(status, StatusCode::OK);
+        assert_eq!(loose.player, player.username);
+        let owner: Option<uuid::Uuid> = scores::table
+            .find(loose.id)
+            .select(scores::user_id)
+            .first(&mut app_pool.get().unwrap())
+            .unwrap();
+        assert_eq!(owner, Some(player.id));
         let (_, tight): (_, shared::ScoreEntry) =
-            call(&app, post_json("/api/scores", &two_squares("tight", 2.0))).await;
+            call(&app, post_as("/api/scores", &two_squares(2.0), &player)).await;
 
         let (status, board): (_, Vec<shared::ScoreEntry>) = call(
             &app,
@@ -510,7 +545,7 @@ mod tests {
         assert_eq!(detail.entry.side, 3.0);
         // Rank is computed at read time, so the tighter packing now outranks it.
         assert!(detail.entry.rank > tight.rank);
-        assert_eq!(detail.arrangement, two_squares("loose", 3.0).arrangement);
+        assert_eq!(detail.arrangement, two_squares(3.0).arrangement);
 
         let (status, _): (_, shared::ApiError) = call(
             &app,
@@ -592,7 +627,7 @@ mod tests {
     }
     #[tokio::test]
     async fn short_links_validate_before_using_the_database() {
-        let mut arr = two_squares("", 2.0).arrangement;
+        let mut arr = two_squares(2.0).arrangement;
         arr.squares[0].cx = 1001.0;
         for body in [
             shared::CreateShare {
@@ -609,7 +644,7 @@ mod tests {
             },
             shared::CreateShare {
                 n: 3,
-                code: shared::share::encode(&two_squares("", 2.0).arrangement, &[]),
+                code: shared::share::encode(&two_squares(2.0).arrangement, &[]),
             },
             shared::CreateShare {
                 n: 2,
@@ -639,10 +674,11 @@ mod tests {
             eprintln!("TEST_DATABASE_URL not set; skipping");
             return;
         };
+        let player = sign_up(&db_pool);
         let app = build_app(state_for(db_pool));
         // Both valid and unfinished snapshots are shareable. The full f64
         // value survives storage and redirect without passing through f32.
-        let mut arr = two_squares("", 2.0 + 2e-10).arrangement;
+        let mut arr = two_squares(2.0 + 2e-10).arrangement;
         arr.squares[1].cx = 1.2;
         let code = shared::share::encode(&arr, &[]);
         let body = shared::CreateShare {
@@ -654,8 +690,8 @@ mod tests {
             code: code.to_uppercase(),
         };
         let ((status, a), (_, b)): ((_, shared::ShortShare), (_, shared::ShortShare)) = tokio::join!(
-            call(&app, post_json("/api/shares", &body)),
-            call(&app, post_json("/api/shares", &upper)),
+            call(&app, post_as("/api/shares", &body, &player)),
+            call(&app, post_as("/api/shares", &upper, &player)),
         );
         assert_eq!(status, StatusCode::OK);
         assert_eq!(a, b, "concurrent canonical duplicates reuse the same URL");
@@ -706,12 +742,13 @@ mod tests {
         arr.squares[0].theta = 0.1;
         let (_, different): (_, shared::ShortShare) = call(
             &app,
-            post_json(
+            post_as(
                 "/api/shares",
                 &shared::CreateShare {
                     n: 2,
                     code: shared::share::encode(&arr, &[]),
                 },
+                &player,
             ),
         )
         .await;
@@ -731,8 +768,9 @@ mod tests {
             eprintln!("TEST_DATABASE_URL not set; skipping");
             return;
         };
+        let player = sign_up(&db_pool);
         let app = build_app(state_for(db_pool));
-        let arr = two_squares("", 2.0).arrangement;
+        let arr = two_squares(2.0).arrangement;
         let glues = vec![
             Glue {
                 a: Feature::Edge { square: 0, edge: 0 },
@@ -753,10 +791,11 @@ mod tests {
         let code = shared::share::encode(&arr, &glues);
         let share = |code: String| {
             let app = app.clone();
+            let player = &player;
             async move {
                 let (status, link): (_, shared::ShortShare) = call(
                     &app,
-                    post_json("/api/shares", &shared::CreateShare { n: 2, code }),
+                    post_as("/api/shares", &shared::CreateShare { n: 2, code }, player),
                 )
                 .await;
                 assert_eq!(status, StatusCode::OK);
@@ -800,7 +839,7 @@ mod tests {
             eprintln!("TEST_DATABASE_URL not set; skipping");
             return;
         };
-        let arr = two_squares("", 2.0).arrangement;
+        let arr = two_squares(2.0).arrangement;
         let glue_free = shared::share::encode(&arr, &[]);
         let glued = shared::share::encode(
             &arr,
@@ -892,6 +931,7 @@ mod tests {
             eprintln!("TEST_DATABASE_URL not set; skipping");
             return;
         };
+        let player = sign_up(&db_pool);
         let app = build_app(state_for(db_pool.clone()));
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
@@ -935,8 +975,10 @@ mod tests {
             addr,
             format!(
                 "POST /api/shares HTTP/1.1\r\nHost: packit.test\r\n\
+                 Origin: {TEST_URL}\r\nCookie: {}\r\n\
                  Content-Type: application/json\r\nContent-Length: {}\r\n\
                  Connection: close\r\n\r\n{body}",
+                player.cookie,
                 body.len()
             ),
         )

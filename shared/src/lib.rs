@@ -108,10 +108,10 @@ pub struct HealthResponse {
     pub status: String,
 }
 
-/// Body of `POST /api/scores`.
+/// Body of `POST /api/scores`. The score is credited to the signed-in
+/// account; its username is the leaderboard name.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SubmitScore {
-    pub player: String,
     pub arrangement: Arrangement,
 }
 
@@ -291,7 +291,6 @@ mod tests {
     #[test]
     fn submit_score_roundtrip() {
         roundtrip(SubmitScore {
-            player: "ada".to_string(),
             arrangement: sample_arrangement(),
         });
     }
