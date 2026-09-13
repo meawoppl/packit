@@ -781,12 +781,16 @@ async fn bad_share_link_reports_an_error() {
     root.remove();
 }
 
-/// One scripted `/api/shares` response.
+/// One scripted `/api/shares` response; status 0 never answers.
 #[derive(Clone, Copy)]
 struct Reply {
     status: u16,
     retry_after: Option<&'static str>,
 }
+const HANG: Reply = Reply {
+    status: 0,
+    retry_after: None,
+};
 const OK: Reply = Reply {
     status: 200,
     retry_after: None,
@@ -806,6 +810,8 @@ struct ShareApi {
     requests: Rc<std::cell::RefCell<Vec<shared::CreateShare>>>,
     /// When each request arrived, in milliseconds.
     arrivals: Rc<std::cell::RefCell<Vec<f64>>>,
+    /// Each request's abort signal.
+    signals: Rc<std::cell::RefCell<Vec<web_sys::AbortSignal>>>,
 }
 impl ShareApi {
     fn install(script: &[Reply]) -> Self {
@@ -815,7 +821,8 @@ impl ShareApi {
         let fetch = original.clone().dyn_into::<js_sys::Function>().unwrap();
         let requests = Rc::new(std::cell::RefCell::new(Vec::new()));
         let arrivals = Rc::new(std::cell::RefCell::new(Vec::new()));
-        let (captured, arrived) = (requests.clone(), arrivals.clone());
+        let signals = Rc::new(std::cell::RefCell::new(Vec::new()));
+        let (captured, arrived, signalled) = (requests.clone(), arrivals.clone(), signals.clone());
         let replacement = wasm_bindgen::closure::Closure::wrap(Box::new(
             move |request: wasm_bindgen::JsValue, init: wasm_bindgen::JsValue| {
                 let req = request.clone().dyn_into::<web_sys::Request>().unwrap();
@@ -826,6 +833,7 @@ impl ShareApi {
                         .unchecked_into();
                 }
                 let (captured, arrived) = (captured.clone(), arrived.clone());
+                signalled.borrow_mut().push(req.signal());
                 let script = script.clone();
                 wasm_bindgen_futures::future_to_promise(async move {
                     arrived.borrow_mut().push(js_sys::Date::now());
@@ -838,6 +846,11 @@ impl ShareApi {
                         captured.push(serde_json::from_str(&body).unwrap());
                         script[(captured.len() - 1).min(script.len() - 1)]
                     };
+                    if reply.status == 0 {
+                        // Never answer; only an abort ends this request.
+                        wasm_bindgen_futures::JsFuture::from(js_sys::Promise::new(&mut |_, _| {}))
+                            .await?;
+                    }
                     sleep(150).await;
                     let options = web_sys::ResponseInit::new();
                     options.set_status(reply.status);
@@ -862,6 +875,7 @@ impl ShareApi {
             _fetch: replacement,
             requests,
             arrivals,
+            signals,
         }
     }
 }
@@ -1063,6 +1077,27 @@ async fn a_transient_failure_then_success_copies_the_short_link() {
         ["https://packit.test/s/0123456789abcdef01234567"]
     );
     assert_eq!(share_alert(&root), None);
+    handle.destroy();
+    root.remove();
+}
+
+#[wasm_bindgen_test]
+async fn a_hung_request_is_aborted_and_retried() {
+    let _gpu = NoWebGpu::install();
+    let api = ShareApi::install(&[HANG, OK]);
+    let clipboard = Clipboard::install(false);
+    let (handle, root, _) = mount().await;
+    submit_button(&root, "Share").click();
+    sleep(30).await;
+    wait_share(&root).await;
+    assert_eq!(api.requests.borrow().len(), 2);
+    let signals = api.signals.borrow();
+    assert!(signals[0].aborted(), "the hung request was aborted");
+    assert!(!signals[1].aborted(), "the retry completed");
+    assert_eq!(
+        clipboard.values.borrow().as_slice(),
+        ["https://packit.test/s/0123456789abcdef01234567"]
+    );
     handle.destroy();
     root.remove();
 }
@@ -1566,6 +1601,8 @@ async fn settling_and_sharing_leave_the_address_bar_alone() {
             // settle window.
             wait_for_report(8000).await;
         }
+        // The manual measure must produce its own report.
+        TEST_REPORT.with(|r| r.take());
         submit_button(&root, "Settle & measure").click();
         sleep(300).await;
         wait_for_report(3000).await;

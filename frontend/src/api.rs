@@ -68,10 +68,20 @@ pub struct Retry {
     pub backoff: Duration,
 }
 
+#[cfg(not(all(test, target_arch = "wasm32")))]
 pub const SHARE_RETRY: Retry = Retry {
     attempts: 4,
     budget: Duration::from_secs(20),
     timeout: Duration::from_secs(8),
+    backoff: Duration::from_millis(400),
+};
+
+/// Browser tests run the same policy with shorter timings.
+#[cfg(all(test, target_arch = "wasm32"))]
+pub const SHARE_RETRY: Retry = Retry {
+    attempts: 4,
+    budget: Duration::from_secs(6),
+    timeout: Duration::from_millis(600),
     backoff: Duration::from_millis(400),
 };
 
@@ -131,7 +141,7 @@ where
             break;
         }
         let wait = after.unwrap_or(policy.backoff * 2u32.pow(k));
-        if elapsed() + wait >= policy.budget {
+        if wait >= policy.budget.saturating_sub(elapsed()) {
             break;
         }
         sleep(wait).await;
@@ -159,7 +169,8 @@ pub fn retry_after(
         return Some(Duration::from_secs(seconds));
     }
     let at = parse_date(value)?;
-    Some(Duration::from_secs_f64(((at - now_ms) / 1000.0).max(0.0)))
+    // A date too far out saturates; it outlasts any budget either way.
+    Some(Duration::try_from_secs_f64(((at - now_ms) / 1000.0).max(0.0)).unwrap_or(Duration::MAX))
 }
 
 /// Create a short link for `body` under [`SHARE_RETRY`]. Every attempt
@@ -168,9 +179,15 @@ pub async fn create_share(
     body: shared::CreateShare,
     cancelled: impl Fn() -> bool,
 ) -> Result<shared::ShortShare, RetryError> {
-    let start = js_sys::Date::now();
-    let elapsed =
-        move || Duration::from_secs_f64(((js_sys::Date::now() - start) / 1000.0).max(0.0));
+    // The budget runs on the monotonic clock; wall time only reads HTTP-dates.
+    let performance = web_sys::window().and_then(|w| w.performance());
+    let now = move || {
+        performance
+            .as_ref()
+            .map_or_else(js_sys::Date::now, |p| p.now())
+    };
+    let start = now();
+    let elapsed = move || Duration::from_secs_f64(((now() - start) / 1000.0).max(0.0));
     retry(
         &SHARE_RETRY,
         elapsed,
@@ -181,39 +198,63 @@ pub async fn create_share(
     .await
 }
 
+/// `fut`'s output, or `None` if `timeout` passes first.
+async fn within<F: Future>(timeout: Duration, fut: F) -> Option<F::Output> {
+    let mut fut = std::pin::pin!(fut);
+    let mut timer = std::pin::pin!(gloo_timers::future::sleep(timeout));
+    std::future::poll_fn(|cx| {
+        if let std::task::Poll::Ready(value) = fut.as_mut().poll(cx) {
+            return std::task::Poll::Ready(Some(value));
+        }
+        timer.as_mut().poll(cx).map(|()| None)
+    })
+    .await
+}
+
 async fn share_attempt(
     body: &shared::CreateShare,
     timeout: Duration,
 ) -> Attempt<shared::ShortShare> {
-    // Abort the request if it outlasts its time; dropping the timer when
-    // this returns cancels it.
+    // The race below enforces the deadline; aborting also makes the browser
+    // drop the request, when AbortController is available.
     let controller = web_sys::AbortController::new().ok();
     let signal = controller.as_ref().map(|c| c.signal());
-    let _deadline = controller.map(|c| {
-        gloo_timers::callback::Timeout::new(timeout.as_millis() as u32, move || c.abort())
-    });
     let Ok(request) = Request::post("/api/shares")
         .abort_signal(signal.as_ref())
         .json(body)
     else {
         return Attempt::Permanent;
     };
-    let Ok(resp) = request.send().await else {
-        return Attempt::Transient { after: None };
-    };
-    if resp.ok() {
-        return resp.json().await.map_or(Attempt::Permanent, Attempt::Done);
-    }
-    if !transient_status(resp.status()) {
-        return Attempt::Permanent;
-    }
-    let after = resp.headers().get("retry-after").and_then(|value| {
-        retry_after(&value, js_sys::Date::now(), |date| {
-            let at = js_sys::Date::parse(date);
-            at.is_finite().then_some(at)
-        })
-    });
-    Attempt::Transient { after }
+    let outcome = within(timeout, async {
+        let Ok(resp) = request.send().await else {
+            return Attempt::Transient { after: None };
+        };
+        // A body that never arrives is a transport failure; one that isn't a
+        // short link won't improve on retry.
+        let Ok(text) = resp.text().await else {
+            return Attempt::Transient { after: None };
+        };
+        if resp.ok() {
+            return serde_json::from_str(&text).map_or(Attempt::Permanent, Attempt::Done);
+        }
+        if !transient_status(resp.status()) {
+            return Attempt::Permanent;
+        }
+        let after = resp.headers().get("retry-after").and_then(|value| {
+            retry_after(&value, js_sys::Date::now(), |date| {
+                let at = js_sys::Date::parse(date);
+                at.is_finite().then_some(at)
+            })
+        });
+        Attempt::Transient { after }
+    })
+    .await;
+    outcome.unwrap_or_else(|| {
+        if let Some(controller) = controller {
+            controller.abort();
+        }
+        Attempt::Transient { after: None }
+    })
 }
 
 #[cfg(test)]
@@ -333,6 +374,19 @@ mod tests {
         );
         let total: Duration = timeouts.iter().chain(&waits).sum();
         assert!(total <= SHARE_RETRY.budget, "{total:?}");
+    }
+
+    #[test]
+    fn an_enormous_retry_after_gives_up_without_overflowing() {
+        let forever = Attempt::Transient {
+            after: Some(Duration::from_secs(u64::MAX)),
+        };
+        let (result, timeouts, waits) = run(vec![(FAST, forever)], None);
+        assert_eq!(result, Err(RetryError::Failed));
+        assert_eq!(timeouts.len(), 1);
+        assert!(waits.is_empty());
+        let far = |_: &str| Some(f64::MAX);
+        assert_eq!(retry_after("someday", 0.0, far), Some(Duration::MAX));
     }
 
     #[test]
