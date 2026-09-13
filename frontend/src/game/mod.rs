@@ -105,7 +105,7 @@ pub enum Msg {
     Share,
     /// Clipboard result for a share link; `Err` if it could not be copied.
     Shared(Result<(), ()>),
-    ShareCreated(Result<shared::ShortShare, String>),
+    ShareCreated(Result<shared::ShortShare, api::RetryError>),
     CopyShare,
     ImportPick,
     ImportFile(Event),
@@ -175,6 +175,10 @@ pub struct Game {
     sharing: bool,
     short_share: Option<String>,
     share_status: String,
+    /// A Share's final failure, shown as an alert until the next Share.
+    share_error: Option<&'static str>,
+    /// Set when the screen unmounts, so a Share stops retrying.
+    unmounted: Rc<Cell<bool>>,
     submit_after_measure: bool,
     pending_import: Option<Arrangement>,
     anneal: Option<Anneal>,
@@ -288,6 +292,8 @@ impl Component for Game {
             sharing: false,
             short_share: None,
             share_status: String::new(),
+            share_error: None,
+            unmounted: Rc::new(Cell::new(false)),
             submit_after_measure: false,
             pending_import: None,
             anneal: None,
@@ -747,9 +753,12 @@ impl Component for Game {
                 };
                 self.sharing = true;
                 self.short_share = None;
+                self.share_error = None;
                 self.share_status = "Creating a short link…".into();
-                ctx.link()
-                    .send_future(async move { Msg::ShareCreated(api::create_share(body).await) });
+                let unmounted = self.unmounted.clone();
+                ctx.link().send_future(async move {
+                    Msg::ShareCreated(api::create_share(body, move || unmounted.get()).await)
+                });
                 true
             }
             Msg::ShareCreated(result) => {
@@ -760,10 +769,13 @@ impl Component for Game {
                         // starting a clipboard write, so unmounts discard it.
                         self.copy_share(ctx);
                     }
-                    Err(error) => {
+                    Err(api::RetryError::Cancelled) => return false,
+                    Err(api::RetryError::Failed) => {
                         self.sharing = false;
-                        self.share_status =
-                            format!("Couldn't create a short link: {error}. Try Share again.");
+                        self.share_status.clear();
+                        self.share_error = Some(
+                            "Couldn't create a short link. Check your connection, then press Share to try again.",
+                        );
                     }
                 }
                 true
@@ -976,6 +988,7 @@ impl Component for Game {
                                     onchange={link.callback(Msg::ImportFile)} />
                             </div>
                             <p class="pg-share-status pg-help" role="status" aria-live="polite">{ &self.share_status }</p>
+                            { self.share_error.map(|error| html! { <p class="pg-share-error" role="alert">{ error }</p> }) }
                             { if let Some(url) = &self.short_share {
                                 html! {
                                     <div class="pg-share-result">
@@ -1006,6 +1019,7 @@ impl Component for Game {
     }
 
     fn destroy(&mut self, _ctx: &Context<Self>) {
+        self.unmounted.set(true);
         self.physics.dispose();
     }
 }
@@ -1110,21 +1124,6 @@ impl Game {
             )
         });
     }
-
-    /// Point the address bar at a share link for the current solution (the
-    /// validated arrangement if there is one, else the live scene) without
-    /// adding a history entry. Returns the path written.
-    fn update_share_url(&self, n: u32) -> Option<String> {
-        let arrangement = self.share_arrangement();
-        let path = format!("/play/{n}?s={}", share::encode(&arrangement));
-        web_sys::window()?
-            .history()
-            .ok()?
-            .replace_state_with_url(&wasm_bindgen::JsValue::NULL, "", Some(&path))
-            .ok()?;
-        Some(path)
-    }
-
     /// Manual input takes over from an annealing run.
     fn stop_anneal(&mut self) {
         if self.anneal.take().is_some() {
@@ -1566,9 +1565,6 @@ impl Game {
             }
             Err(e) => self.set_status(&e, true),
         }
-        // Every settle (automatic or Settle & measure) updates the URL, so a
-        // reload or copied address reproduces the current solution.
-        self.update_share_url(ctx.props().n);
         self.busy = false;
     }
 
