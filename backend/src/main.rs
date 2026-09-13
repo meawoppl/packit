@@ -792,4 +792,213 @@ mod tests {
         assert_eq!(status, StatusCode::OK);
         assert!(png.starts_with(b"\x89PNG\r\n\x1a\n"));
     }
+
+    #[test]
+    fn share_glue_down_migration_refuses_while_glued_codes_exist() {
+        use crate::schema::solution_shares as shares;
+        use diesel::connection::SimpleConnection;
+        use diesel::prelude::*;
+        use shared::glue::{Feature, Glue};
+        let Some(pool) = test_db() else {
+            eprintln!("TEST_DATABASE_URL not set; skipping");
+            return;
+        };
+        let arr = two_squares("", 2.0).arrangement;
+        let glue_free = shared::share::encode(&arr, &[]);
+        let glued = shared::share::encode(
+            &arr,
+            &[Glue {
+                a: Feature::Edge { square: 0, edge: 0 },
+                b: Feature::Wall(0),
+            }],
+        );
+        // Each statement runs in a savepoint, so an expected failure leaves
+        // the enclosing transaction usable.
+        let run = |conn: &mut PgConnection, sql: &str| {
+            conn.transaction::<_, diesel::result::Error, _>(|conn| conn.batch_execute(sql))
+        };
+        let insert = |conn: &mut PgConnection, code: &str| {
+            conn.transaction::<_, diesel::result::Error, _>(|conn| {
+                let id = uuid::Uuid::new_v4();
+                diesel::insert_into(shares::table)
+                    .values((
+                        shares::token.eq(&id.simple().to_string()[..24]),
+                        shares::payload_hash.eq(id.as_bytes().repeat(2)),
+                        shares::n.eq(2),
+                        shares::code.eq(code),
+                    ))
+                    .execute(conn)
+                    .map(|_| ())
+            })
+        };
+        let count = |conn: &mut PgConnection| shares::table.count().get_result::<i64>(conn);
+        let down = include_str!("../migrations/2026-09-14-000000_share_glue/down.sql");
+        pool.get()
+            .unwrap()
+            .test_transaction::<_, diesel::result::Error, _>(|conn| {
+                // A scratch copy of the table, rolled back with the rest, so
+                // real rows and concurrent tests are never touched.
+                let schema = format!("share_glue_down_{}", uuid::Uuid::new_v4().simple());
+                conn.batch_execute(&format!(
+                    "CREATE SCHEMA {schema}; SET LOCAL search_path TO {schema};"
+                ))?;
+                conn.batch_execute(include_str!(
+                    "../migrations/2026-09-13-000000_solution_shares/up.sql"
+                ))?;
+                conn.batch_execute(include_str!(
+                    "../migrations/2026-09-14-000000_share_glue/up.sql"
+                ))?;
+                insert(conn, &glue_free)?;
+                insert(conn, &glued)?;
+                let refused = run(conn, down).unwrap_err().to_string();
+                assert!(refused.contains("glued share codes exist"), "{refused}");
+                assert_eq!(count(conn)?, 2, "a refused rollback keeps every row");
+                insert(conn, &glued).expect("the glue constraint is still in place");
+                diesel::delete(shares::table.filter(shares::code.ne(&glue_free))).execute(conn)?;
+                run(conn, down)?;
+                assert_eq!(count(conn)?, 1);
+                assert!(
+                    insert(conn, &glued).is_err(),
+                    "the glue-free constraint is back"
+                );
+                insert(conn, &glue_free)?;
+                Ok(())
+            });
+    }
+
+    /// One HTTP/1.1 exchange over a real socket, so hyper's own limits apply.
+    /// Returns the status, the response head, and the body.
+    async fn raw_http(addr: std::net::SocketAddr, request: String) -> (u16, String, Vec<u8>) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
+        stream.write_all(request.as_bytes()).await.unwrap();
+        let mut response = Vec::new();
+        stream.read_to_end(&mut response).await.unwrap();
+        let end = response
+            .windows(4)
+            .position(|w| w == b"\r\n\r\n")
+            .expect("a complete response head");
+        let head = String::from_utf8(response[..end].to_vec()).unwrap();
+        (
+            head[9..12].parse().unwrap(),
+            head,
+            response[end + 4..].to_vec(),
+        )
+    }
+
+    #[tokio::test]
+    async fn the_largest_share_code_is_stored_and_redirected_but_too_long_to_open() {
+        use crate::schema::solution_shares as shares;
+        use diesel::prelude::*;
+        use shared::glue::{Feature, Glue, MAX_GLUES};
+        let Some(db_pool) = test_db() else {
+            eprintln!("TEST_DATABASE_URL not set; skipping");
+            return;
+        };
+        let app = build_app(Arc::new(AppState {
+            dev_mode: true,
+            db_pool: db_pool.clone(),
+            public_url: TEST_URL.into(),
+        }));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let arr = shared::Arrangement {
+            n: 100,
+            side: 10.0,
+            squares: (0..100)
+                .map(|i| shared::Placement {
+                    cx: (i % 10) as f64 + 0.5,
+                    cy: (i / 10) as f64 + 0.5,
+                    theta: 0.0,
+                })
+                .collect(),
+        };
+        // Distinct corner-to-midpoint pairs, always between different squares.
+        let glues: Vec<Glue> = (0..MAX_GLUES)
+            .map(|i| {
+                let (square, k) = (i % 100, i / 100);
+                Glue {
+                    a: Feature::Corner {
+                        square,
+                        corner: (k % 4) as u8,
+                    },
+                    b: Feature::Midpoint {
+                        square: (square + 1 + k / 4) % 100,
+                        edge: 0,
+                    },
+                }
+            })
+            .collect();
+        let code = shared::share::encode(&arr, &glues);
+        assert_eq!(code.len(), shared::share::MAX_LEN);
+        let body = serde_json::to_string(&shared::CreateShare {
+            n: 100,
+            code: code.clone(),
+        })
+        .unwrap();
+        let (status, _, reply) = raw_http(
+            addr,
+            format!(
+                "POST /api/shares HTTP/1.1\r\nHost: packit.test\r\n\
+                 Content-Type: application/json\r\nContent-Length: {}\r\n\
+                 Connection: close\r\n\r\n{body}",
+                body.len()
+            ),
+        )
+        .await;
+        assert_eq!(status, 200, "{}", String::from_utf8_lossy(&reply));
+        let link: shared::ShortShare = serde_json::from_slice(&reply).unwrap();
+        let token = link
+            .url
+            .strip_prefix(&format!("{TEST_URL}/s/"))
+            .unwrap()
+            .to_string();
+        let stored: String = shares::table
+            .find(&token)
+            .select(shares::code)
+            .first(&mut db_pool.get().unwrap())
+            .unwrap();
+        assert_eq!(stored, code);
+
+        let get = |path: String| {
+            format!("GET {path} HTTP/1.1\r\nHost: packit.test\r\nConnection: close\r\n\r\n")
+        };
+        let (status, head, _) = raw_http(addr, get(format!("/s/{token}"))).await;
+        assert_eq!(status, 302, "{head}");
+        let location = head
+            .lines()
+            .find_map(|line| {
+                let (name, value) = line.split_once(':')?;
+                name.eq_ignore_ascii_case("location").then(|| value.trim())
+            })
+            .expect("a Location header");
+        assert_eq!(location, format!("{TEST_URL}/play/100?s={code}"));
+        assert_eq!(
+            shared::share::decode(location.split("?s=").nth(1).unwrap(), 100).unwrap(),
+            shared::share::Snapshot {
+                arrangement: arr.clone(),
+                glues: glues.clone(),
+            }
+        );
+        // hyper rejects request targets over 65,534 bytes (`MAX_URI_LEN`, not
+        // configurable), so the redirect target of a code this long can't be
+        // opened here. At n = 100 the longest that opens has 3,793 glues.
+        let (status, head, _) =
+            raw_http(addr, get(location.strip_prefix(TEST_URL).unwrap().into())).await;
+        assert_eq!(status, 414, "{head}");
+        let page = |glues: &[Glue]| {
+            get(format!(
+                "/play/100?s={}",
+                shared::share::encode(&arr, glues)
+            ))
+        };
+        let (status, head, _) = raw_http(addr, page(&glues[..3794])).await;
+        assert_eq!(status, 414, "{head}");
+        let (status, head, html) = raw_http(addr, page(&glues[..3793])).await;
+        assert_eq!(status, 200, "{head}");
+        assert!(String::from_utf8(html)
+            .unwrap()
+            .contains("/api/preview.png?n=100&amp;s="));
+    }
 }
