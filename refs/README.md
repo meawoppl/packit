@@ -140,3 +140,7 @@ certification are not yet implemented. Recognized simple side expressions are ex
 numerical candidates. Do not label a gameplay submission a mathematical record
 without independent high-precision verification and comparison with updated
 construction data.
+
+## Regular polygon benchmarks
+
+`triangle_known.json`, `pentagon_known.json`, and `hexagon_known.json` transcribe the exact-formula entries for the first few counts from Erich Friedman's [triangles](https://erich-friedman.github.io/packing/triinsqu/), [pentagons](https://erich-friedman.github.io/packing/peninsqu/), and [hexagons](https://erich-friedman.github.io/packing/hexinsqu/) tables. All pieces have unit edge length. These are selected benchmarks, not complete record tables: rounded decimals followed by “+” are omitted rather than treated as exact scores. Missing counts have no record comparison. Only the one-piece entries are marked trivially optimal. No source diagrams or packing coordinates are copied.

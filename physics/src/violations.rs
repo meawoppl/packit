@@ -50,7 +50,7 @@ impl ViolationReport {
         };
         for (i, square) in arrangement.squares.iter().enumerate() {
             let mut depths = [0.0_f64; 4];
-            for (x, y) in square.corners() {
+            for (x, y) in arrangement.shape.vertices(square) {
                 for (depth, value) in
                     depths
                         .iter_mut()
@@ -72,7 +72,7 @@ impl ViolationReport {
                 }
             }
             for (j, other) in arrangement.squares.iter().enumerate().skip(i + 1) {
-                let depth = shared::geometry::penetration(square, other);
+                let depth = shared::shape::separation(arrangement.shape, square, other).0;
                 if depth > 0.0 {
                     report.pairs.push(PairViolation { a: i, b: j, depth });
                     report.bodies[i] = report.bodies[i].max(depth);
@@ -97,7 +97,8 @@ impl State {
     pub(crate) fn violation_report(&self) -> ViolationReport {
         let mut report = ViolationReport::measure(&self.arrangement());
         for (index, glue) in self.glues.iter().enumerate() {
-            let (distance, angle) = crate::glue::error(*glue, &self.bodies, self.side as f32);
+            let (distance, angle) =
+                crate::glue::error_for(self.shape, *glue, &self.bodies, self.side as f32);
             let error = distance.max(angle * 0.5);
             if error > 0.0 {
                 report.glues.push(GlueViolation {
@@ -143,6 +144,7 @@ mod tests {
     #[test]
     fn rotated_pair_and_each_wall_are_reported_without_double_counting() {
         let scene = Arrangement {
+            shape: shared::Shape::Square,
             n: 4,
             side: 2.0,
             squares: vec![

@@ -5,6 +5,10 @@ fn radius(t: f32, x: f32, y: f32) -> f32 {
 }
 impl State {
     pub(super) fn cpu_step(&mut self) {
+        if !self.shape.is_square() {
+            self.polygon_step();
+            return;
+        }
         let dt = FIXED_STEP as f32;
         let p = self.params;
         let (glue_forces, _) = glue::forces(

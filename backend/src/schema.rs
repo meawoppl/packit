@@ -22,6 +22,7 @@ diesel::table! {
 
 diesel::table! {
     scores (id) {
+        shape -> Int4,
         id -> Uuid,
         player -> Text,
         n -> Int4,

@@ -71,8 +71,35 @@ pub static BEST_KNOWN: LazyLock<Vec<KnownRecord>> = LazyLock::new(|| {
     records
 });
 
-pub async fn records() -> Json<Vec<KnownRecord>> {
-    Json(BEST_KNOWN.clone())
+pub fn for_shape(shape: shared::Shape) -> &'static Vec<KnownRecord> {
+    match shape {
+        shared::Shape::Square => &BEST_KNOWN,
+        shared::Shape::Triangle => &TRIANGLE_RECORDS,
+        shared::Shape::Pentagon => &PENTAGON_RECORDS,
+        shared::Shape::Hexagon => &HEXAGON_RECORDS,
+    }
+}
+static TRIANGLE_RECORDS: LazyLock<Vec<KnownRecord>> = LazyLock::new(|| {
+    serde_json::from_str(include_str!("../../../refs/triangle_known.json"))
+        .expect("valid polygon records")
+});
+static PENTAGON_RECORDS: LazyLock<Vec<KnownRecord>> = LazyLock::new(|| {
+    serde_json::from_str(include_str!("../../../refs/pentagon_known.json"))
+        .expect("valid polygon records")
+});
+static HEXAGON_RECORDS: LazyLock<Vec<KnownRecord>> = LazyLock::new(|| {
+    serde_json::from_str(include_str!("../../../refs/hexagon_known.json"))
+        .expect("valid polygon records")
+});
+#[derive(Deserialize, Default)]
+pub struct RecordsQuery {
+    #[serde(default)]
+    shape: shared::Shape,
+}
+pub async fn records(
+    axum::extract::Query(query): axum::extract::Query<RecordsQuery>,
+) -> Json<Vec<KnownRecord>> {
+    Json(for_shape(query.shape).clone())
 }
 
 #[cfg(test)]

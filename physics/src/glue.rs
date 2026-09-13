@@ -8,7 +8,7 @@ impl Physics {
         if s.disposed {
             return Err("Simulation disposed".into());
         }
-        shared::glue::check(glues, s.bodies.len())?;
+        shared::glue::check_for(glues, s.bodies.len(), s.shape)?;
         s.cancel_settle();
         s.glues = glues.to_vec();
         Ok(())
@@ -85,6 +85,41 @@ fn world(f: Feature, bodies: &[Body], side: f32) -> World {
         owner,
     }
 }
+fn world_for(shape: shared::Shape, f: Feature, bodies: &[Body], side: f32) -> World {
+    if shape.is_square() || matches!(f, Feature::Wall(_)) {
+        return world(f, bodies, side);
+    }
+    let i = f.square().unwrap();
+    let b = bodies[i];
+    let pts = shape.vertices(&shared::Placement {
+        cx: b.x as f64,
+        cy: b.y as f64,
+        theta: b.theta as f64,
+    });
+    let idx = match f {
+        Feature::Edge { edge, .. } | Feature::Midpoint { edge, .. } => edge,
+        Feature::Corner { corner, .. } => corner,
+        _ => unreachable!(),
+    } as usize;
+    let a = pts[idx];
+    let z = pts[(idx + 1) % pts.len()];
+    let corner = matches!(f, Feature::Corner { .. });
+    let line = matches!(f, Feature::Edge { .. });
+    World {
+        p: if corner {
+            [a.0 as f32, a.1 as f32]
+        } else {
+            [(a.0 + z.0) as f32 / 2., (a.1 + z.1) as f32 / 2.]
+        },
+        n: if line {
+            [(z.1 - a.1) as f32, -(z.0 - a.0) as f32]
+        } else {
+            [0.; 2]
+        },
+        half: if line { 0.5 } else { 0. },
+        owner: Some(i),
+    }
+}
 fn wall_derivative(p: V, side: f32) -> V {
     [
         if p[0] >= side - 1e-6 { 1. } else { 0. },
@@ -153,9 +188,11 @@ fn contact_geometry(mut a: World, mut b: World) -> (World, World, V, V, V, bool,
     (a, b, pa, pb, normal, sliding, angle)
 }
 
-pub(super) fn error(g: Glue, bodies: &[Body], side: f32) -> (f64, f64) {
-    let (_, _, pa, pb, normal, sliding, angle) =
-        contact_geometry(world(g.a, bodies, side), world(g.b, bodies, side));
+pub(super) fn error_for(shape: shared::Shape, g: Glue, bodies: &[Body], side: f32) -> (f64, f64) {
+    let (_, _, pa, pb, normal, sliding, angle) = contact_geometry(
+        world_for(shape, g.a, bodies, side),
+        world_for(shape, g.b, bodies, side),
+    );
     let delta = sub(pb, pa);
     let distance = if sliding {
         dot(delta, normal).abs()
@@ -167,6 +204,16 @@ pub(super) fn error(g: Glue, bodies: &[Body], side: f32) -> (f64, f64) {
 
 /// Sum force and angular acceleration per body, plus generalized band reaction.
 pub(super) fn forces(
+    glues: &[Glue],
+    bodies: &[Body],
+    side: f32,
+    band: f32,
+    k: f32,
+) -> (Vec<[f32; 3]>, f32) {
+    forces_for(shared::Shape::Square, glues, bodies, side, band, k)
+}
+pub(super) fn forces_for(
+    shape: shared::Shape,
     glues: &[Glue],
     bodies: &[Body],
     side: f32,
@@ -191,8 +238,10 @@ pub(super) fn forces(
                 .map_or(0, |i| degrees[i])
                 .max(g.b.square().map_or(0, |i| degrees[i]));
         let weight = 1.0 / degree.max(1) as f32;
-        let (a, b, pa, pb, normal, sliding, angle) =
-            contact_geometry(world(g.a, bodies, side), world(g.b, bodies, side));
+        let (a, b, pa, pb, normal, sliding, angle) = contact_geometry(
+            world_for(shape, g.a, bodies, side),
+            world_for(shape, g.b, bodies, side),
+        );
         let mut couple = if a.half > 0. && b.half > 0. {
             (k / 24. * angle + 4. * (omega(b, bodies) - omega(a, bodies))).clamp(-12., 12.)
         } else {

@@ -19,10 +19,14 @@ enum Route {
     Home,
     #[at("/play/:n")]
     Play { n: u32 },
+    #[at("/play/:shape/:n")]
+    Polygon { shape: String, n: u32 },
     #[at("/leaderboard")]
     Leaderboard,
     #[at("/leaderboard/:n")]
     LeaderboardN { n: u32 },
+    #[at("/leaderboard/:shape/:n")]
+    PolygonLeaderboard { shape: String, n: u32 },
     #[at("/score/:id")]
     Score { id: Uuid },
     #[not_found]
@@ -37,10 +41,22 @@ fn switch(route: Route) -> Html {
             // Keyed so changing n remounts with fresh physics.
             html! { <game::Game key={n} n={n} /> }
         }
+        Route::Polygon { shape, n } if (1..=MAX_N).contains(&n) => {
+            match shape.parse::<shared::Shape>() {
+                Ok(shape) => html! {<game::Game key={format!("{shape}-{n}")} {n} {shape} />},
+                Err(_) => html! {<h1>{"Unknown shape"}</h1>},
+            }
+        }
         Route::Leaderboard => html! { <Leaderboard /> },
         Route::LeaderboardN { n } => html! { <LeaderboardN {n} /> },
+        Route::PolygonLeaderboard { shape, n } => match shape.parse::<shared::Shape>() {
+            Ok(shape) => html! {<LeaderboardN {shape} {n} />},
+            Err(_) => html! {<h1>{"Unknown shape"}</h1>},
+        },
         Route::Score { id } => html! { <ScorePage {id} /> },
-        Route::Play { .. } | Route::NotFound => html! { <h1>{ "404 - Not Found" }</h1> },
+        Route::Play { .. } | Route::Polygon { .. } | Route::NotFound => {
+            html! { <h1>{ "404 - Not Found" }</h1> }
+        }
     }
 }
 
@@ -68,8 +84,8 @@ pub fn app() -> Html {
 fn home() -> Html {
     html! {
         <div class="home">
-            <h1>{ "Pack the squares" }</h1>
-            <p>{ "Fit n unit squares into the smallest square box you can, and chase the best known records." }</p>
+            <h1>{ "Pick your packing" }</h1>
+            <p>{ "Pack triangles, squares, pentagons, or hexagons into a square. Choose a count, then switch shapes in the game." }</p>
             <div class="n-grid">
                 { for (1..=30u32).map(|n| html! {
                     <Link<Route> to={Route::Play { n }} classes="n-button">{ n }</Link<Route>>
@@ -81,4 +97,30 @@ fn home() -> Html {
 
 fn main() {
     yew::Renderer::<App>::new().render();
+}
+
+impl Route {
+    pub fn play(shape: shared::Shape, n: u32) -> Self {
+        if shape.is_square() {
+            Self::Play { n }
+        } else {
+            Self::Polygon {
+                shape: shape.to_string(),
+                n,
+            }
+        }
+    }
+}
+
+impl Route {
+    fn leaderboard(shape: shared::Shape, n: u32) -> Self {
+        if shape.is_square() {
+            Self::LeaderboardN { n }
+        } else {
+            Self::PolygonLeaderboard {
+                shape: shape.to_string(),
+                n,
+            }
+        }
+    }
 }

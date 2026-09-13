@@ -267,3 +267,18 @@ PACKIT_E2E=1 CHROMEDRIVER=/path/to/chromedriver \
 TEST_DATABASE_URL=postgresql://packit:dev_password@localhost:5433/packit_test \
   cargo test -p backend --locked e2e -- --test-threads=1
 ```
+
+### Polygon games
+
+The play screen switches between unit-edge equilateral triangles, squares,
+regular pentagons, and regular hexagons. The arrows above the shape icons change
+the piece count. Polygon games use `/play/triangle/:n`, `/play/pentagon/:n`, and
+`/play/hexagon/:n`; existing square routes and board codes remain unchanged.
+Scores and rankings are separate for each shape and count. Saved boards retain
+shape, positions, rotations, and glue, and their preview images show that shape.
+
+Polygon contacts and glue run on the CPU; squares retain CPU/WebGPU simulation.
+Optional edge attraction and algebraic contact expressions are square-only.
+All shapes use geometric validation for submissions. The polygon reference files
+contain selected exact-formula benchmarks from Friedman's tables; a count without
+one shows no reference rather than a rounded decimal treated as an exact record.

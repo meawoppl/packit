@@ -47,7 +47,11 @@ const fn hex_len(n: u32, glues: usize) -> usize {
 
 pub fn encode(a: &Arrangement, glues: &[Glue]) -> String {
     let mut bytes = Vec::with_capacity(hex_len(a.n, glues.len()) / 2);
-    bytes.push(VERSION);
+    bytes.push(if a.shape.is_square() {
+        VERSION
+    } else {
+        a.shape.sides() as u8
+    });
     bytes.extend_from_slice(&(a.n as u16).to_le_bytes());
     bytes.extend_from_slice(&a.side.to_le_bytes());
     for p in &a.squares {
@@ -56,7 +60,7 @@ pub fn encode(a: &Arrangement, glues: &[Glue]) -> String {
         }
     }
     if !glues.is_empty() {
-        bytes.extend_from_slice(&[GLUE_TAG, GLUE_VERSION]);
+        bytes.extend_from_slice(&[GLUE_TAG, if a.shape.is_square() { GLUE_VERSION } else { 3 }]);
         bytes.extend_from_slice(&(glues.len() as u16).to_le_bytes());
         for f in glues.iter().flat_map(|g| [g.a, g.b]) {
             let (kind, square, index) = match f {
@@ -65,7 +69,9 @@ pub fn encode(a: &Arrangement, glues: &[Glue]) -> String {
                 Feature::Midpoint { square, edge } => (2, square, edge),
                 Feature::Wall(w) => (3, 0, w),
             };
-            let bits = kind | ((index as u16) << 2) | ((square as u16) << 4);
+            let bits = kind
+                | ((index as u16) << 2)
+                | ((square as u16) << if a.shape.is_square() { 4 } else { 5 });
             bytes.extend_from_slice(&bits.to_le_bytes());
         }
     }
@@ -88,13 +94,13 @@ fn from_hex(hex: &[u8]) -> Result<Vec<u8>, String> {
         .collect()
 }
 
-fn feature(bits: u16) -> Result<Feature, String> {
+fn feature(bits: u16, polygon: bool) -> Result<Feature, String> {
     let unknown = || Err("This board code has an unknown glue feature".into());
-    if bits >> 11 != 0 {
+    if bits >> if polygon { 12 } else { 11 } != 0 {
         return unknown();
     }
-    let index = ((bits >> 2) & 3) as u8;
-    let square = (bits >> 4) as usize;
+    let index = ((bits >> 2) & if polygon { 7 } else { 3 }) as u8;
+    let square = (bits >> if polygon { 5 } else { 4 }) as usize;
     Ok(match bits & 3 {
         0 => Feature::Edge {
             square,
@@ -121,6 +127,14 @@ pub fn decode(hex: &str, n: u32) -> Result<BoardState, String> {
         return Err(format!("n must be between 1 and {MAX_N}"));
     }
     let hex = hex.as_bytes();
+    let version = from_hex(hex.get(..2).ok_or("Missing board version")?)?[0];
+    let shape = if version == VERSION {
+        crate::Shape::Square
+    } else {
+        crate::Shape::from_sides(version)
+            .filter(|s| !s.is_square())
+            .ok_or("Unsupported board code version")?
+    };
     let base = hex_len(n, 0);
     // The trailer's own header gives the glue count, so the full length is
     // known before the rest of the code is decoded.
@@ -131,7 +145,7 @@ pub fn decode(hex: &str, n: u32) -> Result<BoardState, String> {
             return Err(format!("This board code is not for {n} squares"));
         };
         let trailer = from_hex(trailer)?;
-        if trailer[..2] != [GLUE_TAG, GLUE_VERSION] {
+        if trailer[..2] != [GLUE_TAG, if shape.is_square() { GLUE_VERSION } else { 3 }] {
             return Err("This board code has unsupported glue data".into());
         }
         let count = u16::from_le_bytes([trailer[2], trailer[3]]) as usize;
@@ -145,7 +159,7 @@ pub fn decode(hex: &str, n: u32) -> Result<BoardState, String> {
     };
     let bytes = from_hex(hex)?;
     let f64_at = |i: usize| f64::from_le_bytes(bytes[i..i + 8].try_into().unwrap());
-    if bytes[0] != VERSION {
+    if bytes[0] != version {
         return Err(format!("Unsupported board code version {}", bytes[0]));
     }
     if u16::from_le_bytes([bytes[1], bytes[2]]) as u32 != n {
@@ -162,6 +176,7 @@ pub fn decode(hex: &str, n: u32) -> Result<BoardState, String> {
         })
         .collect();
     let arrangement = Arrangement {
+        shape,
         n,
         side: f64_at(3),
         squares,
@@ -170,7 +185,10 @@ pub fn decode(hex: &str, n: u32) -> Result<BoardState, String> {
     let features = base / 2 + TRAILER_BYTES;
     let feature_at = |i: usize| {
         let at = features + i * FEATURE_BYTES;
-        feature(u16::from_le_bytes([bytes[at], bytes[at + 1]]))
+        feature(
+            u16::from_le_bytes([bytes[at], bytes[at + 1]]),
+            !shape.is_square(),
+        )
     };
     let glues = (0..count)
         .map(|i| {
@@ -180,7 +198,7 @@ pub fn decode(hex: &str, n: u32) -> Result<BoardState, String> {
             })
         })
         .collect::<Result<Vec<_>, String>>()?;
-    glue::check(&glues, n as usize)?;
+    glue::check_for(&glues, n as usize, shape)?;
     Ok(BoardState { arrangement, glues })
 }
 
@@ -188,10 +206,11 @@ pub fn decode(hex: &str, n: u32) -> Result<BoardState, String> {
 /// `n` squares, a finite side in `[1, 1000]`, and finite bounded coordinates.
 pub fn check_arrangement(arr: &Arrangement, n: u32) -> Result<(), String> {
     let in_range = |v: f64| v.is_finite() && v.abs() <= MAX_COORD;
-    let ok = arr.n == n
+    let ok = (1..=MAX_N).contains(&n)
+        && arr.n == n
         && arr.squares.len() == n as usize
         && arr.side.is_finite()
-        && (1.0..=MAX_COORD).contains(&arr.side)
+        && (arr.shape.min_side()..=MAX_COORD).contains(&arr.side)
         && arr
             .squares
             .iter()
@@ -199,7 +218,7 @@ pub fn check_arrangement(arr: &Arrangement, n: u32) -> Result<(), String> {
     if ok {
         Ok(())
     } else {
-        Err(format!("Expected {n} squares with finite coordinates"))
+        Err(format!("Expected {n} pieces with finite coordinates"))
     }
 }
 
@@ -211,6 +230,7 @@ mod tests {
         let s = 2.0 + std::f64::consts::FRAC_1_SQRT_2;
         let sq = |cx, cy, theta| Placement { cx, cy, theta };
         Arrangement {
+            shape: crate::Shape::Square,
             n: 5,
             side: s,
             squares: vec![
@@ -432,5 +452,53 @@ mod tests {
         let mut tiny = five();
         tiny.side = 0.5;
         assert!(decode(&encode(&tiny, &[]), 5).is_err());
+    }
+}
+
+#[cfg(test)]
+mod polygon_tests {
+    use super::*;
+    #[test]
+    fn every_shape_and_last_feature_round_trips() {
+        for shape in crate::Shape::ALL {
+            let a = Arrangement {
+                shape,
+                n: 1,
+                side: 3.0,
+                squares: vec![crate::Placement {
+                    cx: 1.5,
+                    cy: 1.5,
+                    theta: 0.2,
+                }],
+            };
+            let glue = Glue {
+                a: Feature::Corner {
+                    square: 0,
+                    corner: (shape.sides() - 1) as u8,
+                },
+                b: Feature::Wall(2),
+            };
+            let code = encode(&a, &[glue]);
+            let decoded = decode(&code, 1).unwrap();
+            assert_eq!(decoded.arrangement, a);
+            assert_eq!(decoded.glues, vec![glue]);
+            if !shape.is_square() {
+                let mut bytes = from_hex(code.as_bytes()).unwrap();
+                let index = 11 + 24 + 4;
+                for bit in 12..16 {
+                    let mut bad = bytes.clone();
+                    let word = u16::from_le_bytes([bad[index], bad[index + 1]]) | (1 << bit);
+                    bad[index..index + 2].copy_from_slice(&word.to_le_bytes());
+                    let hex: String = bad.iter().map(|x| format!("{x:02x}")).collect();
+                    assert!(decode(&hex, 1).is_err());
+                }
+                bytes[0] = 2;
+                assert!(decode(
+                    &bytes.iter().map(|x| format!("{x:02x}")).collect::<String>(),
+                    1
+                )
+                .is_err());
+            }
+        }
     }
 }
