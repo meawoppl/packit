@@ -31,14 +31,20 @@ pub struct Scene<'a> {
 }
 
 /// Map a client-space pointer position to world coordinates (origin
-/// bottom-left) for a viewport showing `[0, extent]^2`.
-pub fn to_world(canvas: &HtmlCanvasElement, client: (f64, f64), extent: f64) -> (f64, f64) {
+/// bottom-left) for a viewport `extent` wide around a box of `side`, which
+/// stays centered on the canvas.
+pub fn to_world(
+    canvas: &HtmlCanvasElement,
+    client: (f64, f64),
+    extent: f64,
+    side: f64,
+) -> (f64, f64) {
     let r = canvas.get_bounding_client_rect();
-    let pad = r.width() * PAD_FRACTION;
-    let scale = (r.width() - 2.0 * pad) / extent;
+    let scale = r.width() * (1.0 - 2.0 * PAD_FRACTION) / extent;
+    let center = (r.left() + r.width() / 2.0, r.top() + r.height() / 2.0);
     (
-        (client.0 - r.left() - pad) / scale,
-        (r.bottom() - client.1 - pad) / scale,
+        side / 2.0 + (client.0 - center.0) / scale,
+        side / 2.0 - (client.1 - center.1) / scale,
     )
 }
 
@@ -85,11 +91,12 @@ pub fn draw(canvas: &HtmlCanvasElement, scene: &Scene) {
     };
 
     let w = size as f64;
-    let pad = w * PAD_FRACTION;
-    let scale = (w - 2.0 * pad) / scene.view_side.max(scene.side);
-    let sx = |x: f64| pad + x * scale;
-    let sy = |y: f64| w - pad - y * scale;
     let side = scene.side;
+    let scale = w * (1.0 - 2.0 * PAD_FRACTION) / scene.view_side.max(side);
+    // The box stays centered, so growing it on every side leaves the squares
+    // where they were on screen.
+    let sx = |x: f64| w / 2.0 + (x - side / 2.0) * scale;
+    let sy = |y: f64| w / 2.0 - (y - side / 2.0) * scale;
 
     ctx.clear_rect(0.0, 0.0, w, w);
     ctx.set_fill_style_str("#101722");
@@ -104,7 +111,7 @@ pub fn draw(canvas: &HtmlCanvasElement, scene: &Scene) {
 
     ctx.set_stroke_style_str(if scene.band_on { "#c7f36b" } else { "#819376" });
     ctx.set_line_width(if scene.band_on { 3.0 } else { 2.0 });
-    ctx.stroke_rect(pad, sy(side), side * scale, side * scale);
+    ctx.stroke_rect(sx(0.0), sy(side), side * scale, side * scale);
 
     // Draw the spring's rest boundary and inward pressure marks. The solid
     // boundary always remains the actual collision square.
@@ -114,11 +121,11 @@ pub fn draw(canvas: &HtmlCanvasElement, scene: &Scene) {
         ctx.set_stroke_style_str("#c7f36b");
         ctx.set_global_alpha(0.15 + 0.55 * stress);
         ctx.set_line_width(4.0 + 10.0 * stress);
-        ctx.stroke_rect(pad, sy(side), side * scale, side * scale);
+        ctx.stroke_rect(sx(0.0), sy(side), side * scale, side * scale);
         ctx.set_line_width(1.0);
         let target = scene.target_side.min(scene.view_side.max(side));
         let _ = ctx.set_line_dash(&js_sys::Array::of2(&4.into(), &6.into()));
-        ctx.stroke_rect(pad, sy(target), target * scale, target * scale);
+        ctx.stroke_rect(sx(0.0), sy(target), target * scale, target * scale);
         let _ = ctx.set_line_dash(&JsValue::from(js_sys::Array::new()));
         if stress > 0.01 {
             let inward = if side > scene.target_side { 1.0 } else { -1.0 };

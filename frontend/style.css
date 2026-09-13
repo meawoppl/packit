@@ -531,6 +531,23 @@ svg.arrangement .square {
     color: var(--pg-muted);
 }
 
+/* Everything beyond drag and Settle, collapsed by default. */
+.pg-advanced summary {
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.13em;
+    color: var(--pg-muted);
+    min-height: 44px;
+    display: flex;
+    align-items: center;
+}
+
+.pg-advanced[open] summary {
+    margin-bottom: 8px;
+}
+
 /* Up to iPad portrait: full-width board, panels below in two columns. */
 @media (max-width: 900px) {
     .pg-layout {

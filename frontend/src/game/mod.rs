@@ -356,6 +356,7 @@ impl Component for Game {
                         &target,
                         (e.client_x() as f64, e.client_y() as f64),
                         extent,
+                        physics.side(),
                     );
                     if let Some(i) = canvas::hit(&physics.bodies(), p) {
                         e.prevent_default();
@@ -912,21 +913,51 @@ impl Component for Game {
                         </details>
                     </div>
                     <aside class="pg-sidebar">
-                        <section class="pg-panel">
+                        <section class="pg-panel pg-submit">
                             <h2>{ "Your packing" }</h2>
                             <div class="pg-stat">{ &r.side }<small>{ " side length" }</small></div>
                             <div class="pg-meter"><span style={format!("width: {}", r.meter)}></span></div>
                             <div class="pg-row"><span>{ "Area filled" }</span><strong>{ &r.density }</strong></div>
                             <div class="pg-help">{ &r.record }</div>
+                            <div class="pg-actions">
+                                <button class="pg-primary" disabled={self.busy} onclick={link.callback(|_| Msg::Measure)}>
+                                    { "Settle & measure" }
+                                </button>
+                                <button disabled={self.sharing} onclick={link.callback(|_| Msg::Share)}>{ if self.sharing { "Sharing…" } else { "Share" } }</button>
+                            </div>
+                            <p class="pg-share-status pg-help" role="status" aria-live="polite">{ &self.share_status }</p>
+                            { self.share_error.map(|error| html! { <p class="pg-share-error" role="alert">{ error }</p> }) }
+                            { if let Some(url) = &self.short_share {
+                                html! {
+                                    <div class="pg-share-result">
+                                        <label class="pg-help" for="pg-share-link">{ "Shared snapshot" }</label>
+                                        <input id="pg-share-link" class="pg-field" type="url" readonly=true value={url.clone()}
+                                            onclick={Callback::from(|e: MouseEvent| e.target_unchecked_into::<HtmlInputElement>().select())} />
+                                        <button disabled={self.sharing} onclick={link.callback(|_| Msg::CopyShare)}>{ "Copy link" }</button>
+                                    </div>
+                                }
+                            } else { Html::default() } }
+                            <p class="pg-help">{ &self.bound }</p>
+                            <p class={status_class} role="status" aria-live="polite">{ &self.status }</p>
+                            <label class="pg-help" for="pg-player">{ "Leaderboard name" }</label>
+                            <input id="pg-player" class="pg-field" type="text" maxlength="32" placeholder="Your name"
+                                autocomplete="nickname" value={self.player.clone()}
+                                oninput={link.callback(|e: InputEvent| Msg::Player(input_value(&e)))} />
+                            <button class="pg-primary pg-wide" disabled={self.submitting} onclick={link.callback(|_| Msg::Submit)}>
+                                { "Submit packing" }
+                            </button>
+                            <p class="pg-help">
+                                <Link<Route> to={Route::LeaderboardN { n }}>{ "See the leaderboard ↗" }</Link<Route>>
+                            </p>
+                        </section>
+                        <details class="pg-panel pg-advanced">
+                            <summary>{ "Advanced" }</summary>
                             <label class="pg-row" for="pg-size">
                                 { "Container target side " }<output>{ format!("{:.3}", r.size_value) }</output>
                             </label>
                             <input id="pg-size" type="range" min={size_min.to_string()} max={size_max.to_string()} step="0.001"
                                 value={r.size_value.to_string()}
                                 oninput={link.callback(|e: InputEvent| Msg::TargetSide(input_value(&e).parse().unwrap_or(1.0)))} />
-                        </section>
-                        <section class="pg-panel">
-                            <h2>{ "Play with forces" }</h2>
                             <label class="pg-row" for="pg-band">
                                 { "Outer band tension " }
                                 <output>{ if params.band_tension > 0.0 { format!("{}", params.band_tension) } else { "Off".into() } }</output>
@@ -974,44 +1005,13 @@ impl Component for Game {
                                     }
                                 }) }
                             </div>
-                        </section>
-                        <section class="pg-panel pg-submit">
-                            <h2>{ "Chase the record" }</h2>
                             <div class="pg-actions">
-                                <button class="pg-primary" disabled={self.busy} onclick={link.callback(|_| Msg::Measure)}>
-                                    { "Settle & measure" }
-                                </button>
                                 <button onclick={link.callback(|_| Msg::Export)}>{ "Export" }</button>
-                                <button disabled={self.sharing} onclick={link.callback(|_| Msg::Share)}>{ if self.sharing { "Sharing…" } else { "Share" } }</button>
                                 <button onclick={link.callback(|_| Msg::ImportPick)}>{ "Import" }</button>
                                 <input ref={self.file_input.clone()} type="file" accept="application/json,.json" hidden=true
                                     onchange={link.callback(Msg::ImportFile)} />
                             </div>
-                            <p class="pg-share-status pg-help" role="status" aria-live="polite">{ &self.share_status }</p>
-                            { self.share_error.map(|error| html! { <p class="pg-share-error" role="alert">{ error }</p> }) }
-                            { if let Some(url) = &self.short_share {
-                                html! {
-                                    <div class="pg-share-result">
-                                        <label class="pg-help" for="pg-share-link">{ "Shared snapshot" }</label>
-                                        <input id="pg-share-link" class="pg-field" type="url" readonly=true value={url.clone()}
-                                            onclick={Callback::from(|e: MouseEvent| e.target_unchecked_into::<HtmlInputElement>().select())} />
-                                        <button disabled={self.sharing} onclick={link.callback(|_| Msg::CopyShare)}>{ "Copy link" }</button>
-                                    </div>
-                                }
-                            } else { Html::default() } }
-                            <p class="pg-help">{ &self.bound }</p>
-                            <p class={status_class} role="status" aria-live="polite">{ &self.status }</p>
-                            <label class="pg-help" for="pg-player">{ "Leaderboard name" }</label>
-                            <input id="pg-player" class="pg-field" type="text" maxlength="32" placeholder="Your name"
-                                autocomplete="nickname" value={self.player.clone()}
-                                oninput={link.callback(|e: InputEvent| Msg::Player(input_value(&e)))} />
-                            <button class="pg-primary pg-wide" disabled={self.submitting} onclick={link.callback(|_| Msg::Submit)}>
-                                { "Submit packing" }
-                            </button>
-                            <p class="pg-help">
-                                <Link<Route> to={Route::LeaderboardN { n }}>{ "See the leaderboard ↗" }</Link<Route>>
-                            </p>
-                        </section>
+                        </details>
                     </aside>
                 </div>
             </div>
@@ -1357,7 +1357,12 @@ impl Game {
 
     fn world(&self, canvas: &HtmlCanvasElement, e: &PointerEvent) -> (f64, f64) {
         let extent = self.view_side.get().max(self.physics.side());
-        canvas::to_world(canvas, (e.client_x() as f64, e.client_y() as f64), extent)
+        canvas::to_world(
+            canvas,
+            (e.client_x() as f64, e.client_y() as f64),
+            extent,
+            self.physics.side(),
+        )
     }
 
     fn push_mouse(&self) {
