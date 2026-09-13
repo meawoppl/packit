@@ -3,6 +3,11 @@
 -- legacy score; neither is given up for a downgrade. A legacy score's board
 -- is its arrangement's glue-free code, which the up migration finds again.
 -- Every board row stays, so every short link keeps working.
+--
+-- Locked before the check, in the app's order, so no score can be recorded
+-- between the check and the column drops; the locks hold until the
+-- migration commits.
+LOCK TABLE board_states, scores IN ACCESS EXCLUSIVE MODE;
 DO $$
 BEGIN
     IF EXISTS (SELECT 1 FROM scores WHERE glue_recorded) THEN

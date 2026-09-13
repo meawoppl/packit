@@ -81,21 +81,21 @@ $$;
 
 -- Each score's board code, read back field by field: the header, then side
 -- and every cx, cy and theta as little-endian IEEE 754 bits, against the
--- bits of the stored arrangement's numbers.
+-- bits of the stored arrangement's numbers. Failures give counts only, so
+-- no snapshot data reaches a log.
 DO $$
 DECLARE
-    bad record;
+    bad bigint;
 BEGIN
-    SELECT s.id INTO bad
+    SELECT count(*) INTO bad
     FROM scores AS s JOIN board_states AS b ON b.token = s.board_token
     WHERE length(b.code) <> 22 + 48 * s.n
         OR substr(b.code, 1, 2) <> '01'
         OR substr(b.code, 3, 4) <> substr(encode(int2send(s.n::int2), 'hex'), 3, 2)
             || substr(encode(int2send(s.n::int2), 'hex'), 1, 2)
-        OR b.payload_hash <> sha256(convert_to(b.code, 'UTF8'))
-    LIMIT 1;
-    IF FOUND THEN
-        RAISE EXCEPTION 'FAIL score %''s board code has the wrong header, length or hash', bad.id;
+        OR b.payload_hash <> sha256(convert_to(b.code, 'UTF8'));
+    IF bad > 0 THEN
+        RAISE EXCEPTION 'FAIL % scores'' board codes have the wrong header, length or hash', bad;
     END IF;
     WITH coded AS (
         SELECT s.id, s.arrangement, b.code
@@ -111,12 +111,11 @@ BEGIN
         CROSS JOIN LATERAL jsonb_array_elements(c.arrangement -> 'squares') WITH ORDINALITY AS e (sq, i)
         CROSS JOIN (VALUES ('cx', 0), ('cy', 16), ('theta', 32)) AS f (name, offset_)
     )
-    SELECT id, field INTO bad FROM fields
+    SELECT count(*) INTO bad FROM fields
     WHERE (SELECT string_agg(substr(le, 15 - 2 * k, 2), '' ORDER BY k) FROM generate_series(0, 7) AS k)
-        IS DISTINCT FROM encode(float8send(value), 'hex')
-    LIMIT 1;
-    IF FOUND THEN
-        RAISE EXCEPTION 'FAIL score %''s board code differs from its stored arrangement at %', bad.id, bad.field;
+        IS DISTINCT FROM encode(float8send(value), 'hex');
+    IF bad > 0 THEN
+        RAISE EXCEPTION 'FAIL % fields of board codes differ from the stored arrangements', bad;
     END IF;
     RAISE NOTICE 'PASS every score''s board code decodes to exactly its stored arrangement';
 END

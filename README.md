@@ -89,8 +89,10 @@ and belongs in database backups.
   packing without its glue, and the leaderboard says "glue not recorded".
   It belongs to the score, not the board: a legacy score and a new glue-free
   submission of the same packing share one board.
-- Reverting the board migration refuses while any score has a recorded board
-  (`glue_recorded`), since its board link and glue would be lost. With only
+- Both directions of the board migration lock the link table and then
+  `scores` before checking anything, so a score written meanwhile waits and
+  is then checked too. Reverting it refuses while any score has a recorded
+  board (`glue_recorded`), since its board link and glue would be lost. With only
   legacy scores it reverts, keeping every board row as a share link, and
   upgrading again links each score to the same board. The upgrade itself
   refuses scores whose stored arrangement doesn't match their own `n` and

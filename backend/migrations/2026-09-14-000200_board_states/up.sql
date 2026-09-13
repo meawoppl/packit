@@ -1,6 +1,14 @@
 -- Board states: every stored scene, its arrangement and glue as a board code
 -- (shared::board). Short links and scores both point at them, so the table
 -- is no longer only for sharing. Tokens, codes and hashes are unchanged.
+
+-- Both tables are locked before any row is inspected, so no score or link
+-- can land between the checks below and the backfill; diesel runs the
+-- migration in one transaction, so the locks hold until it commits. The
+-- order is the app's (a board, then its score), and the mode is the one the
+-- ALTER TABLEs below need anyway, so no lock is upgraded midway.
+LOCK TABLE solution_shares, scores IN ACCESS EXCLUSIVE MODE;
+
 ALTER TABLE solution_shares RENAME TO board_states;
 ALTER TABLE board_states RENAME CONSTRAINT solution_shares_pkey TO board_states_pkey;
 ALTER TABLE board_states RENAME CONSTRAINT solution_shares_payload_hash_key TO board_states_payload_hash_key;

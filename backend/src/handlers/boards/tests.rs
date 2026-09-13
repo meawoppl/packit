@@ -20,6 +20,7 @@ use diesel::connection::SimpleConnection;
 use diesel::sql_types::BigInt;
 use shared::glue::{Feature, Glue};
 use shared::{ApiError, Arrangement, Placement, ScoreDetail, ScoreEntry, SubmitScore};
+use std::time::{Duration, Instant};
 use tower::ServiceExt;
 
 /// How many migrations come before boards; `UP_MIGRATIONS[BEFORE_BOARDS]`
@@ -810,4 +811,194 @@ fn a_failed_score_insert_leaves_no_board() {
             assert_eq!(boards_with(conn, &code)?, [(entry.board, Some(id))]);
             Ok(())
         });
+}
+
+// ---------------------------------------------------------------------------
+// The migration against a writer in flight, over separate connections
+// ---------------------------------------------------------------------------
+
+/// A committed scratch schema, with the first `count` up migrations applied,
+/// for tests that need several connections to see it. It is dropped again
+/// even if the test panics.
+struct SharedScratch {
+    url: String,
+    schema: String,
+}
+
+impl SharedScratch {
+    fn new(url: &str, count: usize) -> Self {
+        let scratch = Self {
+            url: url.into(),
+            schema: format!("scratch_{}", Uuid::new_v4().simple()),
+        };
+        let mut conn = scratch.connect();
+        conn.batch_execute(&format!("CREATE SCHEMA {}", scratch.schema))
+            .unwrap();
+        for up in &UP_MIGRATIONS[..count] {
+            conn.batch_execute(up).unwrap();
+        }
+        scratch
+    }
+
+    /// A new connection on the scratch schema. Timeouts keep a stuck test
+    /// from hanging.
+    fn connect(&self) -> PgConnection {
+        let mut conn = PgConnection::establish(&self.url).unwrap();
+        conn.batch_execute(&format!(
+            "SET search_path TO {}, public; SET statement_timeout = '20s'; SET lock_timeout = '20s'",
+            self.schema
+        ))
+        .unwrap();
+        conn
+    }
+}
+
+impl Drop for SharedScratch {
+    fn drop(&mut self) {
+        if let Ok(mut conn) = PgConnection::establish(&self.url) {
+            let _ = conn.batch_execute(&format!("DROP SCHEMA IF EXISTS {} CASCADE", self.schema));
+        }
+    }
+}
+
+fn shared_url() -> Option<String> {
+    test_db()?;
+    std::env::var("TEST_DATABASE_URL").ok()
+}
+
+/// A score written as the app writes one, left uncommitted by `writer`, while
+/// `migration` runs on another connection. The migration must be seen
+/// waiting for the writer's locks before the writer commits; its result is
+/// returned once it finishes.
+fn behind_a_writer(
+    scratch: &SharedScratch,
+    writer_sql: &str,
+    migration: &'static str,
+) -> QueryResult<()> {
+    let mut writer = scratch.connect();
+    writer.batch_execute("BEGIN")?;
+    writer.batch_execute(writer_sql)?;
+    let mut migrator = scratch.connect();
+    let pid: i32 = diesel::select(diesel::dsl::sql::<diesel::sql_types::Integer>(
+        "pg_backend_pid()",
+    ))
+    .get_result(&mut migrator)?;
+    let run =
+        std::thread::spawn(move || migrator.transaction(|conn| conn.batch_execute(migration)));
+    let mut monitor = scratch.connect();
+    let started = Instant::now();
+    while count(
+        &mut monitor,
+        &format!("SELECT count(*) FROM pg_locks WHERE pid = {pid} AND NOT granted"),
+    )? == 0
+    {
+        assert!(
+            !run.is_finished(),
+            "the migration never waited for the writer"
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(10),
+            "the migration never waited"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    writer.batch_execute("COMMIT")?;
+    run.join().unwrap()
+}
+
+const LEGACY_SCORE: &str = "INSERT INTO scores (player, n, side, arrangement) VALUES \
+    ('in-flight', 2, 2.0, '{\"n\":2,\"side\":2.0,\"squares\":[\
+    {\"cx\":0.5,\"cy\":0.5,\"theta\":0.0},{\"cx\":1.5,\"cy\":0.5,\"theta\":0.0}]}')";
+
+/// The upgrade locks scores before it looks at any: a legacy score still in
+/// flight when it starts is validated and backfilled once it commits, not
+/// missed.
+#[test]
+fn the_upgrade_waits_for_a_score_in_flight_and_backfills_it() {
+    let Some(url) = shared_url() else {
+        eprintln!("TEST_DATABASE_URL not set; skipping");
+        return;
+    };
+    let scratch = SharedScratch::new(&url, BEFORE_BOARDS);
+    behind_a_writer(&scratch, LEGACY_SCORE, UP_MIGRATIONS[BEFORE_BOARDS]).unwrap();
+    let mut conn = scratch.connect();
+    for (query, expected) in [
+        ("SELECT count(*) FROM scores", 1),
+        (
+            "SELECT count(*) FROM scores WHERE board_token IS NOT NULL AND NOT glue_recorded",
+            1,
+        ),
+        ("SELECT count(*) FROM board_states", 1),
+    ] {
+        assert_eq!(count(&mut conn, query).unwrap(), expected, "{query}");
+    }
+}
+
+/// A legacy score in flight that the upgrade can't encode is checked like
+/// any other once it commits: the upgrade refuses instead of guessing its
+/// board, and nothing changes.
+#[test]
+fn the_upgrade_waits_for_a_score_in_flight_and_refuses_a_bad_one() {
+    let Some(url) = shared_url() else {
+        eprintln!("TEST_DATABASE_URL not set; skipping");
+        return;
+    };
+    let scratch = SharedScratch::new(&url, BEFORE_BOARDS);
+    // Its side column disagrees with its stored arrangement.
+    let bad = LEGACY_SCORE.replacen("2, 2.0,", "2, 2.5,", 1);
+    let refused = behind_a_writer(&scratch, &bad, UP_MIGRATIONS[BEFORE_BOARDS])
+        .unwrap_err()
+        .to_string();
+    assert!(
+        refused.contains("refusing to guess their boards"),
+        "{refused}"
+    );
+    let mut conn = scratch.connect();
+    for (query, expected) in [
+        ("SELECT count(*) FROM scores", 1),
+        ("SELECT count(*) FROM solution_shares", 0),
+    ] {
+        assert_eq!(count(&mut conn, query).unwrap(), expected, "{query}");
+    }
+}
+
+/// Reverting locks scores before its check: a score recorded on a new board
+/// while it starts is seen once it commits, so the revert refuses and the
+/// score keeps its board and provenance.
+#[test]
+fn reverting_waits_for_a_score_in_flight_and_then_refuses() {
+    let Some(url) = shared_url() else {
+        eprintln!("TEST_DATABASE_URL not set; skipping");
+        return;
+    };
+    let scratch = SharedScratch::new(&url, BEFORE_BOARDS);
+    let mut setup = scratch.connect();
+    setup.batch_execute(LEGACY_SCORE).unwrap();
+    setup.batch_execute(UP_MIGRATIONS[BEFORE_BOARDS]).unwrap();
+    // As the submit transaction writes: the board, then its score.
+    let recorded = "WITH board AS (
+            INSERT INTO board_states (token, payload_hash, n, code)
+            SELECT 'a0a0a0a0a0a0a0a0a0a0a0a0',
+                sha256(convert_to(code || '4702010014000800', 'UTF8')), n,
+                code || '4702010014000800'
+            FROM board_states LIMIT 1
+            RETURNING token
+        )
+        INSERT INTO scores (player, n, side, arrangement, board_token)
+        SELECT 'recorded', s.n, s.side, s.arrangement, board.token
+        FROM scores AS s, board LIMIT 1";
+    let refused = behind_a_writer(&scratch, recorded, DOWN)
+        .unwrap_err()
+        .to_string();
+    assert!(
+        refused.contains("refusing to drop their board links and glue"),
+        "{refused}"
+    );
+    let kept = count(
+        &mut setup,
+        "SELECT count(*) FROM scores WHERE player = 'recorded' \
+         AND glue_recorded AND board_token = 'a0a0a0a0a0a0a0a0a0a0a0a0'",
+    )
+    .unwrap();
+    assert_eq!(kept, 1, "the recorded score keeps its board and provenance");
 }
