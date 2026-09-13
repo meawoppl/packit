@@ -9,6 +9,8 @@ pub mod session;
 pub mod username;
 
 #[cfg(test)]
+mod reset_tests;
+#[cfg(test)]
 mod tests;
 
 use crate::config::PublicOrigin;
@@ -20,7 +22,7 @@ use std::net::IpAddr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 use webauthn_rs::prelude::{
-    PasskeyAuthentication, PasskeyRegistration, Url, Webauthn, WebauthnBuilder,
+    DiscoverableAuthentication, PasskeyRegistration, Url, Webauthn, WebauthnBuilder,
 };
 
 /// Ceremonies expire after five minutes, matching the WebAuthn timeout.
@@ -35,9 +37,6 @@ const IP_REFILL: Duration = Duration::from_secs(2);
 /// Per IPv6 /48, across all of its /64s.
 const SITE_BURST: u32 = 120;
 const SITE_REFILL: Duration = Duration::from_millis(500);
-/// Per username and client, on login start.
-const USERNAME_BURST: u32 = 10;
-const USERNAME_REFILL: Duration = Duration::from_secs(30);
 const MAX_RATE_KEYS: usize = 100_000;
 
 /// Library state of an in-flight ceremony, plus anything the finish step
@@ -48,7 +47,7 @@ pub enum Pending {
         username: String,
         state: PasskeyRegistration,
     },
-    Login(PasskeyAuthentication),
+    Login(DiscoverableAuthentication),
     AddPasskey(PasskeyRegistration),
 }
 
@@ -59,7 +58,6 @@ pub struct Auth {
     pub ceremonies: CeremonyStore<Pending>,
     ip_limiter: RateLimiter<IpAddr>,
     site_limiter: RateLimiter<IpAddr>,
-    username_limiter: RateLimiter<(String, IpAddr)>,
     warned_forwarded: AtomicBool,
     warned_token: AtomicBool,
 }
@@ -83,7 +81,6 @@ impl Auth {
             ),
             ip_limiter: RateLimiter::new(IP_BURST, IP_REFILL, MAX_RATE_KEYS),
             site_limiter: RateLimiter::new(SITE_BURST, SITE_REFILL, MAX_RATE_KEYS),
-            username_limiter: RateLimiter::new(USERNAME_BURST, USERNAME_REFILL, MAX_RATE_KEYS),
             warned_forwarded: AtomicBool::new(false),
             warned_token: AtomicBool::new(false),
         })
@@ -130,18 +127,6 @@ impl Auth {
             Some(site) => self.site_limiter.check(&site, now),
             None => Ok(()),
         }
-    }
-
-    /// Spend a login-start token for `username` from this client. Keyed on
-    /// both, so nobody can lock another client out of an account.
-    pub fn check_username(
-        &self,
-        username: &str,
-        client: RateKey,
-        now: Instant,
-    ) -> Result<(), Duration> {
-        self.username_limiter
-            .check(&(username.to_string(), client.subnet), now)
     }
 }
 

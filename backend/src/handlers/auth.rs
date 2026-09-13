@@ -13,7 +13,7 @@ use crate::auth::session::{self, Session, REAUTH_WINDOW};
 use crate::auth::{hex, random_bytes, username, Pending};
 use crate::schema::{passkeys, sessions, users};
 use crate::AppState;
-use axum::extract::{ConnectInfo, DefaultBodyLimit, Request, State};
+use axum::extract::{ConnectInfo, DefaultBodyLimit, Path, Request, State};
 use axum::http::{header, HeaderValue, Method, StatusCode};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
@@ -30,9 +30,9 @@ use std::time::{Duration, Instant};
 use tower_cookies::{CookieManagerLayer, Cookies};
 use uuid::Uuid;
 use webauthn_rs::prelude::{
-    CreationChallengeResponse, Credential, CredentialID, Passkey, PasskeyAuthentication,
-    PasskeyRegistration, PublicKeyCredential, RegisterPublicKeyCredential,
-    RequestChallengeResponse, WebauthnError,
+    CreationChallengeResponse, Credential, CredentialID, DiscoverableAuthentication,
+    DiscoverableKey, Passkey, PasskeyRegistration, PublicKeyCredential,
+    RegisterPublicKeyCredential, RequestChallengeResponse, WebauthnError,
 };
 use webauthn_rs_proto::ResidentKeyRequirement;
 
@@ -63,6 +63,7 @@ pub struct Finish<C> {
 pub fn router(state: Arc<AppState>) -> Router {
     let ceremonies = Router::new()
         .route("/api/auth/register/start", post(register_start))
+        .route("/api/auth/usernames/:name", get(availability))
         .route("/api/auth/register/finish", post(register_finish))
         .route("/api/auth/login/start", post(login_start))
         .route("/api/auth/login/finish", post(login_finish))
@@ -212,7 +213,7 @@ fn registration(pending: Pending) -> Option<(String, PasskeyRegistration)> {
     }
 }
 
-fn authentication(pending: Pending) -> Option<PasskeyAuthentication> {
+fn authentication(pending: Pending) -> Option<DiscoverableAuthentication> {
     match pending {
         Pending::Login(state) => Some(state),
         Pending::Register { .. } | Pending::AddPasskey(_) => None,
@@ -254,12 +255,12 @@ fn require_recent(session: &Session) -> Result<(), HandlerError> {
     Ok(())
 }
 
-/// Ask for a discoverable credential where the authenticator can make one.
-/// The library only offers required or discouraged; this is client-side
-/// guidance and doesn't change what finish verifies.
-fn prefer_resident_key(options: &mut CreationChallengeResponse) {
+/// Require browser credential storage for usernameless sign-in. WebAuthn
+/// does not cryptographically attest residency; clients enforce this request.
+fn require_resident_key(options: &mut CreationChallengeResponse) {
     if let Some(selection) = options.public_key.authenticator_selection.as_mut() {
-        selection.resident_key = Some(ResidentKeyRequirement::Preferred);
+        selection.resident_key = Some(ResidentKeyRequirement::Required);
+        selection.require_resident_key = true;
     }
 }
 
@@ -312,7 +313,7 @@ async fn register_start(
         .auth
         .webauthn
         .start_passkey_registration(user_id, &name, &name, None)?;
-    prefer_resident_key(&mut options);
+    require_resident_key(&mut options);
     let pending = Pending::Register {
         username: name,
         state: registration,
@@ -352,6 +353,7 @@ async fn register_finish(
                     passkeys::credential_id.eq(&credential_id),
                     passkeys::user_id.eq(user_id),
                     passkeys::passkey.eq(&stored),
+                    passkeys::discoverable.eq(true),
                 ))
                 .execute(conn)?;
             session::create(conn, user_id, previous)
@@ -368,43 +370,46 @@ async fn login_start(
     State(state): State<Arc<AppState>>,
     Extension(client): Extension<RateKey>,
     cookies: Cookies,
-    Json(body): Json<AuthUsername>,
 ) -> Result<Json<Started<RequestChallengeResponse>>, HandlerError> {
-    let Ok(name) = username::normalize(&body.username) else {
-        return Err(sign_in_failed());
-    };
-    state
-        .auth
-        .check_username(&name, client, Instant::now())
-        .map_err(too_many)?;
-    let rows = with_conn(&state, move |conn| {
-        passkeys::table
-            .inner_join(users::table)
-            .filter(users::username.eq(name))
-            .filter(users::kind.eq("player"))
-            .select((users::id, passkeys::passkey))
-            .load::<(Uuid, serde_json::Value)>(conn)
-    })
-    .await?;
-    let Some(user_id) = rows.first().map(|row| row.0) else {
-        return Err(sign_in_failed());
-    };
-    let credentials = rows
-        .into_iter()
-        .map(|(_, passkey)| serde_json::from_value::<Passkey>(passkey))
-        .collect::<Result<Vec<_>, _>>()?;
-    let (options, authentication) = state
-        .auth
-        .webauthn
-        .start_passkey_authentication(&credentials)?;
+    let (mut options, authentication) = state.auth.webauthn.start_discoverable_authentication()?;
+    // This is an explicit button-triggered picker, not conditional autofill.
+    options.mediation = None;
     let ceremony = begin(
         &state,
         &cookies,
         client,
-        user_id,
+        Uuid::nil(),
         Pending::Login(authentication),
     )?;
     Ok(Json(Started { ceremony, options }))
+}
+
+#[derive(Serialize)]
+struct Availability {
+    available: bool,
+}
+
+async fn availability(
+    State(state): State<Arc<AppState>>,
+    Path(raw): Path<String>,
+) -> Result<Json<Availability>, HandlerError> {
+    // Bound work before allocating a normalized copy.
+    let name = if raw.len() <= 64 {
+        username::normalize(&raw).ok()
+    } else {
+        None
+    };
+    let Some(name) = name.filter(|name| !username::is_reserved(name)) else {
+        return Ok(Json(Availability { available: false }));
+    };
+    let taken = with_conn(&state, move |conn| {
+        diesel::select(diesel::dsl::exists(
+            users::table.filter(users::username.eq(name)),
+        ))
+        .get_result::<bool>(conn)
+    })
+    .await?;
+    Ok(Json(Availability { available: !taken }))
 }
 
 async fn login_finish(
@@ -413,25 +418,21 @@ async fn login_finish(
     Json(body): Json<Finish<PublicKeyCredential>>,
 ) -> Result<Json<AuthMe>, HandlerError> {
     let ceremony = finish(&state, &cookies, &body.ceremony, authentication)?;
-    // Passkey authentication requires user verification, so a result here
-    // is always user-verified.
-    let result = state
+    let (user_id, credential_id) = state
         .auth
         .webauthn
-        .finish_passkey_authentication(&body.credential, &ceremony.state)
-        .map_err(|e| {
-            tracing::info!("passkey sign-in rejected: {e}");
-            sign_in_failed()
-        })?;
-    let user_id = ceremony.user_id;
+        .identify_discoverable_authentication(&body.credential)
+        .map_err(|_| sign_in_failed())?;
+    let credential_id = credential_id.to_vec();
+    let verifier = state.clone();
     let previous = presented_session(&state, &cookies);
     let signed_in_as = with_conn(&state, move |conn| {
         conn.transaction(|conn| {
-            let credential_id = result.cred_id().to_vec();
             let row = passkeys::table
                 .inner_join(users::table)
                 .filter(passkeys::credential_id.eq(&credential_id))
                 .filter(passkeys::user_id.eq(user_id))
+                .filter(passkeys::discoverable.eq(true))
                 .filter(users::kind.eq("player"))
                 .select((passkeys::passkey, users::username))
                 .for_update()
@@ -442,9 +443,15 @@ async fn login_finish(
             };
             let mut passkey: Passkey = serde_json::from_value(stored)
                 .map_err(|e| DieselError::DeserializationError(Box::new(e)))?;
-            // The library compared the counter with the credential as it was
-            // at login start. Apply its rule again to the locked row, so two
-            // assertions checked against the same snapshot can't both pass.
+            // Resolve BOTH identifiers to one player, then verify against the
+            // locked credential. Neither the handle nor credential ID is identity proof.
+            let Ok(result) = verifier.auth.webauthn.finish_discoverable_authentication(
+                &body.credential,
+                ceremony.state,
+                &[DiscoverableKey::from(&passkey)],
+            ) else {
+                return Ok(None);
+            };
             let counter = Credential::from(passkey.clone()).counter;
             if (result.counter() > 0 || counter > 0) && result.counter() <= counter {
                 tracing::warn!("passkey counter did not advance; possible cloned authenticator");
@@ -494,7 +501,7 @@ async fn add_passkey_start(
         &user.username,
         Some(exclude),
     )?;
-    prefer_resident_key(&mut options);
+    require_resident_key(&mut options);
     let ceremony = begin(
         &state,
         &cookies,
@@ -533,6 +540,7 @@ async fn add_passkey_finish(
                     passkeys::credential_id.eq(credential_id),
                     passkeys::user_id.eq(owner),
                     passkeys::passkey.eq(stored),
+                    passkeys::discoverable.eq(true),
                 ))
                 .execute(conn),
         )

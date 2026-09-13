@@ -4,7 +4,7 @@
 use super::proxy::{ProxyToken, ProxyTrust, TOKEN_HEADER};
 use super::{
     hex, random_bytes, session, username, CEREMONIES_PER_CLIENT, CEREMONIES_PER_SITE, IP_BURST,
-    SITE_BURST, USERNAME_BURST,
+    SITE_BURST,
 };
 use crate::build_app;
 use crate::config::PublicOrigin;
@@ -202,25 +202,53 @@ trait Client {
 /// A software passkey behind the library's client, which checks the origin
 /// against the RP ID like a browser. `SoftPasskey::new(true)` reports user
 /// verification, as a real passkey does after its PIN or biometric.
-fn soft() -> WebauthnAuthenticator<SoftPasskey> {
-    WebauthnAuthenticator::new(SoftPasskey::new(true))
+struct ResidentSoft {
+    key: WebauthnAuthenticator<SoftPasskey>,
+    credential: Vec<u8>,
+    handle: Vec<u8>,
 }
-
-impl Client for WebauthnAuthenticator<SoftPasskey> {
+fn soft() -> ResidentSoft {
+    ResidentSoft {
+        key: WebauthnAuthenticator::new(SoftPasskey::new(true)),
+        credential: vec![],
+        handle: vec![],
+    }
+}
+impl Client for ResidentSoft {
     fn create(
         &mut self,
         origin: &Url,
-        options: CreationChallengeResponse,
+        mut options: CreationChallengeResponse,
     ) -> Result<RegisterPublicKeyCredential, WebauthnCError> {
-        self.do_registration(origin.clone(), options)
+        self.handle = options.public_key.user.id.to_vec();
+        // SoftPasskey lacks resident storage. This harness retains the handle
+        // and credential like a resident authenticator; real browser E2E uses one.
+        if let Some(selection) = options.public_key.authenticator_selection.as_mut() {
+            selection.require_resident_key = false;
+            selection.resident_key = Some(webauthn_rs_proto::ResidentKeyRequirement::Discouraged);
+        }
+        let credential = self.key.do_registration(origin.clone(), options)?;
+        self.credential = credential.raw_id.to_vec();
+        Ok(credential)
     }
-
     fn get(
         &mut self,
         origin: &Url,
-        options: RequestChallengeResponse,
+        mut options: RequestChallengeResponse,
     ) -> Result<PublicKeyCredential, WebauthnCError> {
-        self.do_authentication(origin.clone(), options)
+        if options.public_key.allow_credentials.is_empty() {
+            options
+                .public_key
+                .allow_credentials
+                .push(webauthn_rs_proto::AllowCredentials {
+                    type_: "public-key".into(),
+                    id: self.credential.clone().into(),
+                    transports: None,
+                });
+        }
+        let mut assertion = self.key.do_authentication(origin.clone(), options)?;
+        assertion.response.user_handle = Some(self.handle.clone().into());
+        Ok(assertion)
     }
 }
 
@@ -231,6 +259,7 @@ impl Client for WebauthnAuthenticator<SoftPasskey> {
 struct TestKey {
     cred_id: Vec<u8>,
     private_der: Vec<u8>,
+    handle: Vec<u8>,
     counter: u32,
     backup_eligible: bool,
     backed_up: bool,
@@ -241,6 +270,7 @@ impl TestKey {
         Self {
             cred_id: random_bytes::<16>().to_vec(),
             private_der: Vec::new(),
+            handle: Vec::new(),
             counter: 0,
             backup_eligible: false,
             backed_up: false,
@@ -268,6 +298,7 @@ impl AuthenticatorBackendHashedClientData for TestKey {
         options: PublicKeyCredentialCreationOptions,
         _timeout_ms: u32,
     ) -> Result<RegisterPublicKeyCredential, WebauthnCError> {
+        self.handle = options.user.id.to_vec();
         let group = EcGroup::from_curve_name(Nid::X9_62_PRIME256V1).unwrap();
         let key = EcKey::generate(&group).unwrap();
         let (mut x, mut y) = (BigNum::new().unwrap(), BigNum::new().unwrap());
@@ -314,10 +345,13 @@ impl AuthenticatorBackendHashedClientData for TestKey {
         options: PublicKeyCredentialRequestOptions,
         _timeout_ms: u32,
     ) -> Result<PublicKeyCredential, WebauthnCError> {
-        assert!(options
-            .allow_credentials
-            .iter()
-            .any(|c| c.id == self.cred_id));
+        assert!(
+            options.allow_credentials.is_empty()
+                || options
+                    .allow_credentials
+                    .iter()
+                    .any(|c| c.id == self.cred_id)
+        );
         let auth_data = self.auth_data(&options.rp_id, 0);
         let key =
             PKey::from_ec_key(EcKey::private_key_from_der(&self.private_der).unwrap()).unwrap();
@@ -331,7 +365,7 @@ impl AuthenticatorBackendHashedClientData for TestKey {
                 authenticator_data: auth_data.into(),
                 client_data_json: Base64UrlSafeData::new(),
                 signature: signer.sign_to_vec().unwrap().into(),
-                user_handle: None,
+                user_handle: Some(self.handle.clone().into()),
             },
             extensions: Default::default(),
             type_: "public-key".into(),
@@ -392,7 +426,12 @@ fn db_app() -> Option<(Arc<AppState>, Router)> {
 // ---------------------------------------------------------------------------
 
 async fn start(app: &Router, b: &mut Browser, path: &str, name: &str) -> Resp {
-    b.post(app, path, json!({ "username": name })).await
+    if path == LOGIN_START {
+        let request = b.request(Method::POST, path, None);
+        b.send(app, request).await
+    } else {
+        b.post(app, path, json!({ "username": name })).await
+    }
 }
 
 fn creation(started: &Resp) -> CreationChallengeResponse {
@@ -525,7 +564,7 @@ async fn register_me_logout_roundtrip() {
     let opts = &s.body["options"]["publicKey"];
     assert_eq!(opts["rp"]["id"], "packit.test");
     assert_eq!(opts["user"]["name"], name.as_str());
-    assert_eq!(opts["authenticatorSelection"]["residentKey"], "preferred");
+    assert_eq!(opts["authenticatorSelection"]["residentKey"], "required");
     assert_eq!(
         opts["authenticatorSelection"]["userVerification"],
         "required"
@@ -619,7 +658,8 @@ async fn login_roundtrip_rotates_the_session() {
     let opts = &s.body["options"]["publicKey"];
     assert_eq!(opts["userVerification"], "required");
     assert_eq!(opts["rpId"], "packit.test");
-    assert_eq!(opts["allowCredentials"][0]["id"], b64(&cred_id));
+    assert_eq!(opts["allowCredentials"], json!([]));
+    assert!(s.body["options"]["mediation"].is_null());
     let cred = key.get(&origin(), request_options(&s)).unwrap();
     let r = b.post(&app, LOGIN_FINISH, finish_body(&s, &cred)).await;
     assert_eq!(r.status, StatusCode::OK, "{:?}", r.body);
@@ -680,8 +720,8 @@ async fn names_are_validated_reserved_and_credited_users_locked_out() {
     // Unknown, credited and malformed names all get the same answer.
     for name in [credited.as_str(), &fresh("nobody"), "x", "ad\u{e9}"] {
         let r = start(&app, &mut Browser::new(), LOGIN_START, name).await;
-        assert_eq!(r.status, StatusCode::UNAUTHORIZED, "{name}");
-        assert_eq!(r.body, json!({ "error": SIGN_IN_FAILED }));
+        assert_eq!(r.status, StatusCode::OK, "{name}");
+        assert!(request_options(&r).public_key.allow_credentials.is_empty());
     }
 
     // A player turned into a credited profile can't use its session or sign in.
@@ -696,7 +736,7 @@ async fn names_are_validated_reserved_and_credited_users_locked_out() {
         .execute(&mut conn(&state))
         .unwrap();
     assert_eq!(b.get(&app, ME).await.status, StatusCode::UNAUTHORIZED);
-    let r = start(&app, &mut Browser::new(), LOGIN_START, &name).await;
+    let r = login(&app, &mut Browser::new(), &mut key, &name).await;
     assert_eq!(r.status, StatusCode::UNAUTHORIZED);
     let r = start(&app, &mut Browser::new(), REGISTER_START, &name).await;
     assert_eq!(r.status, StatusCode::CONFLICT);
@@ -1222,7 +1262,7 @@ async fn adding_a_passkey_needs_recent_sign_in_and_the_same_account() {
         opts["authenticatorSelection"]["userVerification"],
         "required"
     );
-    assert_eq!(opts["authenticatorSelection"]["residentKey"], "preferred");
+    assert_eq!(opts["authenticatorSelection"]["residentKey"], "required");
     let mut second = soft();
     let cred = second.create(&origin(), creation(&s)).unwrap();
     let r = b.post(&app, ADD_FINISH, finish_body(&s, &cred)).await;
@@ -1455,50 +1495,39 @@ fn ipv6_browser(site: u16, subnet: u16) -> Browser {
     b
 }
 
-/// The login-start username limit is per client, so exhausting it locks out
-/// only the client doing it.
 #[tokio::test]
-async fn login_start_is_rate_limited_per_username_and_client() {
+async fn availability_is_advisory_and_client_limited() {
     let Some((_state, app)) = db_app() else {
         return;
     };
-    let name = fresh("limit");
-    let mut attacker = Browser::new();
-    for _ in 0..USERNAME_BURST {
-        let r = start(&app, &mut attacker, LOGIN_START, &name).await;
-        assert_eq!(r.status, StatusCode::UNAUTHORIZED);
+    let mut browser = Browser::new();
+    for (name, available) in [
+        (fresh("free"), true),
+        ("ADMIN".into(), false),
+        ("friedman".into(), false),
+        ("ab".into(), false),
+        ("x".repeat(100), false),
+    ] {
+        let r = browser
+            .get(&app, &format!("/api/auth/usernames/{name}"))
+            .await;
+        assert_eq!(r.status, StatusCode::OK);
+        assert_eq!(r.body, json!({"available": available}));
+        assert_eq!(r.headers[header::CACHE_CONTROL], "no-store");
     }
-    for variant in [name.clone(), format!(" {} ", name.to_uppercase())] {
-        let r = start(&app, &mut attacker, LOGIN_START, &variant).await;
-        assert_eq!(r.status, StatusCode::TOO_MANY_REQUESTS, "{variant}");
-        assert_eq!(r.error(), TOO_MANY);
-        assert!(r.headers.contains_key(header::RETRY_AFTER));
+    let mut limited = false;
+    for _ in 0..=IP_BURST {
+        let r = browser.get(&app, "/api/auth/usernames/test").await;
+        limited |= r.status == StatusCode::TOO_MANY_REQUESTS;
     }
-    // Another name from that client is fine, and so is this name from
-    // anyone else.
-    let r = start(&app, &mut attacker, LOGIN_START, &fresh("limit")).await;
-    assert_eq!(r.status, StatusCode::UNAUTHORIZED);
-    let r = start(&app, &mut Browser::new(), LOGIN_START, &name).await;
-    assert_eq!(r.status, StatusCode::UNAUTHORIZED);
-
-    // A real account stays usable while another client hammers it.
-    let victim = fresh("victim");
-    let mut key = soft();
+    assert!(limited);
     assert_eq!(
-        register(&app, &mut Browser::new(), &mut key, &victim)
+        Browser::new()
+            .get(&app, "/api/auth/usernames/test")
             .await
             .status,
         StatusCode::OK
     );
-    let mut attacker = Browser::new();
-    let mut refused = false;
-    for _ in 0..=USERNAME_BURST {
-        let r = start(&app, &mut attacker, LOGIN_START, &victim).await;
-        refused |= r.status == StatusCode::TOO_MANY_REQUESTS;
-    }
-    assert!(refused);
-    let r = login(&app, &mut Browser::new(), &mut key, &victim).await;
-    assert_eq!(r.status, StatusCode::OK);
 }
 
 #[tokio::test]
@@ -2204,7 +2233,7 @@ async fn seeded_credited_names_are_taken_and_cannot_sign_in() {
     let as_taken = start(&app, &mut Browser::new(), REGISTER_START, &taken).await;
     assert_eq!(as_taken.status, StatusCode::CONFLICT);
     let as_unknown = start(&app, &mut Browser::new(), LOGIN_START, &fresh("nobody")).await;
-    assert_eq!(as_unknown.status, StatusCode::UNAUTHORIZED);
+    assert_eq!(as_unknown.status, StatusCode::OK);
     for name in [
         "friedman",
         " Goebel ",
@@ -2219,11 +2248,7 @@ async fn seeded_credited_names_are_taken_and_cannot_sign_in() {
             "{name}"
         );
         let r = start(&app, &mut Browser::new(), LOGIN_START, name).await;
-        assert_eq!(
-            (r.status, &r.body),
-            (as_unknown.status, &as_unknown.body),
-            "{name}"
-        );
+        assert_eq!(r.status, as_unknown.status, "{name}");
     }
 }
 
@@ -2427,4 +2452,54 @@ fn the_down_migration_never_drops_sign_in_data() {
             assert_eq!(count(conn, "SELECT count(*) FROM solution_shares"), 1);
             Ok(())
         });
+}
+
+#[tokio::test]
+async fn discoverable_login_requires_matching_handle_and_credential() {
+    let Some((state, app)) = db_app() else { return };
+    let name = fresh("resident");
+    let mut key = soft();
+    assert_eq!(
+        register(&app, &mut Browser::new(), &mut key, &name)
+            .await
+            .status,
+        StatusCode::OK
+    );
+    for alteration in 0..4 {
+        let mut browser = Browser::new();
+        let started = start(&app, &mut browser, LOGIN_START, "").await;
+        let mut assertion = key.get(&origin(), request_options(&started)).unwrap();
+        match alteration {
+            0 => assertion.response.user_handle = None,
+            1 => assertion.response.user_handle = Some(vec![1, 2, 3].into()),
+            2 => assertion.response.user_handle = Some(Uuid::new_v4().as_bytes().to_vec().into()),
+            _ => assertion.raw_id = random_bytes::<32>().to_vec().into(),
+        }
+        let result = browser
+            .post(&app, LOGIN_FINISH, finish_body(&started, &assertion))
+            .await;
+        assert_eq!(result.status, StatusCode::UNAUTHORIZED);
+        assert_eq!(result.error(), SIGN_IN_FAILED);
+        assert!(!browser.cookies.contains_key(SESSION));
+    }
+    // A handle naming another real player still cannot claim this credential.
+    let other = fresh("other");
+    assert_eq!(
+        register(&app, &mut Browser::new(), &mut soft(), &other)
+            .await
+            .status,
+        StatusCode::OK
+    );
+    let mut browser = Browser::new();
+    let started = start(&app, &mut browser, LOGIN_START, "").await;
+    let mut assertion = key.get(&origin(), request_options(&started)).unwrap();
+    assertion.response.user_handle = Some(user_id(&state, &other).as_bytes().to_vec().into());
+    assert_eq!(
+        browser
+            .post(&app, LOGIN_FINISH, finish_body(&started, &assertion))
+            .await
+            .status,
+        StatusCode::UNAUTHORIZED
+    );
+    assert!(!browser.cookies.contains_key(SESSION));
 }
