@@ -10,7 +10,11 @@ mod contacts;
 mod cpu;
 mod edges;
 mod glue;
+mod interaction;
+pub use interaction::{SettlePhase, SettleStatus, SETTLE_DEPTH, SETTLE_GLUE_ERROR, SETTLE_LIMIT};
+mod violations;
 pub use glue::{Feature, Glue, MAX_GLUES};
+pub use violations::{GlueViolation, PairViolation, ViolationReport, WallViolation};
 #[cfg(target_arch = "wasm32")]
 mod gpu;
 #[cfg(test)]
@@ -53,6 +57,7 @@ struct Rotation {
     remaining: f32,
 }
 struct State {
+    interaction: interaction::Interaction,
     bodies: Vec<Body>,
     glues: Vec<Glue>,
     contact_forces: Vec<[f32; 2]>,
@@ -82,6 +87,7 @@ impl Physics {
         assert!(side.is_finite() && (1.0..=1000.0).contains(&side));
         let physics = Self {
             state: Rc::new(RefCell::new(State {
+                interaction: Default::default(),
                 glues: Vec::new(),
                 bodies: vec![Body::default(); n as usize],
                 contact_forces: vec![[0.0; 2]; n as usize],
@@ -229,6 +235,9 @@ impl Physics {
                         }
                     }
                 }
+                if s.revision == revision {
+                    s.step_interaction(steps as f64 * FIXED_STEP);
+                }
                 return;
             }
         }
@@ -239,6 +248,7 @@ impl Physics {
         for _ in 0..steps {
             s.cpu_step();
         }
+        s.step_interaction(steps as f64 * FIXED_STEP);
     }
     pub fn bodies(&self) -> Vec<Body> {
         self.state.borrow().bodies.clone()
@@ -251,6 +261,7 @@ impl Physics {
             return;
         }
         let mut s = self.state.borrow_mut();
+        s.cancel_settle();
         s.side = side;
         s.band_velocity = 0.0;
         s.contact_forces.fill([0.0; 2]);
@@ -268,6 +279,7 @@ impl Physics {
             return;
         }
         let mut s = self.state.borrow_mut();
+        s.cancel_settle();
         if p.band_tension != s.params.band_tension {
             s.band_velocity = 0.0;
         }
@@ -285,6 +297,7 @@ impl Physics {
     }
     pub fn set_paused(&self, paused: bool) {
         let mut s = self.state.borrow_mut();
+        s.cancel_settle();
         s.paused = paused;
         if paused {
             s.rotation = Rotation::default();
@@ -320,6 +333,9 @@ impl Physics {
             return;
         }
         let mut s = self.state.borrow_mut();
+        if down && index.is_some_and(|i| i < s.bodies.len()) {
+            s.cancel_settle_for_drag();
+        }
         s.mouse = Mouse {
             x,
             y,
@@ -332,6 +348,9 @@ impl Physics {
             return;
         }
         let mut s = self.state.borrow_mut();
+        if i < s.bodies.len() {
+            s.cancel_settle();
+        }
         if let Some(b) = s.bodies.get_mut(i) {
             b.x = x;
             b.y = y;
@@ -350,6 +369,9 @@ impl Physics {
         let mut s = self.state.borrow_mut();
         if s.disposed {
             return;
+        }
+        if i < s.bodies.len() {
+            s.cancel_settle();
         }
         let Some(b) = s.bodies.get(i) else {
             return;
@@ -371,6 +393,9 @@ impl Physics {
             return;
         }
         let mut s = self.state.borrow_mut();
+        if i < s.bodies.len() {
+            s.cancel_settle();
+        }
         if let Some(b) = s.bodies.get_mut(i) {
             b.x += dx;
             b.y += dy;
@@ -392,6 +417,7 @@ impl Physics {
             ((seed >> 32) as f32 / u32::MAX as f32) - 0.5
         };
         let mut s = self.state.borrow_mut();
+        s.cancel_settle();
         for b in &mut s.bodies {
             b.vx = random() * 7.0 * strength;
             b.vy = random() * 7.0 * strength;
@@ -402,6 +428,7 @@ impl Physics {
     }
     pub fn reset(&self) {
         let mut s = self.state.borrow_mut();
+        s.cancel_settle();
         let cols = (s.bodies.len() as f32).sqrt().ceil() as usize;
         let spacing = s.side as f32 / cols as f32;
         for (i, b) in s.bodies.iter_mut().enumerate() {
@@ -419,20 +446,7 @@ impl Physics {
         s.revision += 1;
     }
     pub fn arrangement(&self) -> shared::Arrangement {
-        let s = self.state.borrow();
-        shared::Arrangement {
-            n: s.bodies.len() as u32,
-            side: s.side,
-            squares: s
-                .bodies
-                .iter()
-                .map(|b| shared::Placement {
-                    cx: b.x as f64,
-                    cy: b.y as f64,
-                    theta: b.theta as f64,
-                })
-                .collect(),
-        }
+        self.state.borrow().arrangement()
     }
     /// Loads a finite scene, including overlaps that the play solver can repair.
     pub fn load(&self, a: &shared::Arrangement) {
@@ -450,6 +464,7 @@ impl Physics {
         {
             return;
         }
+        s.cancel_settle();
         s.side = a.side;
         s.params.target_side = a.side;
         s.band_velocity = 0.0;
@@ -469,6 +484,7 @@ impl Physics {
     }
     pub fn dispose(&self) {
         let mut s = self.state.borrow_mut();
+        s.cancel_settle();
         s.disposed = true;
         s.glues.clear();
         s.rotation = Rotation::default();
@@ -498,6 +514,21 @@ impl Drop for BusyGuard {
     }
 }
 impl State {
+    fn arrangement(&self) -> shared::Arrangement {
+        shared::Arrangement {
+            n: self.bodies.len() as u32,
+            side: self.side,
+            squares: self
+                .bodies
+                .iter()
+                .map(|b| shared::Placement {
+                    cx: b.x as f64,
+                    cy: b.y as f64,
+                    theta: b.theta as f64,
+                })
+                .collect(),
+        }
+    }
     #[cfg(any(target_arch = "wasm32", test))]
     fn merge_readback(&mut self, initial: &[Body], computed: &[Body], revision: u64) {
         if self.revision == revision {
