@@ -116,7 +116,16 @@ pub async fn resolve(
     .ok_or_else(|| HandlerError::not_found("board not found"))?;
     // Redirects are followed by social preview crawlers; the destination
     // serves the per-board OG tags and immutable preview PNG.
-    let location = format!("{}/play/{}?s={}", state.public_url, found.0, found.1);
+    let decoded = board::decode(&found.1, found.0 as u32).map_err(HandlerError::bad_request)?;
+    let prefix = if decoded.arrangement.shape.is_square() {
+        String::new()
+    } else {
+        format!("{}/", decoded.arrangement.shape)
+    };
+    let location = format!(
+        "{}/play/{}{}?s={}",
+        state.public_url, prefix, found.0, found.1
+    );
     Ok((
         StatusCode::FOUND,
         [

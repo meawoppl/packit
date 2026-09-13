@@ -71,7 +71,7 @@ const CERTIFY_MOVE: f64 = 1e-4;
 /// Largest residual `glues` would leave on `arrangement`, measured on a
 /// scratch simulation so the live one is untouched.
 fn glue_error(arrangement: &Arrangement, glues: &[Glue]) -> f64 {
-    let scratch = Physics::new(arrangement.n, arrangement.side);
+    let scratch = Physics::new_for(arrangement.shape, arrangement.n, arrangement.side);
     scratch.load(arrangement);
     match scratch.set_glues(glues) {
         Ok(()) => scratch.violations().max_glue_error,
@@ -83,7 +83,8 @@ fn glue_error(arrangement: &Arrangement, glues: &[Glue]) -> f64 {
 /// solver result for one describes the other.
 fn same_packing(a: &Arrangement, b: &Arrangement) -> bool {
     const SAME: f64 = 1e-9;
-    (a.side - b.side).abs() <= SAME
+    a.shape == b.shape
+        && (a.side - b.side).abs() <= SAME
         && a.squares.len() == b.squares.len()
         && a.squares.iter().zip(&b.squares).all(|(p, q)| {
             (p.cx - q.cx).abs() <= SAME
@@ -100,6 +101,8 @@ fn scrub_target(desired: f64, side: f64, tension: f32) -> f64 {
 
 #[derive(Properties, PartialEq)]
 pub struct GameProps {
+    #[prop_or_default]
+    pub shape: shared::Shape,
     pub n: u32,
 }
 
@@ -296,7 +299,7 @@ struct CornerDrag {
 fn corner_target(side: f64, scale: f64, corner: u8, dx: f64, dy: f64) -> f64 {
     let sx = if corner & 1 == 0 { -1.0 } else { 1.0 };
     let sy = if corner & 2 == 0 { -1.0 } else { 1.0 };
-    (side + (sx * dx + sy * dy) / scale).clamp(1.0, 1000.0)
+    (side + (sx * dx + sy * dy) / scale).clamp(0.5, 1000.0)
 }
 
 fn initial_side(n: u32) -> f64 {
@@ -366,8 +369,13 @@ impl Component for Game {
 
     fn create(ctx: &Context<Self>) -> Self {
         let n = ctx.props().n;
-        let side = initial_side(n);
-        let physics = Physics::new(n, side);
+        let side = initial_side(n)
+            * if ctx.props().shape.is_square() {
+                1.0
+            } else {
+                2.0 * ctx.props().shape.radius()
+            };
+        let physics = Physics::new_for(ctx.props().shape, n, side);
         // Pushing hard against the walls grows the box around its center,
         // which the canvas keeps fixed on screen.
         physics.set_drag_expansion(true);
@@ -378,8 +386,9 @@ impl Component for Game {
             gpu.init_gpu().await;
             Msg::GpuReady
         });
+        let shape = ctx.props().shape;
         ctx.link()
-            .send_future(async { Msg::Records(api::known_records().await) });
+            .send_future(async move { Msg::Records(api::known_records_for(shape).await) });
         let (account, account_handle) = ctx
             .link()
             .context::<Account>(ctx.link().callback(Msg::Account))
@@ -446,7 +455,7 @@ impl Component for Game {
             .and_then(|q| q.s);
         if let Some(code) = code {
             match board::decode(&code, n) {
-                Ok(board) => {
+                Ok(board) if board.arrangement.shape == ctx.props().shape => {
                     // Loading clears glue, so the board's glue goes on after it.
                     game.physics.load(&board.arrangement);
                     game.physics.set_paused(true);
@@ -459,6 +468,10 @@ impl Component for Game {
                         Err(e) => game.set_status(&format!("Board glue: {e}"), true),
                     }
                 }
+                Ok(_) => game.set_status(
+                    "This board uses a different shape. Open its matching shape first.",
+                    true,
+                ),
                 Err(e) => game.set_status(&format!("Board link: {e}"), true),
             }
         }
@@ -493,7 +506,7 @@ impl Component for Game {
                         extent.get(),
                         physics.side(),
                     );
-                    if let Some(i) = canvas::hit(&physics.bodies(), p) {
+                    if let Some(i) = canvas::hit_for(physics.shape(), &physics.bodies(), p) {
                         e.prevent_default();
                         link.send_message(Msg::Wheel(i, e.delta_y().signum() as f32));
                     }
@@ -627,7 +640,7 @@ impl Component for Game {
                     return true;
                 }
                 let bodies = self.physics.bodies();
-                self.selected = canvas::hit(&bodies, p);
+                self.selected = canvas::hit_for(self.physics.shape(), &bodies, p);
                 self.rotating = e.shift_key();
                 self.last_pointer = Some(p);
                 self.grab = self.selected.map_or((0.0, 0.0), |i| {
@@ -733,7 +746,7 @@ impl Component for Game {
             Msg::SetCount(value) => {
                 if let (Ok(count), Some(nav)) = (value.parse::<u32>(), ctx.link().navigator()) {
                     if (1..=MAX_N).contains(&count) {
-                        nav.push(&Route::Play { n: count });
+                        nav.push(&Route::play(ctx.props().shape, count));
                     }
                 }
                 false
@@ -882,7 +895,12 @@ impl Component for Game {
             Msg::Reset => {
                 self.stop_anneal();
                 self.desired_side = None;
-                let side = initial_side(n);
+                let side = initial_side(n)
+                    * if ctx.props().shape.is_square() {
+                        1.0
+                    } else {
+                        2.0 * ctx.props().shape.radius()
+                    };
                 self.physics.set_side(side);
                 let mut params = self.physics.params();
                 params.target_side = side;
@@ -944,7 +962,11 @@ impl Component for Game {
                 self.submitting = false;
                 match result {
                     Ok(entry) => self.set_status(
-                        &format!("Saved! Rank #{} for {n} squares.", entry.rank),
+                        &format!(
+                            "Saved! Rank #{} for {n} {}.",
+                            entry.rank,
+                            ctx.props().shape.plural()
+                        ),
                         false,
                     ),
                     Err(api::Failure::SignedOut(_)) => {
@@ -1113,18 +1135,13 @@ impl Component for Game {
                         reference_side={self.record.as_ref().map(|r| r.side)}
                         proven={self.record.as_ref().is_some_and(|r| r.proven_optimal)}
                         {validated} />
-                    <label class="pg-sub">
-                        { "Squares " }
-                        <input class="pg-count" type="number" min="1" max={MAX_N.to_string()} value={n.to_string()}
-                            aria-label="Number of squares"
-                            onchange={link.callback(|e: Event| Msg::SetCount(input_value(&e)))} />
-                    </label>
+
                 </div>
 
                         <div class="pg-board">
                             <div class="pg-canvas-frame">
                             <canvas ref={self.canvas.clone()} tabindex="0"
-                                aria-label="Square packing playfield. Drag to move. Select a square, then use arrow keys to move and Q or E to rotate. Double-click to glue two features; Escape cancels."
+                                aria-label={format!("{} packing playfield. Drag to move. Select a piece, then use arrow keys to move and Q or E to rotate. Double-click to glue two features; Escape cancels.",ctx.props().shape.plural())}
                                 onpointerdown={link.callback(Msg::PointerDown)}
                                 onpointermove={link.callback(Msg::PointerMove)}
                                 onpointerup={link.callback(|_| Msg::PointerUp)}
@@ -1160,6 +1177,22 @@ impl Component for Game {
                     </div>
                     <aside class="pg-sidebar">
                         <section class="pg-panel pg-submit">
+                    <div class="pg-picker">
+                        <div class="pg-count-stepper">
+                            <button aria-label="Fewer pieces" disabled={n<=1} onclick={link.callback(move |_| Msg::SetCount(n.saturating_sub(1).to_string()))}>{"↓"}</button>
+                            <input class="pg-count" type="number" min="1" max={MAX_N.to_string()} value={n.to_string()} aria-label="Number of pieces"
+                                onchange={link.callback(|e:Event|Msg::SetCount(input_value(&e)))} />
+                            <button aria-label="More pieces" disabled={n>=MAX_N} onclick={link.callback(move |_| Msg::SetCount((n+1).to_string()))}>{"↑"}</button>
+                        </div>
+                        <div class="pg-shape-picker" aria-label="Piece shape">
+                        { for shared::Shape::ALL.into_iter().map(|shape| {
+                            let points=shape.vertices(&shared::Placement{cx:0.0,cy:0.0,theta:0.0}).into_iter().map(|(x,y)|format!("{},{}",16.0+x/shape.radius()*12.0,16.0-y/shape.radius()*12.0)).collect::<Vec<_>>().join(" ");
+                            html! { <Link<Route> to={Route::play(shape,n)} classes={classes!("pg-shape",(shape==ctx.props().shape).then_some("selected"))}>
+                                <svg viewBox="0 0 32 32" role="img" aria-label={shape.plural()}><title>{shape.plural()}</title><polygon points={points}/></svg>
+                            </Link<Route>> }
+                        }) }
+                        </div>
+                    </div>
                             <h2>{ "Your packing" }</h2>
                             <div class="pg-stat">{ &r.side }<small>{ " side length" }</small></div>
                             <div class="pg-meter"><span style={format!("width: {}", r.meter)}></span></div>
@@ -1195,7 +1228,7 @@ impl Component for Game {
                                 { "Submit packing" }
                             </button>
                             <p class="pg-help">
-                                <Link<Route> to={Route::LeaderboardN { n }}>{ "See the leaderboard ↗" }</Link<Route>>
+                                <Link<Route> to={Route::leaderboard(ctx.props().shape,n)}>{ "See the leaderboard ↗" }</Link<Route>>
                             </p>
                         </section>
                         <details class="pg-panel pg-advanced">
@@ -1223,7 +1256,7 @@ impl Component for Game {
                                 oninput={link.callback(|e: InputEvent| Msg::BandTension(input_value(&e).parse().unwrap_or(0.0)))} />
                             <p class="pg-help">{ "Squeezing animates the band with live pressure. Squares push back, and higher pressure lets the size target run further ahead of the container. Zero holds the current size. The Squeeze slider engages pressure at 30 if it's off, keeps a pressure set here while held, and releases the band when let go." }</p>
                             <label class="pg-row">
-                                { "Square attraction " }
+                                { "Piece attraction " }
                                 <input type="checkbox" checked={params.attraction}
                                     onchange={link.callback(|e: Event| Msg::Attraction(e.target_unchecked_into::<HtmlInputElement>().checked()))} />
                             </label>
@@ -1231,9 +1264,9 @@ impl Component for Game {
                                 { "Edge attraction " }
                                 <output>{ if params.edge_attraction > 0.0 { format!("{}",params.edge_attraction) } else { "Off".into() } }</output>
                             </label>
-                            <input id="pg-edge-attraction" type="range" min="0" max="40" step="1" value={params.edge_attraction.to_string()}
+                            <input id="pg-edge-attraction" disabled={!ctx.props().shape.is_square()} type="range" min="0" max="40" step="1" value={params.edge_attraction.to_string()}
                                 oninput={link.callback(|e: InputEvent| Msg::EdgeAttraction(input_value(&e).parse().unwrap_or(0.0)))} />
-                            <p class="pg-help">{ "Pull nearby facing edges together and turn them toward a flush fit, including the outer band. Zero turns it off." }</p>
+                            <p class="pg-help">{ if ctx.props().shape.is_square() { "Pull nearby facing edges together and turn them toward a flush fit, including the outer band. Zero turns it off." } else { "Optional edge attraction is available for squares. Polygon contacts and glue still apply." } }</p>
                             <label class="pg-row" for="pg-damping">
                                 { "Damping " }<output>{ format!("{:.1}", params.damping) }</output>
                             </label>
@@ -1281,10 +1314,10 @@ impl Component for Game {
                         <p class="pg-help">{ "Force arrows: blue = net contact and edge pull · gold = mouse spring. Dashed band = target size." }</p>
                         <details class="pg-details">
                             <summary>{ "How to play & what the score means" }</summary>
-                            <p>{ "Each square has side length 1. Make the container smaller while keeping every square inside and avoiding overlap. Dragging and rotating resume physics, push neighbors, and resist blocked motion. Drag a corner inward to squeeze the packing; let go and the box springs back out from the squares' pressure until nothing overlaps, then settles. Turn on forces, or use Q/E to rotate a selected square. Arrow keys nudge it. Space pauses." }</p>
-                            <p>{ "The simulation has springy contacts. “Settle” lets the contacts resolve, opening the box only while squares still overlap, then pauses the scene and refines its contacts with a numerical polynomial solver. Only an independently validated arrangement can be submitted. A best-known packing is an upper bound, not necessarily a proven optimum. A numerical match is not an exact proof." }</p>
+                            <p>{ "Each piece has edge length 1. Make the container smaller while keeping every piece inside and avoiding overlap. Dragging and rotating resume physics, push neighbors, and resist blocked motion. Drag a corner inward to squeeze the packing; let go and the box springs back out from the squares' pressure until nothing overlaps, then settles. Turn on forces, or use Q/E to rotate a selected square. Arrow keys nudge it. Space pauses." }</p>
+                            <p>{ "The simulation has springy contacts. “Settle” lets the contacts resolve, opening the box only while squares still overlap, then pauses the scene and checks its geometry in place. Only an independently validated arrangement can be submitted. A best-known packing is an upper bound, not necessarily a proven optimum. A numerical match is not an exact proof." }</p>
                             <p>
-                                <a href="https://kingbird.myphotos.cc/packing/squares_in_squares.html" target="_blank" rel="noopener">
+                                <a href={match ctx.props().shape { shared::Shape::Square => "https://kingbird.myphotos.cc/packing/squares_in_squares.html", shared::Shape::Triangle => "https://erich-friedman.github.io/packing/triinsqu/", shared::Shape::Pentagon => "https://erich-friedman.github.io/packing/peninsqu/", shared::Shape::Hexagon => "https://erich-friedman.github.io/packing/hexinsqu/" }} target="_blank" rel="noopener">
                                     { "Explore the research records ↗" }
                                 </a>
                             </p>
@@ -1304,7 +1337,7 @@ impl Component for Game {
 
 impl Game {
     fn nudge_corner(&mut self) -> bool {
-        self.squeeze_to((self.physics.side() - 0.05).max(1.0));
+        self.squeeze_to((self.physics.side() - 0.05).max(self.physics.shape().min_side()));
         self.corner_nudge = Some(0.25);
         true
     }
@@ -1322,6 +1355,7 @@ impl Game {
     }
 
     fn squeeze_to(&mut self, side: f64) -> bool {
+        let side = side.max(self.physics.shape().min_side());
         self.corner_nudge = None;
         self.stop_anneal();
         let mut params = self.physics.params();
@@ -1413,7 +1447,7 @@ impl Game {
             ),
         };
         let seed = (js_sys::Math::random() * u64::MAX as f64) as u64;
-        let floor = (n as f64).sqrt();
+        let floor = (n as f64 * self.physics.shape().area()).sqrt();
         self.anneal = Some(Anneal::new(schedule, self.physics.side(), floor, seed));
         self.run_kind = kind;
         self.set_pause(false);
@@ -1629,6 +1663,7 @@ impl Game {
         canvas::draw(
             &canvas,
             &Scene {
+                shape: self.physics.shape(),
                 glues: &glues,
                 glue_tool: self.glue_tool,
                 bodies: &bodies,
@@ -1679,7 +1714,7 @@ impl Game {
     fn refresh_readout(&mut self) -> bool {
         let side = self.physics.side();
         let n = self.physics.bodies().len() as f64;
-        let density = n / (side * side) * 100.0;
+        let density = n * self.physics.shape().area() / (side * side) * 100.0;
         let params = self.physics.params();
         let mode = match self.physics.mode() {
             Backend::Gpu => "WebGPU compute",
@@ -1724,7 +1759,7 @@ impl Game {
                 self.readout.squeeze_range
             } else {
                 // Loaded scenes may sit outside the usual bounds.
-                let low = (n.sqrt() * 1000.0).ceil() / 1000.0;
+                let low = ((n * self.physics.shape().area()).sqrt() * 1000.0).ceil() / 1000.0;
                 (low.min(side), (n.sqrt().ceil() + 3.0).max(side))
             },
             anneal: self.anneal.as_ref().map(|a| (a.progress() * 100.0) as u32),
@@ -1798,11 +1833,19 @@ impl Game {
         let side = self.physics.side();
         // On an existing link, open with nothing picked so the next tap
         // removes it rather than starting a new glue at the same spot.
-        let on_link = glue::glue_at(&bodies, side, &self.physics.glues(), p, reach).is_some();
+        let on_link = glue::glue_at(
+            self.physics.shape(),
+            &bodies,
+            side,
+            &self.physics.glues(),
+            p,
+            reach,
+        )
+        .is_some();
         self.glue_tool = Some(if on_link {
             None
         } else {
-            glue::pick(&bodies, side, p, reach, |_| true)
+            glue::pick(self.physics.shape(), &bodies, side, p, reach, |_| true)
         });
         self.glue_prompt();
     }
@@ -1825,11 +1868,14 @@ impl Game {
         let side = self.physics.side();
         let mut glues = self.physics.glues();
         let first = self.glue_tool.flatten();
-        let second =
-            first.and_then(|a| glue::pick(&bodies, side, p, reach, |f| glue::compatible(a, f)));
+        let second = first.and_then(|a| {
+            glue::pick(self.physics.shape(), &bodies, side, p, reach, |f| {
+                glue::compatible(a, f)
+            })
+        });
         let removed = first
             .is_none()
-            .then(|| glue::glue_at(&bodies, side, &glues, p, reach))
+            .then(|| glue::glue_at(self.physics.shape(), &bodies, side, &glues, p, reach))
             .flatten();
         if let (Some(a), Some(b)) = (first, second) {
             glues.push(Glue { a, b });
@@ -1837,7 +1883,8 @@ impl Game {
         } else if let Some(i) = removed {
             glues.remove(i);
             self.apply_glues(&glues, "Glue removed.");
-        } else if let Some(f) = glue::pick(&bodies, side, p, reach, |_| true) {
+        } else if let Some(f) = glue::pick(self.physics.shape(), &bodies, side, p, reach, |_| true)
+        {
             self.glue_tool = Some(Some(f));
             self.glue_prompt();
             return;
@@ -1888,6 +1935,13 @@ impl Game {
     }
 
     fn apply_import(&mut self, a: &Arrangement) {
+        if a.shape != self.physics.shape() {
+            self.set_status(
+                "Import uses a different shape. Choose that shape first.",
+                true,
+            );
+            return;
+        }
         self.desired_side = None;
         self.physics.load(a);
         self.view_side.set(self.physics.side());
@@ -2083,6 +2137,7 @@ mod tests {
             theta: 0.0,
         };
         let touching = Arrangement {
+            shape: shared::Shape::Square,
             n: 2,
             side: 2.0,
             squares: vec![sq(0.5), sq(1.5)],
@@ -2095,6 +2150,7 @@ mod tests {
         assert!(glue_error(&touching, &[glue]) < 1e-6);
         assert_eq!(glue_error(&touching, &[]), 0.0);
         let apart = Arrangement {
+            shape: shared::Shape::Square,
             side: 3.0,
             squares: vec![sq(0.5), sq(2.5)],
             ..touching
@@ -2110,6 +2166,7 @@ mod tests {
             theta: 0.0,
         };
         let a = Arrangement {
+            shape: shared::Shape::Square,
             n: 2,
             side: 2.0,
             squares: vec![sq(0.5), sq(1.5)],

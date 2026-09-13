@@ -1796,6 +1796,7 @@ fn unique_squares() -> shared::Arrangement {
         theta: 0.0,
     };
     shared::Arrangement {
+        shape: shared::Shape::Square,
         n: 2,
         side,
         squares: vec![sq(0.5), sq(1.5)],
@@ -1936,6 +1937,7 @@ async fn score_responses_mark_account_and_legacy_names() {
         (legacy, "old-name", None, side + 1e-11),
     ] {
         let arrangement = shared::Arrangement {
+            shape: shared::Shape::Square,
             n: 97,
             side,
             squares: (0..97)

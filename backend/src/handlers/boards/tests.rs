@@ -41,6 +41,7 @@ fn pair(side: f64) -> Arrangement {
         theta: 0.0,
     };
     Arrangement {
+        shape: shared::Shape::Square,
         n: 2,
         side,
         squares: vec![sq(0.5), sq(1.5)],
@@ -218,6 +219,7 @@ async fn the_leaderboard_links_each_score_to_its_board() {
     // touch.
     let side = 3.0 + (Uuid::new_v4().as_u128() % 1_000_000) as f64 * 1e-9;
     let arr = Arrangement {
+        shape: shared::Shape::Square,
         n: 7,
         side,
         squares: (0..7)
@@ -470,11 +472,13 @@ fn awkward(seed: u64) -> Vec<Arrangement> {
     let below_1000 = f64::from_bits(1000f64.to_bits() - 1);
     vec![
         Arrangement {
+            shape: shared::Shape::Square,
             n: 1,
             side: 1.0,
             squares: vec![sq(min_subnormal, -0.0, 0.1)],
         },
         Arrangement {
+            shape: shared::Shape::Square,
             n: 3,
             side: 2.0 + 1.0 / 3.0,
             squares: vec![
@@ -484,6 +488,7 @@ fn awkward(seed: u64) -> Vec<Arrangement> {
             ],
         },
         Arrangement {
+            shape: shared::Shape::Square,
             n: 2,
             side: 1000.0,
             squares: vec![
@@ -492,6 +497,7 @@ fn awkward(seed: u64) -> Vec<Arrangement> {
             ],
         },
         Arrangement {
+            shape: shared::Shape::Square,
             n: 100,
             side: random(1.0..=1000.0),
             squares: (0..100)
@@ -536,6 +542,7 @@ fn the_backfill_writes_rust_board_codes_byte_for_byte() {
                 // long decimals near f64::MAX included.
                 let unsigned = |v: f64| if v == 0.0 { 0.0 } else { v };
                 let stored = Arrangement {
+                    shape: shared::Shape::Square,
                     squares: original
                         .squares
                         .iter()
@@ -635,6 +642,7 @@ fn upgrading_a_populated_database_links_every_score_to_its_board() {
                 id: bob.id,
                 username: bob.username.clone(),
             };
+            conn.batch_execute(UP_MIGRATIONS[6])?;
             let fresh = record(
                 conn,
                 &BoardState {
@@ -758,6 +766,7 @@ fn the_board_down_migration_never_drops_a_recorded_board() {
             assert_eq!(links(conn)?, linked);
             assert_eq!(board_rows(conn)?, rows);
 
+            conn.batch_execute(UP_MIGRATIONS[6])?;
             // A recorded board can't go back.
             record(
                 conn,
@@ -1001,4 +1010,99 @@ fn reverting_waits_for_a_score_in_flight_and_then_refuses() {
     )
     .unwrap();
     assert_eq!(kept, 1, "the recorded score keeps its board and provenance");
+}
+
+#[tokio::test]
+async fn polygon_boards_preview_and_rank_separately() {
+    let Some(pool) = test_db() else {
+        return;
+    };
+    let user = sign_up(&pool);
+    let app = build_app(state_for(pool.clone()));
+    let mut tokens = std::collections::HashSet::new();
+    for shape in shared::Shape::ALL {
+        let arr = Arrangement {
+            shape,
+            n: 1,
+            side: 3.0,
+            squares: vec![Placement {
+                cx: 1.5,
+                cy: 1.5,
+                theta: 0.25,
+            }],
+        };
+        let body = submission(&arr, &[]);
+        let (status, entry): (_, ScoreEntry) =
+            call(&app, post_as("/api/scores", &body, &user)).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(entry.shape, shape);
+        assert!(tokens.insert(entry.board.clone()));
+        let (_, list): (_, Vec<ScoreEntry>) =
+            call(&app, get(&format!("/api/scores?n=1&shape={shape}"))).await;
+        assert!(list.iter().all(|e| e.shape == shape));
+        let expected_rank = list.iter().position(|e| e.id == entry.id).unwrap() + 1;
+        assert_eq!(entry.rank as usize, expected_rank);
+        let (_, detail): (_, ScoreDetail) =
+            call(&app, get(&format!("/api/scores/{}", entry.id))).await;
+        assert_eq!(detail.arrangement, arr);
+        let response = app.clone().oneshot(get(&entry.board_link())).await.unwrap();
+        assert_eq!(response.status(), StatusCode::FOUND);
+        let url = response.headers()[header::LOCATION].to_str().unwrap();
+        let path = url.strip_prefix(TEST_URL).unwrap();
+        let prefix = if shape.is_square() {
+            String::new()
+        } else {
+            format!("{shape}/")
+        };
+        assert_eq!(path, format!("/play/{prefix}1?s={}", body.board.code));
+        let page = app.clone().oneshot(get(path)).await.unwrap();
+        assert_eq!(page.status(), StatusCode::OK);
+        let html = String::from_utf8(
+            axum::body::to_bytes(page.into_body(), 200000)
+                .await
+                .unwrap()
+                .to_vec(),
+        )
+        .unwrap();
+        assert!(html.contains(&format!("1 {} in a", shape.plural())));
+        assert!(html.contains("summary_large_image"));
+        let png = app
+            .clone()
+            .oneshot(get(&format!("/api/preview.png?n=1&s={}", body.board.code)))
+            .await
+            .unwrap();
+        assert_eq!(png.status(), StatusCode::OK);
+        assert_eq!(png.headers()[header::CONTENT_TYPE], "image/png");
+    }
+}
+
+#[test]
+fn polygon_migration_keeps_square_rows_and_refuses_polygon_loss() {
+    let Some(pool) = test_db() else {
+        return;
+    };
+    pool.get().unwrap().test_transaction::<_,diesel::result::Error,_>(|conn| {
+        scratch_schema(conn,6)?;
+        let owner:Uuid=users::table.select(users::id).first(conn)?;
+        let arr=pair(3.125);
+        let token=store(conn,&BoardState {arrangement:arr.clone(),glues:vec![]},owner)?;
+        diesel::sql_query("INSERT INTO scores(id,player,n,side,arrangement,board_token,glue_recorded) VALUES ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa','legacy',2,3.125,$1,$2,false)")
+            .bind::<diesel::sql_types::Jsonb,_>(serde_json::to_value(&arr).unwrap())
+            .bind::<diesel::sql_types::Text,_>(&token).execute(conn)?;
+        let before=board_rows(conn)?;
+        conn.batch_execute(UP_MIGRATIONS[6])?;
+        assert_eq!(board_rows(conn)?,before);
+        assert_eq!(scores::table.select(scores::shape).first::<i32>(conn)?,4);
+        assert_eq!(scores::table.select(scores::arrangement).first::<serde_json::Value>(conn)?,serde_json::to_value(&arr).unwrap());
+        let down=include_str!("../../../migrations/2026-09-14-000400_polygon_games/down.sql");
+        run(conn,down)?;
+        conn.batch_execute(UP_MIGRATIONS[6])?;
+        let polygon=Arrangement {shape:shared::Shape::Hexagon,..arr};
+        let stored=store(conn,&BoardState {arrangement:polygon,glues:vec![]},owner)?;
+        let boards=board_rows(conn)?;
+        assert!(run(conn,down).unwrap_err().to_string().contains("polygon"));
+        assert_eq!(board_rows(conn)?,boards);
+        assert!(boards.iter().any(|row|row.0==stored));
+        Ok(())
+    });
 }

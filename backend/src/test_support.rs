@@ -23,13 +23,14 @@ pub const TEST_URL: &str = "https://packit.test";
 
 /// Every up migration, oldest first, for tests that rebuild the schema in a
 /// scratch namespace.
-pub const UP_MIGRATIONS: [&str; 6] = [
+pub const UP_MIGRATIONS: [&str; 7] = [
     include_str!("../migrations/00000000000000_initial/up.sql"),
     include_str!("../migrations/2026-09-13-000000_solution_shares/up.sql"),
     include_str!("../migrations/2026-09-14-000000_share_glue/up.sql"),
     include_str!("../migrations/2026-09-14-000100_passkey_auth/up.sql"),
     include_str!("../migrations/2026-09-14-000200_board_states/up.sql"),
     include_str!("../migrations/2026-09-14-000300_discoverable_accounts/up.sql"),
+    include_str!("../migrations/2026-09-14-000400_polygon_games/up.sql"),
 ];
 
 /// Inside a test transaction, which rolls it all back: create a scratch
@@ -199,6 +200,7 @@ pub fn arrangement_of(floats: &[f64]) -> shared::Arrangement {
         .map(|&[cx, cy, theta]| shared::Placement { cx, cy, theta })
         .collect();
     shared::Arrangement {
+        shape: shared::Shape::Square,
         n: squares.len() as u32,
         side: floats[0],
         squares,

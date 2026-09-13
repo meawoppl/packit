@@ -5,6 +5,8 @@ use ws_bridge::WsEndpoint;
 pub mod board;
 pub mod geometry;
 pub mod glue;
+pub mod shape;
+pub use shape::Shape;
 
 // ---------------------------------------------------------------------------
 // Packing model — the coordinate conventions every crate shares
@@ -29,6 +31,8 @@ pub struct Placement {
 /// origin at bottom-left.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Arrangement {
+    #[serde(default, skip_serializing_if = "Shape::is_square")]
+    pub shape: Shape,
     pub n: u32,
     pub side: f64,
     pub squares: Vec<Placement>,
@@ -119,6 +123,8 @@ pub struct SubmitScore {
 /// One leaderboard row, returned by `POST /api/scores` and `GET /api/scores`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ScoreEntry {
+    #[serde(default)]
+    pub shape: Shape,
     pub id: Uuid,
     pub player: String,
     pub n: u32,
@@ -147,6 +153,8 @@ impl ScoreEntry {
 /// Query string for `GET /api/scores`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ScoresQuery {
+    #[serde(default)]
+    pub shape: Shape,
     pub n: Option<u32>,
     pub limit: Option<u32>,
 }
@@ -207,6 +215,7 @@ mod tests {
 
     fn sample_arrangement() -> Arrangement {
         Arrangement {
+            shape: crate::Shape::Square,
             n: 2,
             side: 2.0,
             squares: vec![
@@ -226,6 +235,7 @@ mod tests {
 
     fn sample_entry() -> ScoreEntry {
         ScoreEntry {
+            shape: crate::Shape::Square,
             id: Uuid::new_v4(),
             player: "ada".to_string(),
             n: 2,
@@ -340,6 +350,7 @@ mod tests {
     #[test]
     fn scores_query_roundtrip() {
         roundtrip(ScoresQuery {
+            shape: crate::Shape::Square,
             n: Some(5),
             limit: None,
         });

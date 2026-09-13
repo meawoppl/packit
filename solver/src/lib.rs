@@ -275,6 +275,7 @@ fn polish(a: &Arrangement) -> Option<Arrangement> {
         })
         .collect();
     let candidate = Arrangement {
+        shape: shared::Shape::Square,
         n: a.n,
         side: x[x.len() - 1],
         squares,
@@ -287,7 +288,10 @@ fn polish(a: &Arrangement) -> Option<Arrangement> {
 }
 pub fn refine(input: &Arrangement) -> Result<SolveReport, String> {
     if input.n == 0 || input.n > shared::MAX_N || input.squares.len() != input.n as usize {
-        return Err("Invalid square count".into());
+        return Err("Invalid piece count".into());
+    }
+    if !input.shape.is_square() {
+        return refine_polygon(input);
     }
     if !input.side.is_finite()
         || input.side <= 0.0
@@ -423,11 +427,57 @@ pub fn refine(input: &Arrangement) -> Result<SolveReport, String> {
     })
 }
 
+/// Polygon modes certify and tighten the bounding box numerically. Square
+/// contact polynomials and recognized algebraic expressions do not apply.
+fn refine_polygon(input: &Arrangement) -> Result<SolveReport, String> {
+    shared::board::check_arrangement(input, input.n)?;
+    let mut a = input.clone();
+    let pts: Vec<_> = a.squares.iter().flat_map(|p| a.shape.vertices(p)).collect();
+    let (mut x0, mut y0, mut x1, mut y1) = (
+        f64::INFINITY,
+        f64::INFINITY,
+        f64::NEG_INFINITY,
+        f64::NEG_INFINITY,
+    );
+    for (x, y) in pts {
+        x0 = x0.min(x);
+        y0 = y0.min(y);
+        x1 = x1.max(x);
+        y1 = y1.max(y);
+    }
+    for p in &mut a.squares {
+        p.cx -= x0;
+        p.cy -= y0;
+    }
+    a.side = (x1 - x0).max(y1 - y0);
+    let valid = validate(&a, shared::VALIDATION_TOL).is_ok();
+    Ok(SolveReport {
+        max_violation: shared::geometry::worst_violation(&a),
+        arrangement: a,
+        valid,
+        iterations: 0,
+        contacts: ContactSystem {
+            variables: vec![],
+            values: vec![],
+            layers: vec![None; input.n as usize],
+            equations: vec![],
+            max_residual: 0.0,
+        },
+        candidate_expression: None,
+        algebraic: None,
+        status: "Numerically checked polygon packing".into(),
+        reference_side: None,
+        lower_bound: (input.n as f64 * input.shape.area()).sqrt(),
+        gap_to_reference_percent: None,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     fn grid() -> Arrangement {
         Arrangement {
+            shape: shared::Shape::Square,
             n: 4,
             side: 2.0,
             squares: vec![
@@ -495,6 +545,7 @@ mod tests {
             })
             .collect();
         let report = refine(&Arrangement {
+            shape: shared::Shape::Square,
             n: 25,
             side: 5.0,
             squares,
@@ -514,6 +565,7 @@ mod tests {
                 })
                 .collect();
             let report = refine(&Arrangement {
+                shape: shared::Shape::Square,
                 n: k * k,
                 side: k as f64,
                 squares,
@@ -539,6 +591,7 @@ mod tests {
     fn five_square_polynomials_vanish() {
         let s = 2.0 + std::f64::consts::FRAC_1_SQRT_2;
         let a = Arrangement {
+            shape: shared::Shape::Square,
             n: 5,
             side: s,
             squares: vec![
@@ -575,5 +628,17 @@ mod tests {
         assert!(r.candidate_expression.is_some());
         let exact = r.algebraic.unwrap();
         assert_eq!(exact.side_polynomial, vec!["1", "-4", "7/2"]);
+    }
+    #[test]
+    fn polygon_refine_rejects_empty_boards() {
+        for shape in shared::Shape::ALL {
+            let a = Arrangement {
+                shape,
+                n: 0,
+                side: 1.0,
+                squares: vec![],
+            };
+            assert!(refine(&a).is_err());
+        }
     }
 }

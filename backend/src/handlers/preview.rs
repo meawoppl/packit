@@ -1,7 +1,6 @@
 //! Link previews for board links: `/play/:n?s=` pages carry Open Graph and
 //! Twitter metadata, and `/api/preview.png` draws the board's packing.
 
-use crate::handlers::records::BEST_KNOWN;
 use crate::AppState;
 use axum::extract::{Path, Query, State};
 use axum::http::{header, StatusCode};
@@ -44,13 +43,37 @@ pub async fn play(
     Path(n): Path<String>,
     query: Option<Query<PlayQuery>>,
 ) -> impl IntoResponse {
+    play_page(state, n, shared::Shape::Square, query)
+}
+
+pub async fn polygon_play(
+    State(state): State<Arc<AppState>>,
+    Path((shape, n)): Path<(String, String)>,
+    query: Option<Query<PlayQuery>>,
+) -> Response {
+    match shape.parse() {
+        Ok(shape) => play_page(state, n, shape, query).into_response(),
+        Err(_) => StatusCode::NOT_FOUND.into_response(),
+    }
+}
+
+fn play_page(
+    state: Arc<AppState>,
+    n: String,
+    shape: shared::Shape,
+    query: Option<Query<PlayQuery>>,
+) -> impl IntoResponse {
     let n = n.parse().ok().filter(|n| (1..=MAX_N).contains(n));
     let code = query.and_then(|Query(q)| q.s);
-    let packing = n
-        .zip(code)
-        .and_then(|(n, s)| board::decode(&s, n).ok().map(|b| (b.arrangement, s)));
-    let tags = meta_tags(
+    let packing = n.zip(code).and_then(|(n, s)| {
+        board::decode(&s, n)
+            .ok()
+            .filter(|b| b.arrangement.shape == shape)
+            .map(|b| (b.arrangement, s))
+    });
+    let tags = meta_tags_for(
         &state.public_url,
+        shape,
         n,
         packing.as_ref().map(|(a, s)| (a, s.as_str())),
     );
@@ -85,18 +108,29 @@ pub async fn preview_png(query: Option<Query<PreviewQuery>>) -> Response {
     }
 }
 
-fn meta_tags(public_url: &str, n: Option<u32>, packing: Option<(&Arrangement, &str)>) -> String {
+fn meta_tags_for(
+    public_url: &str,
+    shape: shared::Shape,
+    n: Option<u32>,
+    packing: Option<(&Arrangement, &str)>,
+) -> String {
+    let prefix = if shape.is_square() {
+        String::new()
+    } else {
+        format!("{shape}/")
+    };
+    let pieces = shape.plural();
     let (title, description, url, image) = match (n, packing) {
         (Some(n), Some((a, code))) => (
-            format!("{n} squares in a {:.4} box", a.side),
+            format!("{n} {pieces} in a {:.4} box", a.side),
             describe(a),
-            format!("{public_url}/play/{n}?s={code}"),
+            format!("{public_url}/play/{prefix}{n}?s={code}"),
             Some(format!("{public_url}/api/preview.png?n={n}&s={code}")),
         ),
         (Some(n), None) => (
-            format!("Pack {n} unit squares"),
-            format!("Pack {n} unit squares into the smallest square you can."),
-            format!("{public_url}/play/{n}"),
+            format!("Pack {n} unit {pieces}"),
+            format!("Pack {n} unit {pieces} into the smallest square you can."),
+            format!("{public_url}/play/{prefix}{n}"),
             None,
         ),
         (None, _) => (
@@ -144,14 +178,16 @@ fn describe(a: &Arrangement) -> String {
     } else {
         "An unverified"
     };
-    let best = BEST_KNOWN
+    let best = crate::handlers::records::for_shape(a.shape)
         .iter()
         .find(|r| r.n == a.n)
         .map(|r| format!(" Best known: {:.6}.", r.side))
         .unwrap_or_default();
     format!(
-        "{kind} packing of {} unit squares in a square of side {:.6}.{best} Open it to keep packing.",
-        a.n, a.side
+        "{kind} packing of {} unit {} in a square of side {:.6}.{best} Open it to keep packing.",
+        a.n,
+        a.shape.plural(),
+        a.side
     )
 }
 
@@ -189,7 +225,22 @@ pub fn render(a: &Arrangement) -> Result<Vec<u8>, String> {
     paint.set_color_rgba8(0x12, 0x18, 0x23, 0xff);
     pixmap.fill_path(&container, &paint, FillRule::Winding, view, None);
 
-    let unit = PathBuilder::from_rect(Rect::from_ltrb(-0.5, -0.5, 0.5, 0.5).ok_or_else(fail)?);
+    let unit = if a.shape.is_square() {
+        PathBuilder::from_rect(Rect::from_ltrb(-0.5, -0.5, 0.5, 0.5).ok_or_else(fail)?)
+    } else {
+        let vertices = a.shape.vertices(&shared::Placement {
+            cx: 0.0,
+            cy: 0.0,
+            theta: 0.0,
+        });
+        let mut path = PathBuilder::new();
+        path.move_to(vertices[0].0 as f32, vertices[0].1 as f32);
+        for (x, y) in &vertices[1..] {
+            path.line_to(*x as f32, *y as f32);
+        }
+        path.close();
+        path.finish().ok_or_else(fail)?
+    };
     let edge = Stroke {
         width: 2.0 / scale,
         ..Stroke::default()
@@ -232,6 +283,7 @@ mod tests {
     #[test]
     fn huge_finite_angles_render_like_their_normalized_turn() {
         let square = |theta| Arrangement {
+            shape: shared::Shape::Square,
             n: 1,
             side: 2.0,
             squares: vec![shared::Placement {

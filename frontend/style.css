@@ -875,3 +875,13 @@ main:has(.packing-game) {
     .pg-corner-hint { display: none; }
     .pg-board-footer { justify-content: center; }
 }
+
+/* Shape and count stay together above the primary play actions. */
+.pg-picker { display: grid; gap: 8px; }
+.pg-count-stepper { display:flex; align-items:center; justify-content:center; gap:8px; }
+.pg-count-stepper button { min-width:44px; min-height:44px; }
+.pg-count-stepper input { width:72px; min-height:44px; text-align:center; }
+.pg-shape-picker { display:grid; grid-template-columns:repeat(4,1fr); gap:6px; }
+.pg-shape-picker a { display:flex; align-items:center; justify-content:center; min-height:48px; border:1px solid #465164; border-radius:8px; color:inherit; }
+.pg-shape-picker a.selected { background:#34492b; border-color:#c7f36b; }
+.pg-shape-picker svg { width:30px; height:30px; fill:currentColor; }

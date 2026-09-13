@@ -215,7 +215,18 @@ pub async fn sign_out() -> Result<(), Failure> {
 }
 
 pub async fn list_scores(n: Option<u32>, limit: Option<u32>) -> Result<Vec<ScoreEntry>, String> {
-    let mut query = Vec::new();
+    list_scores_for(shared::Shape::Square, n, limit).await
+}
+pub async fn list_scores_for(
+    shape: shared::Shape,
+    n: Option<u32>,
+    limit: Option<u32>,
+) -> Result<Vec<ScoreEntry>, String> {
+    let mut query = if shape.is_square() {
+        Vec::new()
+    } else {
+        vec![format!("shape={shape}")]
+    };
     if let Some(n) = n {
         query.push(format!("n={n}"));
     }
@@ -236,10 +247,15 @@ pub async fn get_score(id: Uuid) -> Result<ScoreDetail, String> {
 }
 
 pub async fn known_records() -> Result<Vec<KnownRecord>, String> {
-    let resp = Request::get("/api/records")
-        .send()
-        .await
-        .map_err(|e| e.to_string())?;
+    known_records_for(shared::Shape::Square).await
+}
+pub async fn known_records_for(shape: shared::Shape) -> Result<Vec<KnownRecord>, String> {
+    let url = if shape.is_square() {
+        "/api/records".into()
+    } else {
+        format!("/api/records?shape={shape}")
+    };
+    let resp = Request::get(&url).send().await.map_err(|e| e.to_string())?;
     decode(resp).await.map_err(|e| e.to_string())
 }
 

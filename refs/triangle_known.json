@@ -1,0 +1,75 @@
+[
+  {
+    "n": 1,
+    "side": 0.9659258262890682,
+    "side_expr": "(√2+√6)/4",
+    "proven_optimal": true,
+    "source": "https://erich-friedman.github.io/packing/triinsqu/",
+    "packing_by": [],
+    "proof_trivial": true
+  },
+  {
+    "n": 2,
+    "side": 1.224744871391589,
+    "side_expr": "√6/2",
+    "proven_optimal": false,
+    "source": "https://erich-friedman.github.io/packing/triinsqu/",
+    "packing_by": [],
+    "proof_trivial": false
+  },
+  {
+    "n": 3,
+    "side": 1.478397839480233,
+    "side_expr": "√3/2+√6/4",
+    "proven_optimal": false,
+    "source": "https://erich-friedman.github.io/packing/triinsqu/",
+    "packing_by": [
+      "Erich Friedman"
+    ],
+    "proof_trivial": false
+  },
+  {
+    "n": 4,
+    "side": 1.5773502691896257,
+    "side_expr": "1+1/√3",
+    "proven_optimal": false,
+    "source": "https://erich-friedman.github.io/packing/triinsqu/",
+    "packing_by": [
+      "Erich Friedman"
+    ],
+    "proof_trivial": false
+  },
+  {
+    "n": 6,
+    "side": 1.901923788646684,
+    "side_expr": "9/2−3√3/2",
+    "proven_optimal": false,
+    "source": "https://erich-friedman.github.io/packing/triinsqu/",
+    "packing_by": [
+      "Erich Friedman"
+    ],
+    "proof_trivial": false
+  },
+  {
+    "n": 7,
+    "side": 2,
+    "side_expr": "2",
+    "proven_optimal": false,
+    "source": "https://erich-friedman.github.io/packing/triinsqu/",
+    "packing_by": [
+      "Erich Friedman"
+    ],
+    "proof_trivial": false
+  },
+  {
+    "n": 8,
+    "side": 2.098076211353316,
+    "side_expr": "3√3/2−1/2",
+    "proven_optimal": false,
+    "source": "https://erich-friedman.github.io/packing/triinsqu/",
+    "packing_by": [
+      "Erich Friedman"
+    ],
+    "proof_trivial": false
+  }
+]

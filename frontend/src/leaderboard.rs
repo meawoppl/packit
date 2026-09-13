@@ -167,14 +167,19 @@ fn known_cell(rec: &KnownRecord) -> Html {
 #[derive(Properties, PartialEq)]
 pub struct LeaderboardNProps {
     pub n: u32,
+    #[prop_or_default]
+    pub shape: shared::Shape,
 }
 
 /// Every submission for one `n`, ranked.
 #[function_component(LeaderboardN)]
 pub fn leaderboard_n(props: &LeaderboardNProps) -> Html {
     let n = props.n;
-    let scores = use_fetch(n, |n| api::list_scores(Some(n), None));
-    let records = use_fetch((), |_| api::known_records());
+    let shape = props.shape;
+    let scores = use_fetch((shape, n), |(shape, n)| {
+        api::list_scores_for(shape, Some(n), None)
+    });
+    let records = use_fetch(shape, api::known_records_for);
     let known = records
         .as_ref()
         .and_then(|r| r.as_ref().ok())
@@ -182,14 +187,14 @@ pub fn leaderboard_n(props: &LeaderboardNProps) -> Html {
 
     html! {
         <div class="leaderboard">
-            <h1>{ format!("{n} squares") }</h1>
+            <h1>{ format!("{n} {}", shape.plural()) }</h1>
             <p>
                 { match &known {
                     Some(k) => html! { <>{ "Best known side: " }{ known_cell(k) }{ format!(" ({})", k.source) }</> },
                     None => html! { <span class="muted">{ "No literature record loaded for this n." }</span> },
                 } }
             </p>
-            <Link<Route> to={Route::Play { n }} classes="button">{ "Play this n" }</Link<Route>>
+            <Link<Route> to={Route::play(shape,n)} classes="button">{ "Play this n" }</Link<Route>>
             { loading_or_error(&scores).unwrap_or_else(|| {
                 let scores = scores.as_ref().and_then(|r| r.as_ref().ok()).unwrap();
                 if scores.is_empty() {
@@ -237,7 +242,12 @@ pub struct ScorePageProps {
 #[function_component(ScorePage)]
 pub fn score_page(props: &ScorePageProps) -> Html {
     let detail = use_fetch(props.id, api::get_score);
-    let records = use_fetch((), |_| api::known_records());
+    let shape = detail
+        .as_ref()
+        .and_then(|r| r.as_ref().ok())
+        .map(|d| d.entry.shape)
+        .unwrap_or_default();
+    let records = use_fetch(shape, api::known_records_for);
     if let Some(h) = loading_or_error(&detail) {
         return h;
     }
@@ -248,7 +258,7 @@ pub fn score_page(props: &ScorePageProps) -> Html {
         .and_then(|r| r.iter().find(|k| k.n == entry.n));
     html! {
         <div class="score-page">
-            <h1>{ format!("{} squares by ", entry.n) }{ player_name(entry) }</h1>
+            <h1>{ format!("{} {} by ", entry.n,entry.shape.plural()) }{ player_name(entry) }</h1>
             <p>{ format!("Side {} · rank #{}", fmt_side(entry.side), entry.rank) }</p>
             // Stored scores passed server-side validation.
             <Benchmark
@@ -260,7 +270,7 @@ pub fn score_page(props: &ScorePageProps) -> Html {
             <ArrangementSvg arrangement={arrangement.clone()} />
             <p>{ board_link(entry, "Open this board") }</p>
             <p>
-                <Link<Route> to={Route::LeaderboardN { n: entry.n }}>{ "Back to leaderboard" }</Link<Route>>
+                <Link<Route> to={Route::leaderboard(entry.shape,entry.n)}>{ "Back to leaderboard" }</Link<Route>>
             </p>
         </div>
     }
@@ -281,8 +291,7 @@ pub fn arrangement_svg(props: &ArrangementSvgProps) -> Html {
         <svg class="arrangement" viewBox={view}>
             <rect class="container" x="0" y="0" width={s.to_string()} height={s.to_string()} />
             { for arr.squares.iter().enumerate().map(|(i, p)| {
-                let points = p
-                    .corners()
+                let points = arr.shape.vertices(p)
                     .iter()
                     .map(|(x, y)| format!("{x},{}", s - y))
                     .collect::<Vec<_>>()

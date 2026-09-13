@@ -111,6 +111,7 @@ pub fn build_app(state: Arc<AppState>) -> Router {
         .route("/api/scores/:id", get(handlers::scores::detail))
         .route("/api/preview.png", get(handlers::preview::preview_png))
         .route("/play/:n", get(handlers::preview::play))
+        .route("/play/:shape/:n", get(handlers::preview::polygon_play))
         .with_state(state.clone())
         .route(shared::AppSocket::PATH, handlers::websocket::handler())
         .merge(frontend)
@@ -313,6 +314,7 @@ mod tests {
             theta: 0.0,
         };
         shared::Arrangement {
+            shape: shared::Shape::Square,
             n: 2,
             side,
             squares: vec![sq(0.5), sq(1.5)],
@@ -638,6 +640,7 @@ mod tests {
             .naive_utc();
         let ids = [uuid::Uuid::new_v4(), uuid::Uuid::new_v4()];
         let arrangement = shared::Arrangement {
+            shape: shared::Shape::Square,
             n: 97,
             side,
             squares: (0..97)
@@ -1006,6 +1009,7 @@ mod tests {
         let addr = listener.local_addr().unwrap();
         tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
         let arr = shared::Arrangement {
+            shape: shared::Shape::Square,
             n: 100,
             side: 10.0,
             squares: (0..100)

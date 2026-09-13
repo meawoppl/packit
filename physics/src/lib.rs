@@ -11,6 +11,7 @@ mod cpu;
 mod edges;
 mod glue;
 mod interaction;
+mod polygon;
 pub use interaction::{SettlePhase, SettleStatus, SETTLE_DEPTH, SETTLE_GLUE_ERROR, SETTLE_LIMIT};
 mod violations;
 pub use glue::{Feature, Glue, MAX_GLUES};
@@ -57,6 +58,7 @@ struct Rotation {
     remaining: f32,
 }
 struct State {
+    shape: shared::Shape,
     interaction: interaction::Interaction,
     bodies: Vec<Body>,
     glues: Vec<Glue>,
@@ -83,10 +85,17 @@ pub struct Physics {
 }
 impl Physics {
     pub fn new(n: u32, side: f64) -> Self {
+        Self::new_for(shared::Shape::Square, n, side)
+    }
+    pub fn shape(&self) -> shared::Shape {
+        self.state.borrow().shape
+    }
+    pub fn new_for(shape: shared::Shape, n: u32, side: f64) -> Self {
         assert!((1..=shared::MAX_N).contains(&n));
-        assert!(side.is_finite() && (1.0..=1000.0).contains(&side));
+        assert!(side.is_finite() && (shape.min_side()..=1000.0).contains(&side));
         let physics = Self {
             state: Rc::new(RefCell::new(State {
+                shape,
                 interaction: Default::default(),
                 glues: Vec::new(),
                 bodies: vec![Body::default(); n as usize],
@@ -123,7 +132,7 @@ impl Physics {
         {
             let n = {
                 let mut s = self.state.borrow_mut();
-                if s.disposed || s.initializing || s.gpu.is_some() {
+                if !s.shape.is_square() || s.disposed || s.initializing || s.gpu.is_some() {
                     return;
                 }
                 s.initializing = true;
@@ -257,7 +266,7 @@ impl Physics {
         self.state.borrow().side
     }
     pub fn set_side(&self, side: f64) {
-        if !side.is_finite() || !(1.0..=1000.0).contains(&side) {
+        if !side.is_finite() || !(self.shape().min_side()..=1000.0).contains(&side) {
             return;
         }
         let mut s = self.state.borrow_mut();
@@ -288,7 +297,7 @@ impl Physics {
             edge_attraction: p.edge_attraction.clamp(0.0, 40.0),
             stiffness: p.stiffness.clamp(300.0, 1600.0),
             band_tension: p.band_tension.clamp(0.0, 100.0),
-            target_side: p.target_side.clamp(1.0, 1000.0),
+            target_side: p.target_side.clamp(s.shape.min_side(), 1000.0),
             ..p
         };
     }
@@ -451,10 +460,11 @@ impl Physics {
     /// Loads a finite scene, including overlaps that the play solver can repair.
     pub fn load(&self, a: &shared::Arrangement) {
         let mut s = self.state.borrow_mut();
-        if a.n as usize != s.bodies.len()
+        if a.shape != s.shape
+            || a.n as usize != s.bodies.len()
             || a.squares.len() != s.bodies.len()
             || !a.side.is_finite()
-            || !(1.0..=1000.0).contains(&a.side)
+            || !(s.shape.min_side()..=1000.0).contains(&a.side)
             || a.squares.iter().any(|p| {
                 !p.theta.is_finite()
                     || ![p.cx, p.cy]
@@ -516,6 +526,7 @@ impl Drop for BusyGuard {
 impl State {
     fn arrangement(&self) -> shared::Arrangement {
         shared::Arrangement {
+            shape: self.shape,
             n: self.bodies.len() as u32,
             side: self.side,
             squares: self

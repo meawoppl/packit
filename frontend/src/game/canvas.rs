@@ -17,6 +17,7 @@ const PULSE_PERIOD_MS: f64 = 1600.0;
 
 /// Everything the renderer needs for one frame.
 pub struct Scene<'a> {
+    pub shape: shared::Shape,
     pub bodies: &'a [Body],
     pub side: f64,
     /// Side length the viewport is scaled to. The band may contract inside
@@ -79,6 +80,45 @@ pub fn px_to_world(canvas: &HtmlCanvasElement, px: f64, extent: f64) -> f64 {
 }
 
 /// Topmost square containing `p`.
+pub fn hit_for(shape: shared::Shape, bodies: &[Body], p: (f64, f64)) -> Option<usize> {
+    if shape.is_square() {
+        return hit(bodies, p);
+    }
+    bodies.iter().enumerate().rev().find_map(|(i, b)| {
+        let vertices = shape.vertices(&shared::Placement {
+            cx: b.x as f64,
+            cy: b.y as f64,
+            theta: b.theta as f64,
+        });
+        vertices
+            .iter()
+            .enumerate()
+            .all(|(k, a)| {
+                let z = vertices[(k + 1) % vertices.len()];
+                (z.0 - a.0) * (p.1 - a.1) - (z.1 - a.1) * (p.0 - a.0) >= -1e-8
+            })
+            .then_some(i)
+    })
+}
+fn piece_path(ctx: &CanvasRenderingContext2d, shape: shared::Shape, scale: f64) {
+    ctx.begin_path();
+    for (i, (x, y)) in shape
+        .vertices(&shared::Placement {
+            cx: 0.0,
+            cy: 0.0,
+            theta: 0.0,
+        })
+        .into_iter()
+        .enumerate()
+    {
+        if i == 0 {
+            ctx.move_to(x * scale, -y * scale);
+        } else {
+            ctx.line_to(x * scale, -y * scale);
+        }
+    }
+    ctx.close_path();
+}
 pub fn hit(bodies: &[Body], p: (f64, f64)) -> Option<usize> {
     bodies
         .iter()
@@ -165,19 +205,19 @@ pub fn draw(canvas: &HtmlCanvasElement, scene: &Scene) {
         ctx.restore();
     }
 
-    let half = scale / 2.0;
     for (i, b) in scene.bodies.iter().enumerate() {
         ctx.save();
         let _ = ctx.translate(sx(b.x as f64), sy(b.y as f64));
         let _ = ctx.rotate(-(b.theta as f64));
         ctx.set_fill_style_str(PALETTE[i % PALETTE.len()]);
         ctx.set_global_alpha(0.86);
-        ctx.fill_rect(-half + 1.0, -half + 1.0, scale - 2.0, scale - 2.0);
+        piece_path(&ctx, scene.shape, scale);
+        ctx.fill();
         ctx.set_global_alpha(1.0);
         let selected = scene.selected == Some(i);
         ctx.set_stroke_style_str(if selected { "#fff" } else { "#ffffff45" });
         ctx.set_line_width(if selected { 3.0 } else { 1.0 });
-        ctx.stroke_rect(-half + 1.0, -half + 1.0, scale - 2.0, scale - 2.0);
+        ctx.stroke();
         ctx.restore();
         // Labels stay upright however the square is turned.
         ctx.set_fill_style_str("#172431");
@@ -198,10 +238,11 @@ pub fn draw(canvas: &HtmlCanvasElement, scene: &Scene) {
         let _ = ctx.translate(sx(b.x as f64), sy(b.y as f64));
         let _ = ctx.rotate(-(b.theta as f64));
         ctx.set_global_alpha(alpha);
-        ctx.fill_rect(-half + 1.0, -half + 1.0, scale - 2.0, scale - 2.0);
+        piece_path(&ctx, scene.shape, scale);
+        ctx.fill();
         ctx.set_global_alpha((alpha * 2.0).min(1.0));
         ctx.set_line_width(2.0 * dpr);
-        ctx.stroke_rect(-half + 1.0, -half + 1.0, scale - 2.0, scale - 2.0);
+        ctx.stroke();
         ctx.restore();
     }
     // Walls in glue order: left, bottom, right, top.
@@ -225,7 +266,7 @@ pub fn draw(canvas: &HtmlCanvasElement, scene: &Scene) {
     ctx.set_fill_style_str("#ffcf4d");
     ctx.set_line_width(3.0 * dpr);
     for g in scene.glues {
-        if let Some((a, b)) = glue::link(scene.bodies, side, *g) {
+        if let Some((a, b)) = glue::link(scene.shape, scene.bodies, side, *g) {
             line(&ctx, (sx(a.0), sy(a.1)), (sx(b.0), sy(b.1)));
             dot(
                 &ctx,
@@ -267,16 +308,16 @@ pub fn draw(canvas: &HtmlCanvasElement, scene: &Scene) {
         ctx.set_fill_style_str("#ffffff");
         ctx.set_global_alpha(0.6);
         ctx.set_line_width(2.0 * dpr);
-        let targets = glue::features(scene.bodies.len())
+        let targets = glue::features(scene.shape, scene.bodies.len())
             .filter(|f| first.is_none_or(|a| glue::compatible(a, *f)));
         for f in targets {
-            match glue::anchor(scene.bodies, side, f) {
+            match glue::anchor(scene.shape, scene.bodies, side, f) {
                 Some(Anchor::Point(p)) => dot(&ctx, (sx(p.0), sy(p.1)), 3.5 * dpr),
                 Some(Anchor::Segment(p, q)) => line(&ctx, (sx(p.0), sy(p.1)), (sx(q.0), sy(q.1))),
                 None => {}
             }
         }
-        if let Some(anchor) = first.and_then(|a| glue::anchor(scene.bodies, side, a)) {
+        if let Some(anchor) = first.and_then(|a| glue::anchor(scene.shape, scene.bodies, side, a)) {
             ctx.set_global_alpha(1.0);
             ctx.set_stroke_style_str("#ffcf4d");
             ctx.set_fill_style_str("#ffcf4d");

@@ -24,10 +24,12 @@ impl Feature {
         }
     }
 
-    fn valid(self, n: usize) -> bool {
+    fn valid(self, n: usize, sides: u8) -> bool {
         match self {
-            Self::Edge { square, edge } | Self::Midpoint { square, edge } => square < n && edge < 4,
-            Self::Corner { square, corner } => square < n && corner < 4,
+            Self::Edge { square, edge } | Self::Midpoint { square, edge } => {
+                square < n && edge < sides
+            }
+            Self::Corner { square, corner } => square < n && corner < sides,
             Self::Wall(w) => w < 4,
         }
     }
@@ -43,11 +45,17 @@ pub struct Glue {
 /// valid features on different objects, and no pair glued twice in either
 /// order.
 pub fn check(glues: &[Glue], n: usize) -> Result<(), String> {
+    check_for(glues, n, crate::Shape::Square)
+}
+pub fn check_for(glues: &[Glue], n: usize, shape: crate::Shape) -> Result<(), String> {
     if glues.len() > MAX_GLUES {
         return Err("Too many glue constraints".into());
     }
     for (i, g) in glues.iter().enumerate() {
-        if !g.a.valid(n) || !g.b.valid(n) || g.a.square() == g.b.square() {
+        if !g.a.valid(n, shape.sides() as u8)
+            || !g.b.valid(n, shape.sides() as u8)
+            || g.a.square() == g.b.square()
+        {
             return Err("Glue requires valid features on different objects".into());
         }
         if glues[..i]
