@@ -38,6 +38,8 @@ pub struct Scene<'a> {
     pub violations: &'a ViolationReport,
     /// Animation clock for the pulse, in milliseconds.
     pub now_ms: f64,
+    /// The best-known side and its credit, drawn over a settled packing.
+    pub best: Option<(f64, &'a str)>,
 }
 
 /// Opacity of the red pulse over a violation `depth` deep at `now_ms`, or
@@ -232,6 +234,29 @@ pub fn draw(canvas: &HtmlCanvasElement, scene: &Scene) {
         }
     }
     ctx.restore();
+
+    // The best-known container, centered on this one for comparison.
+    if let Some((best, label)) = scene.best {
+        let (x, y, size) = (
+            sx(side / 2.0 - best / 2.0),
+            sy(side / 2.0 + best / 2.0),
+            best * scale,
+        );
+        ctx.save();
+        ctx.set_fill_style_str(PULSE);
+        ctx.set_global_alpha(0.1);
+        ctx.fill_rect(x, y, size, size);
+        ctx.set_global_alpha(0.85);
+        ctx.set_stroke_style_str("#ff9aa4");
+        ctx.set_line_width(2.0 * dpr);
+        ctx.stroke_rect(x, y, size, size);
+        ctx.set_fill_style_str("#ffc4ca");
+        ctx.set_font(&format!("600 {}px system-ui", 12.0 * dpr));
+        ctx.set_text_align("left");
+        ctx.set_text_baseline("bottom");
+        let _ = ctx.fill_text_with_max_width(label, x + 4.0 * dpr, y - 3.0 * dpr, size - 8.0 * dpr);
+        ctx.restore();
+    }
 
     // With the glue tool open, show every target the next tap can take,
     // and the first pick in gold.

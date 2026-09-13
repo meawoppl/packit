@@ -51,14 +51,17 @@ const MAX_SCRUB: f64 = 1.0;
 /// squares, so the packing is reported unresolved instead of loaded.
 const CERTIFY_MOVE: f64 = 0.05;
 
-/// Largest distance any square's center moves, or the side changes, between
-/// two arrangements of the same squares.
+/// Largest distance any square's center moves relative to its box's center
+/// between two arrangements of the same squares. The box is drawn centered,
+/// so this is how far a square visibly jumps; a box that only tightens
+/// around the squares doesn't count.
 fn displacement(a: &Arrangement, b: &Arrangement) -> f64 {
+    let (ca, cb) = (a.side / 2.0, b.side / 2.0);
     a.squares
         .iter()
         .zip(&b.squares)
-        .map(|(p, q)| (p.cx - q.cx).hypot(p.cy - q.cy))
-        .fold((a.side - b.side).abs(), f64::max)
+        .map(|(p, q)| ((p.cx - ca) - (q.cx - cb)).hypot((p.cy - ca) - (q.cy - cb)))
+        .fold(0.0, f64::max)
 }
 
 /// The band's size target for a requested `desired` side: it can only run
@@ -158,6 +161,8 @@ pub struct Game {
     mouse: (f64, f64),
     record: Option<KnownRecord>,
     record_note: String,
+    /// Credit drawn beside the best-known square.
+    best_label: String,
     last_report: Option<SolveReport>,
     bound: String,
     status: String,
@@ -278,6 +283,7 @@ impl Component for Game {
             mouse: (0.0, 0.0),
             record: None,
             record_note: "Loading reference record…".into(),
+            best_label: String::new(),
             last_report: None,
             bound: String::new(),
             status: "Find your rhythm. Then squeeze a little.".into(),
@@ -431,7 +437,9 @@ impl Component for Game {
                 match rows {
                     Ok(rows) => {
                         self.record = rows.into_iter().find(|r| r.n == n);
-                        if self.record.is_none() {
+                        if let Some(r) = &self.record {
+                            self.best_label = best_label(r);
+                        } else {
                             self.record_note = "No reference loaded for this square count.".into();
                         }
                     }
@@ -1280,6 +1288,11 @@ impl Game {
                 tether: self.dragging.then_some(self.mouse),
                 violations: &violations,
                 now_ms,
+                best: self
+                    .record
+                    .as_ref()
+                    .filter(|_| self.last_report.as_ref().is_some_and(|r| r.valid))
+                    .map(|r| (r.side, self.best_label.as_str())),
             },
         );
     }
@@ -1600,12 +1613,67 @@ impl Game {
     }
 }
 
+/// "Best known 3.7071 · found by … · proved optimal by …", naming everyone
+/// the sources credit, and every candidate when they disagree.
+fn best_label(r: &KnownRecord) -> String {
+    let mut label = format!("Best known {:.4}", r.side);
+    if !r.packing_by.is_empty() {
+        let join = if r.packing_disputed { " or " } else { ", " };
+        label += &format!(" · found by {}", r.packing_by.join(join));
+    }
+    if r.proof_trivial {
+        label += " · optimal";
+    } else if !r.proof_by.is_empty() {
+        label += &format!(" · proved optimal by {}", r.proof_by.join(", "));
+    } else if r.proven_optimal {
+        label += " · proved optimal";
+    }
+    label
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn displacement_is_the_largest_move_or_side_change() {
+    fn best_label_credits_finders_and_provers() {
+        let record = |packing_by: &[&str], disputed, proof_by: &[&str], trivial| KnownRecord {
+            n: 10,
+            side: 3.0 + std::f64::consts::FRAC_1_SQRT_2,
+            side_expr: None,
+            proven_optimal: trivial || !proof_by.is_empty(),
+            source: String::new(),
+            packing_by: packing_by.iter().map(|s| s.to_string()).collect(),
+            packing_disputed: disputed,
+            proof_by: proof_by.iter().map(|s| s.to_string()).collect(),
+            proof_trivial: trivial,
+        };
+        assert_eq!(
+            best_label(&record(
+                &["Frits Göbel"],
+                false,
+                &["Walter Stromquist"],
+                false
+            )),
+            "Best known 3.7071 · found by Frits Göbel · proved optimal by Walter Stromquist"
+        );
+        assert_eq!(
+            best_label(&record(
+                &["Evert Stenlund", "Frits Göbel"],
+                true,
+                &[],
+                false
+            )),
+            "Best known 3.7071 · found by Evert Stenlund or Frits Göbel"
+        );
+        assert_eq!(
+            best_label(&record(&[], false, &[], true)),
+            "Best known 3.7071 · optimal"
+        );
+    }
+
+    #[test]
+    fn displacement_is_the_largest_move_about_the_box_center() {
         let sq = |cx, cy| shared::Placement { cx, cy, theta: 0.0 };
         let a = Arrangement {
             n: 2,
@@ -1616,8 +1684,14 @@ mod tests {
         let mut b = a.clone();
         b.squares[1] = sq(1.53, 0.54);
         assert!((displacement(&a, &b) - 0.05).abs() < 1e-12);
-        b.side = 2.2;
-        assert!((displacement(&a, &b) - 0.2).abs() < 1e-12);
+        // A box tightened symmetrically around squares that stay put on
+        // screen isn't a move.
+        let loose = Arrangement {
+            n: 2,
+            side: 2.4,
+            squares: vec![sq(0.7, 0.7), sq(1.7, 0.7)],
+        };
+        assert!(displacement(&loose, &a) < 1e-12);
     }
 
     #[test]
