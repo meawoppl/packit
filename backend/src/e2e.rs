@@ -22,7 +22,7 @@
 use crate::auth::proxy::ProxyTrust;
 use crate::config::PublicOrigin;
 use crate::db::DbPool;
-use crate::schema::{passkeys, scores, sessions, solution_shares, users};
+use crate::schema::{board_states, passkeys, scores, sessions, users};
 use crate::test_support::test_db;
 use crate::{build_app, AppState};
 use axum::http::Method;
@@ -33,7 +33,7 @@ use fantoccini::wd::WebDriverCompatibleCommand;
 use fantoccini::{Client, ClientBuilder, Locator};
 use serde_json::{json, Value};
 use shared::glue::{Feature, Glue};
-use shared::{share, Arrangement, Placement};
+use shared::{board, Arrangement, Placement};
 use std::net::SocketAddr;
 use std::process::{Child, Command, Stdio};
 use std::sync::Arc;
@@ -283,35 +283,35 @@ impl Browser {
             .unwrap()
     }
 
-    /// This account's short links, oldest first.
-    fn shares(&self, owner: Uuid) -> Vec<String> {
-        solution_shares::table
-            .filter(solution_shares::created_by.eq(owner))
-            .order(solution_shares::created_at.asc())
-            .select(solution_shares::code)
+    /// The codes of the boards this account created, oldest first.
+    fn boards(&self, owner: Uuid) -> Vec<String> {
+        board_states::table
+            .filter(board_states::created_by.eq(owner))
+            .order(board_states::created_at.asc())
+            .select(board_states::code)
             .load(&mut self.pool.get().unwrap())
             .unwrap()
     }
 
-    async fn wait_shares(&self, owner: Uuid, count: usize) -> Vec<String> {
+    async fn wait_boards(&self, owner: Uuid, count: usize) -> Vec<String> {
         let started = Instant::now();
         loop {
-            let shares = self.shares(owner);
-            if shares.len() >= count {
-                assert_eq!(shares.len(), count, "one link per request");
-                return shares;
+            let boards = self.boards(owner);
+            if boards.len() >= count {
+                assert_eq!(boards.len(), count, "one board per request");
+                return boards;
             }
             if started.elapsed() > STEP {
-                panic!("only {} links; {}", shares.len(), self.page_state().await);
+                panic!("only {} boards; {}", boards.len(), self.page_state().await);
             }
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
     }
 }
 
-/// A box side this run alone uses, so no share dedupes onto an earlier
-/// run's link, which keeps its creator. The offset is a multiple of 2^-18
-/// below 0.25, exact in f32, so a loaded scene reads back unchanged.
+/// A box side this run alone uses, so no board dedupes onto an earlier
+/// run's, which keeps its creator. The offset is a multiple of 2^-18 below
+/// 0.25, exact in f32, so a loaded scene reads back unchanged.
 fn unique_side(base: f64) -> f64 {
     base + (Uuid::new_v4().as_u128() % 65_536) as f64 / 262_144.0
 }
@@ -364,12 +364,12 @@ async fn passkeys_gate_sharing_and_submitting_in_a_real_browser() {
     let first_key = b.add_authenticator().await;
     let username = format!("e2e-{}", &Uuid::new_v4().simple().to_string()[..12]);
 
-    // A signed-out Share freezes the snapshot and opens sign-in; creating
-    // an account then shares exactly that snapshot, not the reset scene.
+    // A signed-out Share freezes the board and opens sign-in; creating an
+    // account then shares exactly that board, not the reset scene.
     let (scene, glues) = glued_scene();
-    b.goto(&format!("/play/2?s={}", share::encode(&scene, &glues)))
+    b.goto(&format!("/play/2?s={}", board::encode(&scene, &glues)))
         .await;
-    b.text(".pg-status", |t| t.starts_with("Shared packing loaded"))
+    b.text(".pg-status", |t| t.starts_with("Board loaded"))
         .await;
     b.find(".account-open").await;
     b.press("Share").await;
@@ -378,25 +378,26 @@ async fn passkeys_gate_sharing_and_submitting_in_a_real_browser() {
     b.reset_scene().await;
     b.sign_in_with(&username, ".account-create").await;
     let owner = b.user_id(&username);
-    let shared = b.wait_shares(owner, 1).await;
+    let shared = b.wait_boards(owner, 1).await;
     assert_eq!(
-        share::decode(&shared[0], 2).unwrap(),
-        share::Snapshot {
+        board::decode(&shared[0], 2).unwrap(),
+        board::BoardState {
             arrangement: scene.clone(),
             glues: glues.clone()
         }
     );
     b.text(".pg-share-status", |t| t.contains("link")).await;
 
-    // Certify a packing and share it while signed in: that link holds the
-    // certified arrangement exactly. Signed out, Submit freezes it; after
-    // signing in again it is submitted as it was.
+    // Certify a glued packing and share it while signed in: that board
+    // holds the certified arrangement and its glue exactly. Signed out,
+    // Submit freezes both; after signing in again the score is submitted
+    // on exactly that board, the same row as the share.
     let loose = Arrangement {
         n: 2,
         side: unique_side(2.5),
         squares: vec![
             Placement {
-                cx: 0.6,
+                cx: 0.5,
                 cy: 0.6,
                 theta: 0.0,
             },
@@ -407,15 +408,19 @@ async fn passkeys_gate_sharing_and_submitting_in_a_real_browser() {
             },
         ],
     };
-    b.goto(&format!("/play/2?s={}", share::encode(&loose, &[])))
+    // The midpoint of square 0's left edge held on the left wall.
+    let wall = vec![Glue {
+        a: Feature::Wall(0),
+        b: Feature::Midpoint { square: 0, edge: 2 },
+    }];
+    b.goto(&format!("/play/2?s={}", board::encode(&loose, &wall)))
         .await;
     b.text(".account-name", |t| t == username).await;
     b.press("Settle").await;
     b.text(".pg-status", |t| t.starts_with("Ready")).await;
     b.press("Share").await;
-    let certified = share::decode(&b.wait_shares(owner, 2).await[1], 2)
-        .unwrap()
-        .arrangement;
+    let certified = board::decode(&b.wait_boards(owner, 2).await[1], 2).unwrap();
+    assert_eq!(certified.glues, wall);
     b.sign_out().await;
     b.press("Submit packing").await;
     b.text(".account-reason", |t| t.starts_with("Sign in to submit"))
@@ -423,16 +428,43 @@ async fn passkeys_gate_sharing_and_submitting_in_a_real_browser() {
     b.reset_scene().await;
     b.sign_in_with(&username, ".account-sign-in").await;
     b.text(".pg-status", |t| t.starts_with("Saved!")).await;
-    let submitted: Vec<(String, Value)> = scores::table
+    let submitted: Vec<(Uuid, String, Value, String, String, bool)> = scores::table
+        .inner_join(board_states::table)
         .filter(scores::user_id.eq(owner))
-        .select((scores::player, scores::arrangement))
+        .select((
+            scores::id,
+            scores::player,
+            scores::arrangement,
+            scores::board_token,
+            board_states::code,
+            scores::glue_recorded,
+        ))
         .load(&mut b.pool.get().unwrap())
         .unwrap();
     assert_eq!(submitted.len(), 1);
-    assert_eq!(submitted[0].0, username);
+    let (id, player, arrangement, token, code, glue_recorded) = &submitted[0];
+    assert_eq!(player, &username);
+    assert!(glue_recorded);
+    assert_eq!(board::decode(code, 2).unwrap(), certified);
     assert_eq!(
-        serde_json::from_value::<Arrangement>(submitted[0].1.clone()).unwrap(),
-        certified
+        serde_json::from_value::<Arrangement>(arrangement.clone()).unwrap(),
+        certified.arrangement
+    );
+    assert_eq!(b.boards(owner).len(), 2, "the score is on the shared board");
+
+    // The score's page links to its board, which opens as that exact code.
+    b.goto(&format!("/score/{id}")).await;
+    b.click(&format!(".score-board[href='/s/{token}']")).await;
+    b.text(".pg-status", |t| t.starts_with("Board loaded"))
+        .await;
+    let opened = b.client.current_url().await.unwrap();
+    assert_eq!(opened.path(), "/play/2");
+    assert_eq!(
+        opened
+            .query_pairs()
+            .find(|(k, _)| k == "s")
+            .map(|(_, v)| v.into_owned()),
+        Some(code.clone())
     );
 
     // Dismissing sign-in drops the frozen Share, even if signing in follows.
@@ -447,18 +479,18 @@ async fn passkeys_gate_sharing_and_submitting_in_a_real_browser() {
     b.sign_in_with(&username, ".account-sign-in").await;
     tokio::time::sleep(Duration::from_millis(1500)).await;
     assert_eq!(
-        b.shares(owner).len(),
+        b.boards(owner).len(),
         2,
         "the cancelled share never went out"
     );
 
     // An expired session: the page still thinks it's signed in, the server
-    // answers 401, and signing in again sends the same snapshot.
+    // answers 401, and signing in again sends the same board.
     let other = Arrangement {
         side: unique_side(2.75),
         ..scene.clone()
     };
-    b.goto(&format!("/play/2?s={}", share::encode(&other, &glues)))
+    b.goto(&format!("/play/2?s={}", board::encode(&other, &glues)))
         .await;
     b.text(".account-name", |t| t == username).await;
     diesel::delete(sessions::table.filter(sessions::user_id.eq(owner)))
@@ -468,10 +500,10 @@ async fn passkeys_gate_sharing_and_submitting_in_a_real_browser() {
     b.text(".pg-sign-in", |t| t.starts_with("You're signed out"))
         .await;
     b.sign_in_with(&username, ".account-sign-in").await;
-    let shared = b.wait_shares(owner, 3).await;
+    let shared = b.wait_boards(owner, 3).await;
     assert_eq!(
-        share::decode(&shared[2], 2).unwrap(),
-        share::Snapshot {
+        board::decode(&shared[2], 2).unwrap(),
+        board::BoardState {
             arrangement: other,
             glues
         }

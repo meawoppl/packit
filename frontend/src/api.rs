@@ -4,7 +4,10 @@ use crate::webauthn;
 use gloo_net::http::{Request, RequestBuilder, Response};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
-use shared::{ApiError, AuthMe, AuthUsername, KnownRecord, ScoreDetail, ScoreEntry, SubmitScore};
+use shared::{
+    ApiError, AuthMe, AuthUsername, BoardCode, BoardLink, KnownRecord, ScoreDetail, ScoreEntry,
+    SubmitScore,
+};
 use std::fmt;
 use std::future::Future;
 use std::time::Duration;
@@ -229,7 +232,7 @@ pub struct Retry {
 }
 
 #[cfg(not(all(test, target_arch = "wasm32")))]
-pub const SHARE_RETRY: Retry = Retry {
+pub const BOARD_RETRY: Retry = Retry {
     attempts: 4,
     budget: Duration::from_secs(20),
     timeout: Duration::from_secs(8),
@@ -238,7 +241,7 @@ pub const SHARE_RETRY: Retry = Retry {
 
 /// Browser tests run the same policy with shorter timings.
 #[cfg(all(test, target_arch = "wasm32"))]
-pub const SHARE_RETRY: Retry = Retry {
+pub const BOARD_RETRY: Retry = Retry {
     attempts: 4,
     budget: Duration::from_secs(6),
     timeout: Duration::from_millis(600),
@@ -338,12 +341,12 @@ pub fn retry_after(
     Some(Duration::try_from_secs_f64(((at - now_ms) / 1000.0).max(0.0)).unwrap_or(Duration::MAX))
 }
 
-/// Create a short link for `body` under [`SHARE_RETRY`]. Every attempt
-/// sends the same snapshot; `cancelled` stops further attempts.
-pub async fn create_share(
-    body: shared::CreateShare,
+/// Save `body` as a board state, for its short link, under [`BOARD_RETRY`].
+/// Every attempt sends the same board; `cancelled` stops further attempts.
+pub async fn save_board(
+    body: BoardCode,
     cancelled: impl Fn() -> bool,
-) -> Result<shared::ShortShare, RetryError> {
+) -> Result<BoardLink, RetryError> {
     // The budget runs on the monotonic clock; wall time only reads HTTP-dates.
     let performance = web_sys::window().and_then(|w| w.performance());
     let now = move || {
@@ -354,10 +357,10 @@ pub async fn create_share(
     let start = now();
     let elapsed = move || Duration::from_secs_f64(((now() - start) / 1000.0).max(0.0));
     retry(
-        &SHARE_RETRY,
+        &BOARD_RETRY,
         elapsed,
         cancelled,
-        |timeout| share_attempt(&body, timeout),
+        |timeout| save_attempt(&body, timeout),
         gloo_timers::future::sleep,
     )
     .await
@@ -376,15 +379,12 @@ async fn within<F: Future>(timeout: Duration, fut: F) -> Option<F::Output> {
     .await
 }
 
-async fn share_attempt(
-    body: &shared::CreateShare,
-    timeout: Duration,
-) -> Attempt<shared::ShortShare> {
+async fn save_attempt(body: &BoardCode, timeout: Duration) -> Attempt<BoardLink> {
     // The race below enforces the deadline; aborting also makes the browser
     // drop the request, when AbortController is available.
     let controller = web_sys::AbortController::new().ok();
     let signal = controller.as_ref().map(|c| c.signal());
-    let Ok(request) = with_session(Request::post("/api/shares"))
+    let Ok(request) = with_session(Request::post("/api/boards"))
         .abort_signal(signal.as_ref())
         .json(body)
     else {
@@ -446,7 +446,7 @@ mod tests {
         Attempt::Transient { after: None }
     }
 
-    /// Run `retry` under [`SHARE_RETRY`] against a scripted server on a fake
+    /// Run `retry` under [`BOARD_RETRY`] against a scripted server on a fake
     /// clock. Each entry is how long the attempt runs and how it ends; an
     /// attempt never runs past the time it's given, as the abort ensures.
     /// Returns the result, each attempt's allowed time, and each wait.
@@ -459,7 +459,7 @@ mod tests {
         let waits = RefCell::new(Vec::new());
         let script = RefCell::new(script.into_iter());
         let result = block_on(retry(
-            &SHARE_RETRY,
+            &BOARD_RETRY,
             || clock.get(),
             || cancel_after.is_some_and(|n| timeouts.borrow().len() >= n),
             |timeout| {
@@ -564,7 +564,7 @@ mod tests {
             "{waits:?}"
         );
         let total: Duration = timeouts.iter().chain(&waits).sum();
-        assert!(total <= SHARE_RETRY.budget, "{total:?}");
+        assert!(total <= BOARD_RETRY.budget, "{total:?}");
     }
 
     #[test]

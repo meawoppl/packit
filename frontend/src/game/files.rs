@@ -1,6 +1,6 @@
 //! JSON export and import of arrangements.
 
-use shared::{share, Arrangement};
+use shared::{board, Arrangement};
 use wasm_bindgen::{JsCast, JsValue};
 use web_sys::{Blob, BlobPropertyBag, HtmlAnchorElement, Url};
 
@@ -41,7 +41,7 @@ pub fn parse_arrangement(text: &str, n: u32) -> Result<Arrangement, String> {
     let inner = value.get("arrangement").unwrap_or(&value).clone();
     let arr: Arrangement = serde_json::from_value(inner)
         .map_err(|_| format!("Expected {n} squares with finite coordinates"))?;
-    share::check_arrangement(&arr, n)?;
+    board::check_arrangement(&arr, n)?;
     Ok(arr)
 }
 

@@ -11,10 +11,10 @@ use crate::config::PublicOrigin;
 use crate::handlers::auth::{
     CEREMONY_INVALID, NOT_SIGNED_IN, PASSKEY_TAKEN, REAUTH, SIGN_IN_FAILED, TOO_MANY, VERIFY_FAILED,
 };
+use crate::handlers::boards::SIGN_IN_TO_SHARE;
 use crate::handlers::scores::SIGN_IN_TO_SUBMIT;
-use crate::handlers::shares::SIGN_IN_TO_SHARE;
-use crate::schema::{passkeys, scores, sessions, solution_shares, users};
-use crate::test_support::{state_for, test_db, unconnected_pool, TEST_URL};
+use crate::schema::{board_states, passkeys, scores, sessions, users};
+use crate::test_support::{creatorless_board, state_for, test_db, unconnected_pool, TEST_URL};
 use crate::AppState;
 use axum::body::Body;
 use axum::extract::ConnectInfo;
@@ -1749,7 +1749,7 @@ async fn ownership_columns_are_indexed() {
     };
     let found: i64 = diesel::select(diesel::dsl::sql::<diesel::sql_types::BigInt>(
         "(SELECT count(*) FROM pg_indexes WHERE indexname IN \
-         ('scores_user_id_idx', 'solution_shares_created_by_idx'))",
+         ('scores_user_id_idx', 'board_states_created_by_idx'))",
     ))
     .get_result(&mut conn(&state))
     .unwrap();
@@ -1772,15 +1772,19 @@ fn unique_squares() -> shared::Arrangement {
     }
 }
 
-fn share_body(arrangement: &shared::Arrangement) -> Value {
-    json!({ "n": 2, "code": shared::share::encode(arrangement, &[]) })
+fn board_body(arrangement: &shared::Arrangement) -> Value {
+    json!({ "n": 2, "code": shared::board::encode(arrangement, &[]) })
 }
 
-fn share_owner(state: &AppState, url: &Value) -> Option<Uuid> {
+fn score_body(arrangement: &shared::Arrangement) -> Value {
+    json!({ "board": board_body(arrangement) })
+}
+
+fn board_owner(state: &AppState, url: &Value) -> Option<Uuid> {
     let token = url.as_str().unwrap().rsplit('/').next().unwrap().to_owned();
-    solution_shares::table
+    board_states::table
         .find(token)
-        .select(solution_shares::created_by)
+        .select(board_states::created_by)
         .first(&mut conn(state))
         .unwrap()
 }
@@ -1799,11 +1803,11 @@ async fn signed_in_writes_need_the_exact_origin_and_a_session() {
         StatusCode::OK
     );
     let arrangement = unique_squares();
-    let score = json!({ "arrangement": arrangement });
-    let share = share_body(&arrangement);
+    let score = score_body(&arrangement);
+    let board = board_body(&arrangement);
     for (uri, body, why) in [
         ("/api/scores", &score, SIGN_IN_TO_SUBMIT),
-        ("/api/shares", &share, SIGN_IN_TO_SHARE),
+        ("/api/boards", &board, SIGN_IN_TO_SHARE),
     ] {
         let r = Browser::new().post(&app, uri, body.clone()).await;
         assert_eq!((r.status, r.error()), (StatusCode::UNAUTHORIZED, why));
@@ -1832,10 +1836,10 @@ async fn signed_in_writes_need_the_exact_origin_and_a_session() {
         .first(&mut conn(&state))
         .unwrap();
     assert_eq!(credited, Some(owner));
-    let r = b.post(&app, "/api/shares", share).await;
+    let r = b.post(&app, "/api/boards", board).await;
     assert_eq!(r.status, StatusCode::OK, "{:?}", r.body);
     assert!(r.headers.get(header::ACCESS_CONTROL_ALLOW_ORIGIN).is_none());
-    assert_eq!(share_owner(&state, &r.body["url"]), Some(owner));
+    assert_eq!(board_owner(&state, &r.body["url"]), Some(owner));
 
     // Reads keep their permissive CORS.
     let mut reader = Browser::new();
@@ -1858,7 +1862,7 @@ async fn scores_are_named_by_the_account() {
         register(&app, &mut b, &mut soft(), &name).await.status,
         StatusCode::OK
     );
-    let body = json!({ "player": "mallory", "arrangement": unique_squares() });
+    let body = json!({ "player": "mallory", "board": board_body(&unique_squares()) });
     let r = b.post(&app, "/api/scores", body).await;
     assert_eq!(r.status, StatusCode::OK, "{:?}", r.body);
     assert_eq!(r.body["player"], name.as_str());
@@ -1882,13 +1886,16 @@ async fn legacy_scores_stay_unclaimed() {
     };
     let name = fresh("legacy");
     let legacy = Uuid::new_v4();
+    let arrangement = unique_squares();
     diesel::insert_into(scores::table)
         .values((
             scores::id.eq(legacy),
             scores::player.eq(&name),
             scores::n.eq(2),
-            scores::side.eq(2.5),
-            scores::arrangement.eq(serde_json::to_value(unique_squares()).unwrap()),
+            scores::side.eq(arrangement.side),
+            scores::arrangement.eq(serde_json::to_value(&arrangement).unwrap()),
+            scores::board_token.eq(creatorless_board(&mut conn(&state), &arrangement)),
+            scores::glue_recorded.eq(false),
         ))
         .execute(&mut conn(&state))
         .unwrap();
@@ -1898,11 +1905,7 @@ async fn legacy_scores_stay_unclaimed() {
         StatusCode::OK
     );
     let r = b
-        .post(
-            &app,
-            "/api/scores",
-            json!({ "arrangement": unique_squares() }),
-        )
+        .post(&app, "/api/scores", score_body(&unique_squares()))
         .await;
     assert_eq!(r.status, StatusCode::OK, "{:?}", r.body);
     let owners: Vec<(Uuid, Option<Uuid>)> = scores::table
@@ -1921,11 +1924,11 @@ async fn legacy_scores_stay_unclaimed() {
     assert_eq!(detail.body["entry"]["player"], name.as_str());
 }
 
-/// Sharing a snapshot that already has a link returns that link and leaves
-/// its creator alone, whether it has none (a legacy row) or another
-/// account. Every account gets the same response.
+/// Sharing or submitting a board that is already stored returns that board
+/// and leaves its creator alone, whether it has none (a legacy row) or
+/// another account. Every account gets the same response.
 #[tokio::test]
-async fn a_reshared_snapshot_keeps_its_original_creator() {
+async fn a_reused_board_keeps_its_original_creator() {
     let Some((state, app)) = db_app() else {
         return;
     };
@@ -1939,32 +1942,26 @@ async fn a_reshared_snapshot_keeps_its_original_creator() {
     }
 
     let legacy = unique_squares();
-    let code = shared::share::encode(&legacy, &[]);
-    let token = Uuid::new_v4().simple().to_string()[..24].to_owned();
-    diesel::insert_into(solution_shares::table)
-        .values((
-            solution_shares::token.eq(&token),
-            solution_shares::payload_hash.eq(Sha256::digest(code.as_bytes()).to_vec()),
-            solution_shares::n.eq(2),
-            solution_shares::code.eq(&code),
-        ))
-        .execute(&mut conn(&state))
-        .unwrap();
-    let r = second.post(&app, "/api/shares", share_body(&legacy)).await;
+    let token = creatorless_board(&mut conn(&state), &legacy);
+    let r = second.post(&app, "/api/boards", board_body(&legacy)).await;
     assert_eq!(r.status, StatusCode::OK, "{:?}", r.body);
     assert_eq!(r.body["url"], format!("{TEST_URL}/s/{token}"));
-    assert_eq!(share_owner(&state, &r.body["url"]), None);
+    assert_eq!(board_owner(&state, &r.body["url"]), None);
+    let r = second.post(&app, "/api/scores", score_body(&legacy)).await;
+    assert_eq!(r.status, StatusCode::OK, "{:?}", r.body);
+    assert_eq!(r.body["board"], token.as_str());
+    assert_eq!(board_owner(&state, &json!(token)), None);
 
-    let snapshot = share_body(&unique_squares());
-    let original = first.post(&app, "/api/shares", snapshot.clone()).await;
+    let board = board_body(&unique_squares());
+    let original = first.post(&app, "/api/boards", board.clone()).await;
     assert_eq!(original.status, StatusCode::OK);
-    let again = second.post(&app, "/api/shares", snapshot).await;
+    let again = second.post(&app, "/api/boards", board).await;
     assert_eq!(
         (again.status, &again.body),
         (original.status, &original.body)
     );
     assert_eq!(
-        share_owner(&state, &again.body["url"]),
+        board_owner(&state, &again.body["url"]),
         Some(user_id(&state, &first_name))
     );
 }
@@ -1979,12 +1976,8 @@ async fn credited_profiles_cannot_submit_or_share() {
     let friedman = user_id(&state, "friedman");
     let arrangement = unique_squares();
     for (uri, body, why) in [
-        (
-            "/api/scores",
-            json!({ "arrangement": arrangement }),
-            SIGN_IN_TO_SUBMIT,
-        ),
-        ("/api/shares", share_body(&arrangement), SIGN_IN_TO_SHARE),
+        ("/api/scores", score_body(&arrangement), SIGN_IN_TO_SUBMIT),
+        ("/api/boards", board_body(&arrangement), SIGN_IN_TO_SHARE),
     ] {
         let token = session::create(&mut conn(&state), friedman, None).unwrap();
         let mut b = Browser::new();
@@ -2011,8 +2004,8 @@ async fn reads_and_existing_links_stay_anonymous() {
         StatusCode::OK
     );
     let squares = unique_squares();
-    let code = shared::share::encode(&squares, &[]);
-    let r = owner.post(&app, "/api/shares", share_body(&squares)).await;
+    let code = shared::board::encode(&squares, &[]);
+    let r = owner.post(&app, "/api/boards", board_body(&squares)).await;
     assert_eq!(r.status, StatusCode::OK);
     let link = r.body["url"]
         .as_str()
@@ -2063,12 +2056,12 @@ async fn reads_and_existing_links_stay_anonymous() {
             } else {
                 StatusCode::FORBIDDEN
             };
-            let score = json!({ "arrangement": squares });
+            let score = score_body(&squares);
             let r = call(&app, req(Method::POST, "/api/scores", Some(score))).await;
             assert_eq!(r.status, refused, "{:?}", r.body);
             let r = call(
                 &app,
-                req(Method::POST, "/api/shares", Some(share_body(&squares))),
+                req(Method::POST, "/api/boards", Some(board_body(&squares))),
             )
             .await;
             assert_eq!(r.status, refused, "{:?}", r.body);

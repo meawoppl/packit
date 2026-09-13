@@ -1,7 +1,8 @@
-//! Share links: a packing encoded as hex in the `s` query parameter of
-//! `/play/:n`. Little-endian layout: version `u8`, `n` as `u16`, `side` as
-//! `f64`, then `cx`, `cy`, `theta` as `f64` for each square. Full `f64`
-//! precision keeps a validated packing exactly as it was measured.
+//! Board codes: a board state (a packing and its glue) encoded as hex. They
+//! are what `board_states` stores, what Share and Submit send, and the `s`
+//! query parameter of `/play/:n`. Little-endian layout: version `u8`, `n` as
+//! `u16`, `side` as `f64`, then `cx`, `cy`, `theta` as `f64` for each square.
+//! Full `f64` precision keeps a validated packing exactly as it was measured.
 //!
 //! A glue trailer follows only when there is at least one glue, so glue-free
 //! codes keep the layout above: tag `u8` (`b'G'`), trailer version `u8` (2),
@@ -24,17 +25,17 @@ const _: () = assert!(MAX_N <= 128, "square indices must fit in 7 bits");
 /// Coordinate bound for loaded arrangements.
 const MAX_COORD: f64 = 1000.0;
 
-/// A shared scene: the packing and the glue between its features.
+/// A board state: the packing and the glue between its features.
 #[derive(Debug, Clone, PartialEq)]
-pub struct Snapshot {
+pub struct BoardState {
     pub arrangement: Arrangement,
     pub glues: Vec<Glue>,
 }
 
-/// Longest valid share code, for request size limits.
+/// Longest valid board code, for request size limits.
 pub const MAX_LEN: usize = hex_len(MAX_N, MAX_GLUES);
 
-/// Hex length of a share code for `n` squares and `glues` glues.
+/// Hex length of a board code for `n` squares and `glues` glues.
 const fn hex_len(n: u32, glues: usize) -> usize {
     let trailer = if glues == 0 {
         0
@@ -82,13 +83,13 @@ fn from_hex(hex: &[u8]) -> Result<Vec<u8>, String> {
                 .then(|| std::str::from_utf8(pair).ok())
                 .flatten()
                 .and_then(|s| u8::from_str_radix(s, 16).ok())
-                .ok_or_else(|| "This share link is not valid hex".to_string())
+                .ok_or_else(|| "This board code is not valid hex".to_string())
         })
         .collect()
 }
 
 fn feature(bits: u16) -> Result<Feature, String> {
-    let unknown = || Err("This share link has an unknown glue feature".into());
+    let unknown = || Err("This board code has an unknown glue feature".into());
     if bits >> 11 != 0 {
         return unknown();
     }
@@ -112,10 +113,10 @@ fn feature(bits: u16) -> Result<Feature, String> {
     })
 }
 
-/// Decode a share code for the `n` in the page path. The length is checked
+/// Decode a board code for `n` squares. The length is checked
 /// before anything is allocated, and the result passes the same limits as a
 /// JSON import and as the play engine's glue.
-pub fn decode(hex: &str, n: u32) -> Result<Snapshot, String> {
+pub fn decode(hex: &str, n: u32) -> Result<BoardState, String> {
     if !(1..=MAX_N).contains(&n) {
         return Err(format!("n must be between 1 and {MAX_N}"));
     }
@@ -127,28 +128,28 @@ pub fn decode(hex: &str, n: u32) -> Result<Snapshot, String> {
         0
     } else {
         let Some(trailer) = hex.get(base..base + 2 * TRAILER_BYTES) else {
-            return Err(format!("This share link is not for {n} squares"));
+            return Err(format!("This board code is not for {n} squares"));
         };
         let trailer = from_hex(trailer)?;
         if trailer[..2] != [GLUE_TAG, GLUE_VERSION] {
-            return Err("This share link has unsupported glue data".into());
+            return Err("This board code has unsupported glue data".into());
         }
         let count = u16::from_le_bytes([trailer[2], trailer[3]]) as usize;
         if !(1..=MAX_GLUES).contains(&count) {
-            return Err("This share link has an invalid glue count".into());
+            return Err("This board code has an invalid glue count".into());
         }
         if hex.len() != hex_len(n, count) {
-            return Err("This share link's glue data has the wrong length".into());
+            return Err("This board code's glue data has the wrong length".into());
         }
         count
     };
     let bytes = from_hex(hex)?;
     let f64_at = |i: usize| f64::from_le_bytes(bytes[i..i + 8].try_into().unwrap());
     if bytes[0] != VERSION {
-        return Err(format!("Unsupported share link version {}", bytes[0]));
+        return Err(format!("Unsupported board code version {}", bytes[0]));
     }
     if u16::from_le_bytes([bytes[1], bytes[2]]) as u32 != n {
-        return Err(format!("This share link is not for {n} squares"));
+        return Err(format!("This board code is not for {n} squares"));
     }
     let squares = (0..n as usize)
         .map(|i| {
@@ -180,10 +181,10 @@ pub fn decode(hex: &str, n: u32) -> Result<Snapshot, String> {
         })
         .collect::<Result<Vec<_>, String>>()?;
     glue::check(&glues, n as usize)?;
-    Ok(Snapshot { arrangement, glues })
+    Ok(BoardState { arrangement, glues })
 }
 
-/// Limits every loaded arrangement must meet (JSON import and share links):
+/// Limits every loaded arrangement must meet (JSON import and board codes):
 /// `n` squares, a finite side in `[1, 1000]`, and finite bounded coordinates.
 pub fn check_arrangement(arr: &Arrangement, n: u32) -> Result<(), String> {
     let in_range = |v: f64| v.is_finite() && v.abs() <= MAX_COORD;
@@ -280,7 +281,7 @@ mod tests {
         assert!(hex.starts_with(&encode(&five(), &[])));
         assert_eq!(
             decode(&hex, 5).unwrap(),
-            Snapshot {
+            BoardState {
                 arrangement: five(),
                 glues
             }
@@ -385,13 +386,13 @@ mod tests {
         let over = format!("{base}4702{:02x}{:02x}", too_many[0], too_many[1]);
         assert_eq!(
             decode(&over, 5),
-            Err("This share link has an invalid glue count".into())
+            Err("This board code has an invalid glue count".into())
         );
         assert!(decode(&format!("{base}4702ffff"), 5).is_err());
         let max = (MAX_GLUES as u16).to_le_bytes();
         assert_eq!(
             decode(&format!("{base}4702{:02x}{:02x}", max[0], max[1]), 5),
-            Err("This share link's glue data has the wrong length".into())
+            Err("This board code's glue data has the wrong length".into())
         );
     }
 

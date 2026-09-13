@@ -4,15 +4,107 @@ use crate::auth::proxy::ProxyTrust;
 use crate::auth::{hex, session};
 use crate::config::PublicOrigin;
 use crate::db::{self, DbPool};
-use crate::schema::users;
+use crate::schema::{board_states, users};
 use crate::AppState;
+use axum::body::Body;
+use axum::http::{header, Request, StatusCode};
+use axum::Router;
+use diesel::connection::SimpleConnection;
 use diesel::pg::PgConnection;
 use diesel::prelude::*;
 use diesel::r2d2::{ConnectionManager, Pool};
+use sha2::{Digest, Sha256};
+use shared::{board, Arrangement};
 use std::sync::Arc;
+use tower::ServiceExt;
 use uuid::Uuid;
 
 pub const TEST_URL: &str = "https://packit.test";
+
+/// Every up migration, oldest first, for tests that rebuild the schema in a
+/// scratch namespace.
+pub const UP_MIGRATIONS: [&str; 5] = [
+    include_str!("../migrations/00000000000000_initial/up.sql"),
+    include_str!("../migrations/2026-09-13-000000_solution_shares/up.sql"),
+    include_str!("../migrations/2026-09-14-000000_share_glue/up.sql"),
+    include_str!("../migrations/2026-09-14-000100_passkey_auth/up.sql"),
+    include_str!("../migrations/2026-09-14-000200_board_states/up.sql"),
+];
+
+/// Inside a test transaction, which rolls it all back: create a scratch
+/// schema, put it first on the search path, and run the first `count` up
+/// migrations there, so real rows and concurrent tests are never touched.
+pub fn scratch_schema(conn: &mut PgConnection, count: usize) -> QueryResult<()> {
+    let schema = format!("scratch_{}", Uuid::new_v4().simple());
+    conn.batch_execute(&format!(
+        "CREATE SCHEMA {schema}; SET LOCAL search_path TO {schema}, public;"
+    ))?;
+    for up in &UP_MIGRATIONS[..count] {
+        conn.batch_execute(up)?;
+    }
+    Ok(())
+}
+
+/// Tables as they were before a later migration renamed them.
+pub mod legacy {
+    diesel::table! {
+        solution_shares (token) {
+            token -> Text,
+            payload_hash -> Bytea,
+            n -> Int4,
+            code -> Text,
+            created_at -> Timestamptz,
+            created_by -> Nullable<Uuid>,
+        }
+    }
+}
+
+/// Store `arrangement`, glue-free, as a board with no creator, like the
+/// share links made before accounts; returns its token.
+pub fn creatorless_board(conn: &mut PgConnection, arrangement: &Arrangement) -> String {
+    let code = board::encode(arrangement, &[]);
+    let token = Uuid::new_v4().simple().to_string()[..24].to_owned();
+    diesel::insert_into(board_states::table)
+        .values((
+            board_states::token.eq(&token),
+            board_states::payload_hash.eq(Sha256::digest(code.as_bytes()).to_vec()),
+            board_states::n.eq(arrangement.n as i32),
+            board_states::code.eq(&code),
+        ))
+        .execute(conn)
+        .unwrap();
+    token
+}
+
+/// Send `req` through `app`: the status and the JSON body.
+pub async fn call<T: serde::de::DeserializeOwned>(
+    app: &Router,
+    req: Request<Body>,
+) -> (StatusCode, T) {
+    let resp = app.clone().oneshot(req).await.unwrap();
+    let status = resp.status();
+    let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    (status, serde_json::from_slice(&bytes).unwrap())
+}
+
+/// A same-origin POST with no session.
+pub fn post_json(uri: &str, body: &impl serde::Serialize) -> Request<Body> {
+    Request::post(uri)
+        .header(header::ORIGIN, TEST_URL)
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(serde_json::to_vec(body).unwrap()))
+        .unwrap()
+}
+
+/// A same-origin POST from `player`'s browser.
+pub fn post_as(uri: &str, body: &impl serde::Serialize, player: &Player) -> Request<Body> {
+    let mut req = post_json(uri, body);
+    req.headers_mut()
+        .insert(header::COOKIE, player.cookie.parse().unwrap());
+    req
+}
 
 pub fn state_for(db_pool: DbPool) -> Arc<AppState> {
     let origin = PublicOrigin::parse(TEST_URL, false).unwrap();

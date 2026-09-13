@@ -847,11 +847,11 @@ fn two_squares() -> Arrangement {
 async fn share_link_loads_paused_and_unvalidated() {
     let _gpu = NoWebGpu::install();
     let (handle, root, physics) =
-        mount_at(&format!("s={}", share::encode(&two_squares(), &[]))).await;
+        mount_at(&format!("s={}", board::encode(&two_squares(), &[]))).await;
     assert!(physics.paused(), "shared packings open paused");
     assert_eq!(physics.arrangement(), two_squares());
     assert!(physics.glues().is_empty());
-    assert!(text(&root, ".pg-status").starts_with("Shared packing loaded"));
+    assert!(text(&root, ".pg-status").starts_with("Board loaded"));
     assert!(
         text(&root, ".pg-benchmark").contains("unchecked")
             || text(&root, ".pg-benchmark").contains("No reference")
@@ -864,13 +864,13 @@ async fn share_link_loads_paused_and_unvalidated() {
 async fn bad_share_link_reports_an_error() {
     let _gpu = NoWebGpu::install();
     let (handle, root, physics) = mount_at("s=zz").await;
-    assert!(text(&root, ".pg-status").starts_with("Share link:"));
+    assert!(text(&root, ".pg-status").starts_with("Board link:"));
     assert_eq!(physics.side(), 2.5, "nothing was loaded");
     handle.destroy();
     root.remove();
 }
 
-/// One scripted `/api/shares` response; status 0 never answers.
+/// One scripted `/api/boards` response; status 0 never answers.
 #[derive(Clone, Copy)]
 struct Reply {
     status: u16,
@@ -894,14 +894,14 @@ const UNAVAILABLE: Reply = Reply {
     stall_body: false,
 };
 
-/// Stub only /api/shares; other mounted-screen requests still use fetch.
+/// Stub only /api/boards; other mounted-screen requests still use fetch.
 /// Replies follow the script, repeating its last entry.
 struct ShareApi {
     original: wasm_bindgen::JsValue,
     _fetch: wasm_bindgen::closure::Closure<
         dyn FnMut(wasm_bindgen::JsValue, wasm_bindgen::JsValue) -> js_sys::Promise,
     >,
-    requests: Rc<std::cell::RefCell<Vec<shared::CreateShare>>>,
+    requests: Rc<std::cell::RefCell<Vec<shared::BoardCode>>>,
     /// When each request arrived, in milliseconds.
     arrivals: Rc<std::cell::RefCell<Vec<f64>>>,
     /// Each request's abort signal.
@@ -920,7 +920,7 @@ impl ShareApi {
         let replacement = wasm_bindgen::closure::Closure::wrap(Box::new(
             move |request: wasm_bindgen::JsValue, init: wasm_bindgen::JsValue| {
                 let req = request.clone().dyn_into::<web_sys::Request>().unwrap();
-                if !req.url().ends_with("/api/shares") {
+                if !req.url().ends_with("/api/boards") {
                     return fetch
                         .call2(&web_sys::window().unwrap(), &request, &init)
                         .unwrap()
@@ -1084,14 +1084,14 @@ async fn share_button_copies_a_short_link_for_the_captured_precise_snapshot() {
     wait_share(&root).await;
     let body = api.requests.borrow()[0].clone();
     assert_eq!(
-        share::decode(&body.code, body.n).unwrap().arrangement,
+        board::decode(&body.code, body.n).unwrap().arrangement,
         report
     );
     assert_eq!(
         clipboard.values.borrow().as_slice(),
         ["https://packit.test/s/0123456789abcdef01234567"]
     );
-    assert!(text(&root, ".pg-share-status").contains("Snapshot link copied"));
+    assert!(text(&root, ".pg-share-status").contains("Board link copied"));
     assert_eq!(
         web_sys::window().unwrap().location().href().unwrap(),
         url,
@@ -1106,7 +1106,7 @@ async fn sharing_during_a_settle_keeps_it_and_its_snapshot() {
     let _gpu = NoWebGpu::install();
     let api = ShareApi::install(&[OK]);
     let clipboard = Clipboard::install(false);
-    let (handle, root, physics) = mount_at(&format!("s={}", share::encode(&cramped(), &[]))).await;
+    let (handle, root, physics) = mount_at(&format!("s={}", board::encode(&cramped(), &[]))).await;
     submit_button(&root, "Settle").click();
     sleep(30).await;
     assert_eq!(physics.settle_status().phase, SettlePhase::Running);
@@ -1116,7 +1116,7 @@ async fn sharing_during_a_settle_keeps_it_and_its_snapshot() {
     wait_share(&root).await;
     let body = api.requests.borrow()[0].clone();
     assert_eq!(
-        share::decode(&body.code, body.n).unwrap().arrangement,
+        board::decode(&body.code, body.n).unwrap().arrangement,
         snapshot
     );
     assert_eq!(clipboard.values.borrow().len(), 1);
@@ -1154,7 +1154,7 @@ async fn share_copy_failure_offers_selectable_url_and_fresh_gesture_retry() {
     clipboard.fail.set(false);
     submit_button(&root, "Copy link").click();
     sleep(50).await;
-    assert!(text(&root, ".pg-share-status").contains("Snapshot link copied"));
+    assert!(text(&root, ".pg-share-status").contains("Board link copied"));
     assert_eq!(
         api.requests.borrow().len(),
         1,
@@ -1231,7 +1231,7 @@ async fn retry_after_delays_the_next_attempt() {
         "retried after {} ms",
         arrivals[1] - arrivals[0]
     );
-    assert!(text(&root, ".pg-share-status").contains("Snapshot link copied"));
+    assert!(text(&root, ".pg-share-status").contains("Board link copied"));
     handle.destroy();
     root.remove();
 }
@@ -1405,7 +1405,7 @@ async fn share_captures_the_glue_and_reopening_the_link_restores_it() {
     );
     let body = requests[1].clone();
     assert_eq!(
-        share::decode(&body.code, 2).unwrap().glues,
+        board::decode(&body.code, 2).unwrap().glues,
         two_square_glues()
     );
     handle.destroy();
@@ -1414,7 +1414,7 @@ async fn share_captures_the_glue_and_reopening_the_link_restores_it() {
     let (handle, root, physics) = mount_at(&format!("s={}", body.code)).await;
     assert_eq!(physics.glues(), two_square_glues());
     assert!(physics.paused(), "shared packings open paused");
-    assert!(text(&root, ".pg-status").starts_with("Shared packing loaded"));
+    assert!(text(&root, ".pg-status").starts_with("Board loaded"));
     assert!(TEST_REPORT.with(|r| r.borrow().is_none()), "not validated");
     handle.destroy();
     root.remove();
@@ -1523,7 +1523,7 @@ async fn squeeze_down_relaxes_between_squeezes_and_stop_keeps_glue() {
 #[wasm_bindgen_test]
 async fn settling_opens_the_box_instead_of_popping() {
     let _gpu = NoWebGpu::install();
-    let (handle, root, physics) = mount_at(&format!("s={}", share::encode(&cramped(), &[]))).await;
+    let (handle, root, physics) = mount_at(&format!("s={}", board::encode(&cramped(), &[]))).await;
     click_button(&root, ".pg-submit", "Settle");
     sleep(30).await;
     let status = text(&root, ".pg-status");
@@ -1650,7 +1650,7 @@ fn click_button(root: &Element, scope: &str, label: &str) {
 #[wasm_bindgen_test]
 async fn starting_a_run_cancels_a_settle() {
     let _gpu = NoWebGpu::install();
-    let (handle, root, physics) = mount_at(&format!("s={}", share::encode(&cramped(), &[]))).await;
+    let (handle, root, physics) = mount_at(&format!("s={}", board::encode(&cramped(), &[]))).await;
     click_button(&root, ".pg-submit", "Settle");
     sleep(100).await;
     let status = text(&root, ".pg-status");
@@ -1679,7 +1679,7 @@ async fn starting_a_run_cancels_a_settle() {
 #[wasm_bindgen_test]
 async fn cancelling_a_settle_drops_its_pending_submit() {
     let _gpu = NoWebGpu::install();
-    let (handle, root, physics) = mount_at(&format!("s={}", share::encode(&cramped(), &[]))).await;
+    let (handle, root, physics) = mount_at(&format!("s={}", board::encode(&cramped(), &[]))).await;
     click_button(&root, ".pg-submit", "Submit packing");
     sleep(100).await;
     let status = text(&root, ".pg-status");
@@ -1717,7 +1717,7 @@ async fn cancelling_a_settle_drops_its_pending_submit() {
 #[wasm_bindgen_test]
 async fn submitting_during_a_settle_submits_when_it_measures() {
     let _gpu = NoWebGpu::install();
-    let (handle, root, _physics) = mount_at(&format!("s={}", share::encode(&cramped(), &[]))).await;
+    let (handle, root, _physics) = mount_at(&format!("s={}", board::encode(&cramped(), &[]))).await;
     click_button(&root, ".pg-submit", "Settle");
     sleep(100).await;
     let status = text(&root, ".pg-status");
@@ -2039,7 +2039,7 @@ async fn settling_and_sharing_leave_the_address_bar_alone() {
     let _gpu = NoWebGpu::install();
     let _api = ShareApi::install(&[OK]);
     let _clipboard = Clipboard::install(false);
-    let solution = format!("s={}", share::encode(&two_squares(), &[]));
+    let solution = format!("s={}", board::encode(&two_squares(), &[]));
     for query in ["", solution.as_str()] {
         let (handle, root, _) = mount_at(query).await;
         let href = web_sys::window().unwrap().location().href().unwrap();
@@ -2058,7 +2058,7 @@ async fn settling_and_sharing_leave_the_address_bar_alone() {
         sleep(30).await;
         wait_share(&root).await;
         let status = text(&root, ".pg-share-status");
-        assert!(status.contains("Snapshot link copied"), "{query}: {status}");
+        assert!(status.contains("Board link copied"), "{query}: {status}");
         assert_eq!(
             web_sys::window().unwrap().location().href().unwrap(),
             href,
@@ -2138,13 +2138,37 @@ fn saved() -> crate::account::browser_tests::Reply {
             "side": 2.0,
             "submitted_at": "2026-09-13T00:00:00",
             "rank": 1,
+            "board": "0123456789abcdef01234567",
+            "glue_recorded": true,
         }),
     )
 }
 
+/// Glue the top midpoints of the two squares with the glue tool, and
+/// return that glue.
+async fn glue_tops(root: &Element, physics: &Physics) -> Vec<Glue> {
+    let canvas = canvas_of(root);
+    let extent = physics.side();
+    double_tap(&canvas, top_midpoint(physics, 0), extent).await;
+    tap_at(&canvas, top_midpoint(physics, 1), extent).await;
+    let glues = physics.glues();
+    assert_eq!(glues.len(), 1);
+    glues
+}
+
+/// The body Submit sends for `arrangement` and `glues`.
+fn submitted(arrangement: &Arrangement, glues: &[Glue]) -> SubmitScore {
+    SubmitScore {
+        board: BoardCode {
+            n: arrangement.n,
+            code: board::encode(arrangement, glues),
+        },
+    }
+}
+
 /// The shared two-square packing with every kind of glue.
 fn glued_code() -> String {
-    share::encode(&two_squares(), &two_square_glues())
+    board::encode(&two_squares(), &two_square_glues())
 }
 
 #[wasm_bindgen_test]
@@ -2199,8 +2223,8 @@ async fn a_frozen_share_goes_out_once_after_signing_in() {
     let requests = api.requests.borrow().clone();
     assert_eq!(requests.len(), 1);
     assert_eq!(
-        share::decode(&requests[0].code, 2).unwrap(),
-        share::Snapshot {
+        board::decode(&requests[0].code, 2).unwrap(),
+        board::BoardState {
             arrangement: two_squares(),
             glues: two_square_glues(),
         }
@@ -2255,11 +2279,15 @@ async fn unmounting_drops_a_request_waiting_for_sign_in() {
     assert!(api.requests.borrow().is_empty());
 }
 
+/// Submit sends one board code: the certified packing with the scene's
+/// glue. Reopening that board, where its `/s/` link redirects, restores the
+/// same squares and glue.
 #[wasm_bindgen_test]
-async fn signed_in_submit_sends_only_the_arrangement() {
+async fn signed_in_submit_sends_the_certified_board_with_its_glue() {
     let _gpu = NoWebGpu::install();
     let scores = Api::install(&[("/api/scores", vec![saved()])]);
-    let (handle, root, _) = mount().await;
+    let (handle, root, physics) = mount().await;
+    let glues = glue_tops(&root, &physics).await;
     submit_button(&root, "Settle").click();
     wait_for_report(8000).await;
     let report = TEST_REPORT.with(|r| r.borrow().clone()).unwrap();
@@ -2270,9 +2298,54 @@ async fn signed_in_submit_sends_only_the_arrangement() {
     .await;
     let sent = scores.sent("/api/scores");
     assert_eq!(sent.len(), 1);
-    let body: serde_json::Value = serde_json::from_str(&sent[0]).unwrap();
-    assert_eq!(body, serde_json::json!({ "arrangement": report }));
+    let body: SubmitScore = serde_json::from_str(&sent[0]).unwrap();
+    assert_eq!(body, submitted(&report, &glues));
     assert!(asks().is_empty());
+    handle.destroy();
+    root.remove();
+
+    let (handle, root, physics) = mount_at(&format!("s={}", body.board.code)).await;
+    assert!(text(&root, ".pg-status").starts_with("Board loaded"));
+    assert_eq!(physics.glues(), glues);
+    // The physics holds positions as f32.
+    let squares = report
+        .squares
+        .iter()
+        .map(|p| shared::Placement {
+            cx: p.cx as f32 as f64,
+            cy: p.cy as f32 as f64,
+            theta: p.theta as f32 as f64,
+        })
+        .collect();
+    assert_eq!(physics.arrangement(), Arrangement { squares, ..report });
+    handle.destroy();
+    root.remove();
+}
+
+/// A Submit pressed while signed out freezes its board: glue removed while
+/// the sign-in is open still goes out with it.
+#[wasm_bindgen_test]
+async fn a_frozen_submit_goes_out_with_the_glue_it_had() {
+    let _gpu = NoWebGpu::install();
+    let scores = Api::install(&[("/api/scores", vec![saved()])]);
+    let (handle, root, physics) = mount_as("", None).await;
+    let glues = glue_tops(&root, &physics).await;
+    submit_button(&root, "Settle").click();
+    wait_for_report(8000).await;
+    let report = TEST_REPORT.with(|r| r.borrow().clone()).unwrap();
+    submit_button(&root, "Submit packing").click();
+    sleep(30).await;
+    assert_eq!(asks(), [SUBMIT_NOTE]);
+    physics.set_glues(&[]).unwrap();
+    answer(true);
+    wait_until("the saved score", || {
+        text(&root, ".pg-status").starts_with("Saved!")
+    })
+    .await;
+    let sent = scores.sent("/api/scores");
+    assert_eq!(sent.len(), 1);
+    let body: SubmitScore = serde_json::from_str(&sent[0]).unwrap();
+    assert_eq!(body, submitted(&report, &glues));
     handle.destroy();
     root.remove();
 }
@@ -2301,7 +2374,7 @@ async fn a_401_on_share_asks_to_sign_in_and_resends_the_same_code() {
     wait_share(&root).await;
     let requests = api.requests.borrow().clone();
     assert_eq!(requests.len(), 2);
-    assert_eq!(requests[0], requests[1], "the same snapshot again");
+    assert_eq!(requests[0], requests[1], "the same board again");
     assert_eq!(clipboard.values.borrow().len(), 1);
     handle.destroy();
     root.remove();
@@ -2329,7 +2402,7 @@ async fn a_401_on_submit_asks_to_sign_in_and_resubmits() {
     .await;
     let sent = scores.sent("/api/scores");
     assert_eq!(sent.len(), 2);
-    assert_eq!(sent[0], sent[1], "the same packing again");
+    assert_eq!(sent[0], sent[1], "the same board again");
     handle.destroy();
     root.remove();
 }

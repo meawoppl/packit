@@ -1,4 +1,15 @@
 diesel::table! {
+    board_states (token) {
+        token -> Text,
+        payload_hash -> Bytea,
+        n -> Int4,
+        code -> Text,
+        created_at -> Timestamptz,
+        created_by -> Nullable<Uuid>,
+    }
+}
+
+diesel::table! {
     passkeys (credential_id) {
         credential_id -> Bytea,
         user_id -> Uuid,
@@ -17,6 +28,8 @@ diesel::table! {
         arrangement -> Jsonb,
         submitted_at -> Timestamp,
         user_id -> Nullable<Uuid>,
+        glue_recorded -> Bool,
+        board_token -> Text,
     }
 }
 
@@ -30,17 +43,6 @@ diesel::table! {
 }
 
 diesel::table! {
-    solution_shares (token) {
-        token -> Text,
-        payload_hash -> Bytea,
-        n -> Int4,
-        code -> Text,
-        created_at -> Timestamptz,
-        created_by -> Nullable<Uuid>,
-    }
-}
-
-diesel::table! {
     users (id) {
         id -> Uuid,
         username -> Text,
@@ -50,9 +52,10 @@ diesel::table! {
     }
 }
 
+diesel::joinable!(board_states -> users (created_by));
 diesel::joinable!(passkeys -> users (user_id));
+diesel::joinable!(scores -> board_states (board_token));
 diesel::joinable!(scores -> users (user_id));
 diesel::joinable!(sessions -> users (user_id));
-diesel::joinable!(solution_shares -> users (created_by));
 
-diesel::allow_tables_to_appear_in_same_query!(passkeys, scores, sessions, solution_shares, users,);
+diesel::allow_tables_to_appear_in_same_query!(board_states, passkeys, scores, sessions, users,);
