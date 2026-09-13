@@ -57,6 +57,7 @@ impl Physics {
                 return Err("Duplicate glue constraint".into());
             }
         }
+        s.cancel_settle();
         s.glues = glues.to_vec();
         Ok(())
     }
@@ -158,6 +159,60 @@ fn point_at(w: World, t: V, q: f32) -> V {
     };
     add(w.p, mul(tangent(w.n), offset))
 }
+fn contact_geometry(mut a: World, mut b: World) -> (World, World, V, V, V, bool, f32) {
+    if a.half > 0. && b.half == 0. {
+        std::mem::swap(&mut a, &mut b);
+    }
+    let (mut pa, mut pb) = (a.p, b.p);
+    let mut normal = [0.; 2];
+    let mut sliding = false;
+    let mut angle = 0.;
+    if a.half > 0. && b.half > 0. {
+        normal = sub(a.n, b.n);
+        let len = dot(normal, normal).sqrt();
+        normal = if len > 0.001 {
+            mul(normal, 1. / len)
+        } else {
+            a.n
+        };
+        let t = tangent(normal);
+        let ha = a.half * dot(tangent(a.n), t).abs();
+        let hb = b.half * dot(tangent(b.n), t).abs();
+        let lo = (dot(a.p, t) - ha).max(dot(b.p, t) - hb);
+        let hi = (dot(a.p, t) + ha).min(dot(b.p, t) + hb);
+        let q = (lo + hi) * 0.5;
+        pa = point_at(a, t, q);
+        pb = point_at(b, t, q);
+        sliding = lo <= hi;
+        let sine = cross(a.n, mul(b.n, -1.));
+        let cosine = dot(a.n, mul(b.n, -1.));
+        angle = if sine.abs() < 1e-6 && cosine < 0. {
+            std::f32::consts::PI
+        } else {
+            sine.atan2(cosine)
+        };
+    } else if b.half > 0. {
+        normal = b.n;
+        let t = tangent(b.n);
+        let q = dot(sub(a.p, b.p), t);
+        pb = add(b.p, mul(t, q.clamp(-b.half, b.half)));
+        sliding = q.abs() <= b.half;
+    }
+    (a, b, pa, pb, normal, sliding, angle)
+}
+
+pub(super) fn error(g: Glue, bodies: &[Body], side: f32) -> (f64, f64) {
+    let (_, _, pa, pb, normal, sliding, angle) =
+        contact_geometry(world(g.a, bodies, side), world(g.b, bodies, side));
+    let delta = sub(pb, pa);
+    let distance = if sliding {
+        dot(delta, normal).abs()
+    } else {
+        dot(delta, delta).sqrt()
+    };
+    (distance as f64, angle.abs() as f64)
+}
+
 /// Sum force and angular acceleration per body, plus generalized band reaction.
 pub(super) fn forces(
     glues: &[Glue],
@@ -184,48 +239,13 @@ pub(super) fn forces(
                 .map_or(0, |i| degrees[i])
                 .max(g.b.square().map_or(0, |i| degrees[i]));
         let weight = 1.0 / degree.max(1) as f32;
-        let mut a = world(g.a, bodies, side);
-        let mut b = world(g.b, bodies, side);
-        if a.half > 0. && b.half == 0. {
-            std::mem::swap(&mut a, &mut b);
-        }
-        let (mut pa, mut pb) = (a.p, b.p);
-        let mut normal = [0.; 2];
-        let mut sliding = false;
-        let mut couple = 0.;
-        if a.half > 0. && b.half > 0. {
-            normal = sub(a.n, b.n);
-            let len = dot(normal, normal).sqrt();
-            normal = if len > 0.001 {
-                mul(normal, 1. / len)
-            } else {
-                a.n
-            };
-            let t = tangent(normal);
-            let ha = a.half * dot(tangent(a.n), t).abs();
-            let hb = b.half * dot(tangent(b.n), t).abs();
-            let lo = (dot(a.p, t) - ha).max(dot(b.p, t) - hb);
-            let hi = (dot(a.p, t) + ha).min(dot(b.p, t) + hb);
-            let q = (lo + hi) * 0.5;
-            pa = point_at(a, t, q);
-            pb = point_at(b, t, q);
-            sliding = lo <= hi;
-            let sine = cross(a.n, mul(b.n, -1.));
-            let cosine = dot(a.n, mul(b.n, -1.));
-            let angle = if sine.abs() < 1e-6 && cosine < 0. {
-                std::f32::consts::PI
-            } else {
-                sine.atan2(cosine)
-            };
-            couple =
-                (k / 24. * angle + 4. * (omega(b, bodies) - omega(a, bodies))).clamp(-12., 12.);
-        } else if b.half > 0. {
-            normal = b.n;
-            let t = tangent(b.n);
-            let q = dot(sub(a.p, b.p), t);
-            pb = add(b.p, mul(t, q.clamp(-b.half, b.half)));
-            sliding = q.abs() <= b.half;
-        }
+        let (a, b, pa, pb, normal, sliding, angle) =
+            contact_geometry(world(g.a, bodies, side), world(g.b, bodies, side));
+        let mut couple = if a.half > 0. && b.half > 0. {
+            (k / 24. * angle + 4. * (omega(b, bodies) - omega(a, bodies))).clamp(-12., 12.)
+        } else {
+            0.
+        };
         let delta = sub(pb, pa);
         let speed = sub(
             velocity(b, pb, bodies, side, band),

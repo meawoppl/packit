@@ -62,6 +62,50 @@ interaction; zero net contact force correctly produces no arrow even when
 opposing contacts cancel. Outer-band marks depict spring effort and direction,
 with a dashed rest boundary and a solid actual boundary.
 
+## Centered interaction and settling
+
+The simplified UI can opt into `set_drag_expansion(true)`. Sustained mouse
+resistance above 8 force units, a target lead above 0.18 units, and a chain of
+contacts to a wall must persist for 150 ms before the box grows. Growth is
+limited to 0.5 side units per simulated second and stops on release. Free-space
+motion and brief bumps do not expand the container.
+
+The renderer must keep the box center fixed: screen position is canvas center
+plus `(local_position - side / 2) * scale` (with the screen y-axis flipped).
+Growth by a side increment translates body positions and the stored mouse
+target by half that increment on each axis. Velocities and angles do not change;
+the centered world positions are preserved. `frame_shift()` is the cumulative
+translation per axis over the instance's lifetime. `arrangement()` still uses
+`[0, side]^2`. These frame shifts do not increment the direct-edit revision.
+The legacy tension slider remains a separate bottom-left-anchored control.
+
+`begin_settle()` releases the mouse and turn input, wakes the simulation,
+disables attraction/compression, and increases damping. Contacts and glue stay
+active. After an initial half second, unresolved penetration opens the centered
+box at 0.08 side units per second. `settle_status()` reports `Running` until
+geometric depth is at most `SETTLE_DEPTH` (1e-5), glue error is at most
+`SETTLE_GLUE_ERROR` (1e-3), and motion is at most 0.002 per square, continuously
+for half a second. It then pauses with `Settled`. After 12 simulated seconds,
+remaining violations produce `Blocked`; persistent motion produces `TimedOut`.
+Both stop and pause without loading a solver pose. `cancel_settle()` and direct
+controls stop the run; saved force settings return with band tension zero.
+Do not call `set_paused` or `set_params` after starting a run unless cancelling
+it is intended. The controller advances inside `step()`; the UI must not also
+drive a competing relaxation controller.
+
+`violations()` measures one current snapshot. `pairs` and `wall_contacts` give
+positive penetration depths; `max_depth` is their maximum. `glues` gives each
+unsatisfied glue's index, separation and angular error; `max_glue_error` is the
+maximum separation or half angular error. `bodies` and `walls` include both
+geometric and glue error for highlighting. The glue reporter shares contact
+geometry with the CPU force calculation. No extra GPU buffer/readback is needed.
+
+`Settled` is not a validity certificate and cannot bound how far an optimizer
+might move a packing. The UI must certify separately with f64 validation, retain
+the live pose, and reject a material refinement displacement instead of snapping
+to another solution. Mouse capture and frontend drag bookkeeping must also be
+released before starting the controller.
+
 ## Tests
 
 Run host physics tests with `cargo test -p physics`. Browser tests are also Rust,
