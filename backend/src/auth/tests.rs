@@ -1777,7 +1777,7 @@ async fn existing_endpoints_still_work_anonymously() {
             },
         ],
     };
-    let code = shared::share::encode(&squares);
+    let code = shared::share::encode(&squares, &[]);
     let unknown = format!("{SESSION}={}", "00".repeat(32));
     for cookie in [None, Some(format!("{SESSION}=zz")), Some(unknown)] {
         for origin in [None, Some("https://evil.test")] {
@@ -2033,6 +2033,9 @@ fn the_down_migration_never_drops_sign_in_data() {
             conn.batch_execute(include_str!(
                 "../../migrations/2026-09-13-000000_solution_shares/up.sql"
             ))?;
+            conn.batch_execute(include_str!(
+                "../../migrations/2026-09-14-000000_share_glue/up.sql"
+            ))?;
             conn.batch_execute(up)?;
             assert!(seeded > 0);
             assert_eq!(snapshot(conn), [seeded, 0, 0, 0, 0, 0]);
@@ -2063,6 +2066,27 @@ fn the_down_migration_never_drops_sign_in_data() {
             assert_eq!((tables, columns), (0, 0));
             // The now-anonymous score and share are kept.
             assert_eq!(count(conn, "SELECT count(*) FROM scores"), 1);
+            assert_eq!(count(conn, "SELECT count(*) FROM solution_shares"), 1);
+
+            // The migration before this one reverts next, in reverse order,
+            // and its own guard still sees a glue-free table.
+            let constraint = |conn: &mut PgConnection, name: &str| {
+                count(
+                    conn,
+                    &format!(
+                        "SELECT count(*) FROM pg_constraint c JOIN pg_namespace n \
+                         ON n.oid = c.connamespace WHERE n.nspname = current_schema() \
+                         AND c.conname = '{name}'"
+                    ),
+                )
+            };
+            assert_eq!(constraint(conn, "solution_shares_code_check"), 1);
+            run(
+                conn,
+                include_str!("../../migrations/2026-09-14-000000_share_glue/down.sql"),
+            )?;
+            assert_eq!(constraint(conn, "solution_shares_code_check"), 0);
+            assert_eq!(constraint(conn, "solution_shares_check"), 1);
             assert_eq!(count(conn, "SELECT count(*) FROM solution_shares"), 1);
             Ok(())
         });
