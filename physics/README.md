@@ -68,7 +68,9 @@ The simplified UI can opt into `set_drag_expansion(true)`. Sustained mouse
 resistance above 8 force units, a target lead above 0.18 units, and a chain of
 contacts to a wall must persist for 150 ms before the box grows. Growth is
 limited to 0.5 side units per simulated second and stops on release. Free-space
-motion and brief bumps do not expand the container.
+motion and brief bumps do not expand the container. Growth releases band
+tension and updates its target to hold the expanded size. Force arrows retain
+the completed batch's telemetry until the next batch refreshes it.
 
 The renderer must keep the box center fixed: screen position is canvas center
 plus `(local_position - side / 2) * scale` (with the screen y-axis flipped).
@@ -81,8 +83,9 @@ The legacy tension slider remains a separate bottom-left-anchored control.
 
 `begin_settle()` releases the mouse and turn input, wakes the simulation,
 disables attraction/compression, and increases damping. Contacts and glue stay
-active. After an initial half second, unresolved penetration opens the centered
-box at 0.08 side units per second. `settle_status()` reports `Running` until
+active. The box stays fixed while penetration improves by more than 10%
+(or 1e-6, whichever is larger) per observation window. If progress stalls for
+half a second, the centered box opens at 0.08 side units per second until clear. `settle_status()` reports `Running` until
 geometric depth is at most `SETTLE_DEPTH` (1e-5), glue error is at most
 `SETTLE_GLUE_ERROR` (1e-3), and motion is at most 0.002 per square, continuously
 for half a second. It then pauses with `Settled`. After 12 simulated seconds,

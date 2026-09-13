@@ -33,6 +33,9 @@ pub(crate) struct Interaction {
     pub frame_shift: f64,
     pressure_time: f64,
     calm_time: f64,
+    progress_depth: f64,
+    stall_time: f64,
+    opening: bool,
     status: SettleStatus,
     saved_params: Option<Params>,
 }
@@ -41,6 +44,7 @@ impl Physics {
     /// Opt in to centered, pressure-driven growth. The renderer must place
     /// local `side/2` at its fixed screen center and invert that transform for
     /// pointer coordinates. Legacy anchored rendering can leave this disabled.
+    /// Sustained drag growth releases band tension and holds the new size.
     pub fn set_drag_expansion(&self, enabled: bool) {
         let mut s = self.state.borrow_mut();
         s.interaction.drag_expansion = enabled;
@@ -65,6 +69,7 @@ impl Physics {
         s.cancel_settle();
         s.interaction.saved_params = Some(s.params);
         s.interaction.status.phase = SettlePhase::Running;
+        s.interaction.progress_depth = s.violation_report().max_depth;
         s.mouse.down = false;
         s.rotation = Default::default();
         s.params.attraction = false;
@@ -106,6 +111,8 @@ impl State {
         self.interaction.status = SettleStatus::default();
         self.interaction.calm_time = 0.0;
         self.interaction.pressure_time = 0.0;
+        self.interaction.stall_time = 0.0;
+        self.interaction.opening = false;
     }
 
     /// This changes reference frame, not velocity or relative body positions.
@@ -130,8 +137,8 @@ impl State {
         self.params.target_side = self.side;
         self.band_velocity = 0.0;
         self.interaction.frame_shift += shift;
-        // These forces describe the previous boundary locations.
-        self.contact_forces.fill([0.0; 2]);
+        // Preserve the completed batch's force telemetry through this frame
+        // translation; the next batch refreshes it against the expanded walls.
     }
 
     pub(crate) fn step_interaction(&mut self, dt: f64) {
@@ -141,6 +148,22 @@ impl State {
         if self.interaction.status.phase == SettlePhase::Running {
             let report = self.violation_report();
             let motion = self.total_motion();
+            // Give contacts time to resolve at the existing size. Restart the
+            // observation window whenever penetration falls meaningfully.
+            let progress = self.interaction.progress_depth - report.max_depth;
+            if progress > (self.interaction.progress_depth * 0.1).max(1e-6) {
+                self.interaction.progress_depth = report.max_depth;
+                self.interaction.stall_time = 0.0;
+            } else {
+                self.interaction.stall_time += dt;
+            }
+            if report.max_depth <= SETTLE_DEPTH {
+                self.interaction.opening = false;
+            } else if self.interaction.stall_time >= CALM_WINDOW {
+                // Once jammed, keep opening until clear; resetting the stall
+                // window on growth-induced progress would throttle resolution.
+                self.interaction.opening = true;
+            }
             let status = &mut self.interaction.status;
             status.elapsed += dt;
             status.max_depth = report.max_depth;
@@ -165,7 +188,7 @@ impl State {
                         SettlePhase::TimedOut
                     },
                 );
-            } else if status.elapsed >= CALM_WINDOW && report.max_depth > SETTLE_DEPTH {
+            } else if self.interaction.opening {
                 self.grow_frame(0.08 * dt);
             }
             return;
@@ -272,7 +295,9 @@ mod tests {
         let revision = p.state.borrow().revision;
         let force = p.mouse_force();
         let turn = p.state.borrow().rotation.target;
+        p.state.borrow_mut().contact_forces[0] = [12.0, -7.0];
         p.state.borrow_mut().grow_frame(0.25);
+        assert_eq!(p.contact_forces()[0], [12.0, -7.0]);
         assert_eq!(p.side(), 3.25);
         assert_eq!(p.frame_shift(), 0.125);
         assert_eq!(p.state.borrow().revision, revision);
@@ -390,6 +415,71 @@ mod tests {
         );
         assert!(p.violations().max_depth <= SETTLE_DEPTH);
         assert!(p.side() >= 2.0 - SETTLE_DEPTH * 3.0);
+    }
+
+    #[test]
+    fn resolvable_overlap_preserves_wall_to_wall_glue_and_size() {
+        for offset in [0.005, 0.01, 0.02, 0.05] {
+            let p = Physics::new(4, 2.0);
+            p.set_pose(2, 0.5, 1.5 - offset, 0.0);
+            p.set_pose(3, 1.5, 1.5 - offset, 0.0);
+            let point = |square, edge| Feature::Midpoint { square, edge };
+            p.set_glues(&[
+                Glue {
+                    a: Feature::Wall(0),
+                    b: point(0, 2),
+                },
+                Glue {
+                    a: point(0, 0),
+                    b: point(1, 2),
+                },
+                Glue {
+                    a: point(1, 0),
+                    b: Feature::Wall(2),
+                },
+            ])
+            .unwrap();
+            p.begin_settle();
+            run(&p, 260);
+            assert_eq!(
+                p.settle_status().phase,
+                SettlePhase::Settled,
+                "offset {offset}: {:?}",
+                p.settle_status()
+            );
+            assert_eq!(p.side(), 2.0);
+        }
+    }
+
+    #[test]
+    fn disturbance_requires_a_fresh_continuous_calm_window() {
+        let p = Physics::new(1, 3.0);
+        p.begin_settle();
+        run(&p, 7);
+        p.state.borrow_mut().bodies[0].vx = 0.05;
+        step(&p);
+        p.state.borrow_mut().bodies[0].vx = 0.0;
+        run(&p, 7);
+        assert_eq!(p.settle_status().phase, SettlePhase::Running);
+        run(&p, 4);
+        assert_eq!(p.settle_status().phase, SettlePhase::Settled);
+    }
+
+    #[test]
+    fn interior_resistance_without_wall_chain_does_not_grow() {
+        let p = Physics::new(2, 20.0);
+        p.set_drag_expansion(true);
+        p.set_pose(0, 9.5, 10.0, 0.0);
+        p.set_pose(1, 10.45, 10.0, 0.0);
+        p.set_mouse(13.0, 10.0, Some(0), true);
+        // Isolate the controller gate: sustained contact resistance, with no
+        // contacted wall, must never be mistaken for pressure on the container.
+        for _ in 0..40 {
+            let mut s = p.state.borrow_mut();
+            s.contact_forces[0] = [-40.0, 0.0];
+            s.step_interaction(0.05);
+        }
+        assert_eq!(p.side(), 20.0);
     }
 
     #[test]
