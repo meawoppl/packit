@@ -50,7 +50,9 @@ pub fn app() -> Html {
         <BrowserRouter>
             <AccountProvider>
                 <nav class="topbar">
-                    <Link<Route> to={Route::Home} classes="brand">{ "packit" }</Link<Route>>
+                    <Link<Route> to={Route::Home} classes="brand">{ "Potatos" }</Link<Route>>
+                    <a class="tagline" href="https://x.com/meawoppl/status/2097861010388554039"
+                        target="_blank" rel="noopener noreferrer">{ "pack taters, impress your wife" }</a>
                     <Link<Route> to={Route::Leaderboard}>{ "Leaderboard" }</Link<Route>>
                     <AccountMenu />
                 </nav>

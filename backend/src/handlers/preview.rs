@@ -100,7 +100,7 @@ fn meta_tags(public_url: &str, n: Option<u32>, packing: Option<(&Arrangement, &s
             None,
         ),
         (None, _) => (
-            "packit".to_string(),
+            "Potatos".to_string(),
             "Pack unit squares into the smallest square you can.".to_string(),
             format!("{public_url}/"),
             None,
@@ -113,7 +113,7 @@ fn meta_tags(public_url: &str, n: Option<u32>, packing: Option<(&Arrangement, &s
     };
     let mut tags = vec![
         ("name", "description", description.clone()),
-        ("property", "og:site_name", "packit".to_string()),
+        ("property", "og:site_name", "Potatos".to_string()),
         ("property", "og:type", "website".to_string()),
         ("property", "og:title", title.clone()),
         ("property", "og:description", description.clone()),

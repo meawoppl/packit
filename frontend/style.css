@@ -36,7 +36,8 @@ main {
 
 .topbar {
     display: flex;
-    gap: 1.5rem;
+    flex-wrap: wrap;
+    gap: 0 1.5rem;
     align-items: baseline;
     padding: 0.75rem 2rem;
     background: var(--panel);
@@ -54,6 +55,14 @@ main {
     font-size: 1.4rem;
     color: var(--accent);
     letter-spacing: 0.05em;
+}
+
+/* Sits just after the brand, closer than the gap between site links. */
+.topbar .tagline {
+    margin-left: -1rem;
+    font-size: 0.85rem;
+    font-style: italic;
+    opacity: 0.75;
 }
 
 /* Account control: right of the site links, with its sign-in dialog
