@@ -32,6 +32,8 @@ thread_local! {
     static TEST_PHYSICS: std::cell::RefCell<Option<Physics>> = const { std::cell::RefCell::new(None) };
     /// The last validated arrangement, for exact comparisons in browser tests.
     static TEST_REPORT: std::cell::RefCell<Option<Arrangement>> = const { std::cell::RefCell::new(None) };
+    /// The viewport extent the last frame was drawn at.
+    static TEST_EXTENT: Cell<f64> = const { Cell::new(0.0) };
 }
 
 const STEP_HZ: f64 = 120.0;
@@ -49,6 +51,17 @@ const MAX_SCRUB: f64 = 1.0;
 /// the numerical overlap a settled contact leaves. Past this the packing
 /// isn't certified rather than moved.
 const CERTIFY_MOVE: f64 = 1e-4;
+
+/// Largest residual `glues` would leave on `arrangement`, measured on a
+/// scratch simulation so the live one is untouched.
+fn glue_error(arrangement: &Arrangement, glues: &[Glue]) -> f64 {
+    let scratch = Physics::new(arrangement.n, arrangement.side);
+    scratch.load(arrangement);
+    match scratch.set_glues(glues) {
+        Ok(()) => scratch.violations().max_glue_error,
+        Err(_) => f64::INFINITY,
+    }
+}
 
 /// Whether two arrangements are the same packing to within rounding, so a
 /// solver result for one describes the other.
@@ -149,6 +162,10 @@ pub struct Game {
     wheel: Option<EventListener>,
     /// Side the viewport is scaled to, so a contracting band stays in view.
     view_side: Rc<Cell<f64>>,
+    /// Side length the last frame was drawn at, which pointer mapping
+    /// shares. It holds for a whole drag, so growth under the pointer can't
+    /// rescale the view and chase it.
+    extent: Rc<Cell<f64>>,
     last_time: Option<f64>,
     accumulator: f64,
     stepping: bool,
@@ -276,6 +293,7 @@ impl Component for Game {
             frame: None,
             wheel: None,
             view_side: Rc::new(Cell::new(side)),
+            extent: Rc::new(Cell::new(side)),
             last_time: None,
             accumulator: 0.0,
             stepping: false,
@@ -350,9 +368,9 @@ impl Component for Game {
         }
         if let Some(canvas) = self.canvas.cast::<HtmlCanvasElement>() {
             // Registered by hand: wheel needs a non-passive listener to stop page scroll.
-            let (physics, view_side, link) = (
+            let (physics, extent, link) = (
                 self.physics.clone(),
-                self.view_side.clone(),
+                self.extent.clone(),
                 ctx.link().clone(),
             );
             let target = canvas.clone();
@@ -364,11 +382,10 @@ impl Component for Game {
                     let Some(e) = e.dyn_ref::<WheelEvent>() else {
                         return;
                     };
-                    let extent = view_side.get().max(physics.side());
                     let p = canvas::to_world(
                         &target,
                         (e.client_x() as f64, e.client_y() as f64),
-                        extent,
+                        extent.get(),
                         physics.side(),
                     );
                     if let Some(i) = canvas::hit(&physics.bodies(), p) {
@@ -1217,6 +1234,8 @@ impl Game {
                 self.submit_after_measure = false;
                 let why = if status.max_glue_error > SETTLE_GLUE_ERROR {
                     "some glue can't be satisfied"
+                } else if status.phase == SettlePhase::TimedOut {
+                    "the squares kept moving"
                 } else {
                     "squares still overlap"
                 };
@@ -1278,11 +1297,18 @@ impl Game {
             self.physics.side()
         };
         // Hold the scale during a drag: a refit would move the pointer's
-        // world position outward and the box would chase it.
-        if extent > self.view_side.get() && !self.dragging {
-            self.view_side
-                .set(self.view_side.get() + (extent - self.view_side.get()) * 0.12);
+        // world position outward and the box would chase it. The box may
+        // outgrow the view until the square is let go.
+        if !self.dragging {
+            if extent > self.view_side.get() {
+                self.view_side
+                    .set(self.view_side.get() + (extent - self.view_side.get()) * 0.12);
+            }
+            self.extent
+                .set(self.view_side.get().max(self.physics.side()));
         }
+        #[cfg(all(test, target_arch = "wasm32"))]
+        TEST_EXTENT.with(|e| e.set(self.extent.get()));
         let forces = self.physics.contact_forces();
         let show_forces = self.dragging
             || self.rotating
@@ -1299,7 +1325,7 @@ impl Game {
                 glue_tool: self.glue_tool,
                 bodies: &bodies,
                 side: self.physics.side(),
-                view_side: self.view_side.get(),
+                view_side: self.extent.get(),
                 band_on: params.band_tension > 0.0,
                 band_tension: params.band_tension,
                 target_side: params.target_side,
@@ -1389,7 +1415,7 @@ impl Game {
     }
 
     fn world(&self, canvas: &HtmlCanvasElement, e: &PointerEvent) -> (f64, f64) {
-        let extent = self.view_side.get().max(self.physics.side());
+        let extent = self.extent.get();
         canvas::to_world(
             canvas,
             (e.client_x() as f64, e.client_y() as f64),
@@ -1434,7 +1460,7 @@ impl Game {
         } else {
             12.0
         };
-        canvas::px_to_world(canvas, px, self.view_side.get().max(self.physics.side()))
+        canvas::px_to_world(canvas, px, self.extent.get())
     }
 
     /// Open the glue tool on a double tap: end any drag, pause the scene,
@@ -1620,48 +1646,43 @@ impl Game {
     }
 
     /// `live` certified where it stands, and the farthest any square was
-    /// nudged to clear the settle's numerical contact overlap. A nudged
-    /// packing is kept only if every glue still holds on it; otherwise the
-    /// scene goes back exactly as it was.
+    /// nudged to clear the settle's numerical contact overlap. Every glue
+    /// must still hold on it, which is checked before the live scene is
+    /// touched; only a nudged packing is loaded.
     fn certify(&mut self, live: &Arrangement, glues: &[Glue]) -> Option<(Arrangement, f64)> {
         let (certified, moved) =
             shared::geometry::certify(live, shared::VALIDATION_TOL, CERTIFY_MOVE)?;
+        if glue_error(&certified, glues) > SETTLE_GLUE_ERROR {
+            return None;
+        }
         if moved > 0.0 {
             // Loading clears glue; the nudged packing has the same squares.
             self.physics.load(&certified);
             let _ = self.physics.set_glues(glues);
             self.physics.set_paused(true);
-            if self.physics.violations().max_glue_error > SETTLE_GLUE_ERROR {
-                self.physics.load(live);
-                let _ = self.physics.set_glues(glues);
-                self.physics.set_paused(true);
-                return None;
-            }
         }
         Some((certified, moved))
     }
 
     /// On request, jump to the solver's smaller packing and certify it like
-    /// any other, unless the jump would break a glue link.
+    /// any other, unless the jump would break a glue link, in which case
+    /// the live scene is never touched.
     fn tighten(&mut self, ctx: &Context<Self>) -> bool {
-        let (Some(tighter), Some(certified)) = (self.tighter.take(), self.certified.clone()) else {
+        let Some(tighter) = self.tighter.take() else {
             return false;
         };
         let glues = self.physics.glues();
-        // Loading clears glue; the smaller packing has the same squares.
-        self.physics.load(&tighter);
-        let _ = self.physics.set_glues(&glues);
-        self.physics.set_paused(true);
-        if self.physics.violations().max_glue_error > SETTLE_GLUE_ERROR {
-            self.physics.load(&certified);
-            let _ = self.physics.set_glues(&glues);
-            self.physics.set_paused(true);
+        if glue_error(&tighter, &glues) > SETTLE_GLUE_ERROR {
             self.set_status(
                 "Tightening would break a glue link, so the packing stays as it is.",
                 true,
             );
             return true;
         }
+        // Loading clears glue; the smaller packing has the same squares.
+        self.physics.load(&tighter);
+        let _ = self.physics.set_glues(&glues);
+        self.physics.set_paused(true);
         self.certified = None;
         self.begin_measure(ctx)
     }
@@ -1701,6 +1722,33 @@ fn best_label(r: &KnownRecord) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn glue_error_is_measured_on_the_candidate() {
+        let sq = |cx| shared::Placement {
+            cx,
+            cy: 0.5,
+            theta: 0.0,
+        };
+        let touching = Arrangement {
+            n: 2,
+            side: 2.0,
+            squares: vec![sq(0.5), sq(1.5)],
+        };
+        // Square 1's right edge on square 2's left edge.
+        let glue = Glue {
+            a: Feature::Edge { square: 0, edge: 0 },
+            b: Feature::Edge { square: 1, edge: 2 },
+        };
+        assert!(glue_error(&touching, &[glue]) < 1e-6);
+        assert_eq!(glue_error(&touching, &[]), 0.0);
+        let apart = Arrangement {
+            side: 3.0,
+            squares: vec![sq(0.5), sq(2.5)],
+            ..touching
+        };
+        assert!(glue_error(&apart, &[glue]) > 0.9);
+    }
 
     #[test]
     fn same_packing_allows_only_rounding() {

@@ -1704,17 +1704,7 @@ async fn tighten_loads_the_solvers_smaller_box_on_request() {
     );
     let status = text(&root, ".pg-status");
     assert!(status.contains("Press Tighten"), "{status}");
-    let buttons = root.query_selector_all(".pg-submit button").unwrap();
-    (0..buttons.length())
-        .filter_map(|i| buttons.item(i))
-        .filter_map(|b| b.dyn_into::<HtmlElement>().ok())
-        .find(|b| {
-            b.text_content()
-                .unwrap_or_default()
-                .starts_with("Tighten to")
-        })
-        .expect("Tighten offered")
-        .click();
+    tighten_button(&root).click();
     wait_for_report(3000).await;
     let tight = TEST_REPORT.with(|r| r.borrow().clone()).unwrap();
     assert!(
@@ -1725,6 +1715,109 @@ async fn tighten_loads_the_solvers_smaller_box_on_request() {
     );
     assert!(text(&root, ".pg-status").starts_with("Ready"));
     assert!(physics.paused());
+    handle.destroy();
+    root.remove();
+}
+
+fn tighten_button(root: &Element) -> HtmlElement {
+    let buttons = root.query_selector_all(".pg-submit button").unwrap();
+    (0..buttons.length())
+        .filter_map(|i| buttons.item(i))
+        .filter_map(|b| b.dyn_into::<HtmlElement>().ok())
+        .find(|b| {
+            b.text_content()
+                .unwrap_or_default()
+                .starts_with("Tighten to")
+        })
+        .expect("Tighten offered")
+}
+
+/// A Tighten that would break glue is refused before the live scene is
+/// touched: its pose, velocities, parameters, glue and pause stay as they
+/// were.
+#[wasm_bindgen_test]
+async fn a_tighten_that_breaks_glue_leaves_the_scene_untouched() {
+    let _gpu = NoWebGpu::install();
+    let (handle, root, physics) = mount().await;
+    click_button(&root, ".pg-submit", "Settle");
+    wait_for_report(8000).await;
+    // Square 1's top edge to the top wall: no tighter packing of this grid
+    // satisfies it.
+    physics
+        .set_glues(&[Glue {
+            a: Feature::Edge { square: 0, edge: 1 },
+            b: Feature::Wall(3),
+        }])
+        .unwrap();
+    let state = |p: &Physics| {
+        (
+            p.arrangement(),
+            p.bodies(),
+            format!("{:?}", p.params()),
+            p.glues(),
+            p.paused(),
+        )
+    };
+    let before = state(&physics);
+    tighten_button(&root).click();
+    sleep(100).await;
+    let status = text(&root, ".pg-status");
+    assert!(
+        status.starts_with("Tightening would break a glue link"),
+        "{status}"
+    );
+    assert_eq!(state(&physics), before, "a refused Tighten changes nothing");
+    handle.destroy();
+    root.remove();
+}
+
+/// Pushing a square hard into a wall grows the box under a pointer held
+/// still. The view's scale holds for the whole drag, so the growth can't
+/// chase the pointer, and the view refits to the grown box after release.
+#[wasm_bindgen_test]
+async fn drag_growth_holds_the_view_until_release() {
+    let _gpu = NoWebGpu::install();
+    let (handle, root, physics) = mount().await;
+    let canvas = canvas_of(&root);
+    let extent = TEST_EXTENT.with(Cell::get);
+    let start = physics.side();
+    assert!(
+        (extent - start).abs() < 1e-9,
+        "the view starts fitted: {extent} vs {start}"
+    );
+    let b = physics.bodies()[0];
+    pointer(&canvas, "pointerdown", (b.x as f64, b.y as f64), extent);
+    // Every move is to the same client point, well past the left wall.
+    let held = (-0.8, b.y as f64);
+    let mut drawn = Vec::new();
+    for _ in 0..100 {
+        pointer(&canvas, "pointermove", held, extent);
+        sleep(50).await;
+        drawn.push(TEST_EXTENT.with(Cell::get));
+        if physics.side() > start + 0.1 {
+            break;
+        }
+    }
+    assert!(
+        physics.side() > start + 0.05,
+        "pushing into the wall grew the box: {start} -> {}",
+        physics.side()
+    );
+    assert!(
+        drawn.iter().all(|e| *e == extent),
+        "the view held its scale: {drawn:?}"
+    );
+    pointer(&canvas, "pointerup", held, extent);
+    for _ in 0..100 {
+        if TEST_EXTENT.with(Cell::get) >= physics.side() {
+            break;
+        }
+        sleep(20).await;
+    }
+    assert!(
+        TEST_EXTENT.with(Cell::get) >= physics.side(),
+        "the view refits after release"
+    );
     handle.destroy();
     root.remove();
 }

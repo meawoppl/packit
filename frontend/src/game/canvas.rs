@@ -19,7 +19,8 @@ const PULSE_PERIOD_MS: f64 = 1600.0;
 pub struct Scene<'a> {
     pub bodies: &'a [Body],
     pub side: f64,
-    /// Side length the viewport is scaled to; the band may contract inside it.
+    /// Side length the viewport is scaled to. The band may contract inside
+    /// it, and during a drag the box may outgrow it.
     pub view_side: f64,
     pub band_on: bool,
     pub band_tension: f32,
@@ -115,7 +116,7 @@ pub fn draw(canvas: &HtmlCanvasElement, scene: &Scene) {
 
     let w = size as f64;
     let side = scene.side;
-    let scale = w * (1.0 - 2.0 * PAD_FRACTION) / scene.view_side.max(side);
+    let scale = w * (1.0 - 2.0 * PAD_FRACTION) / scene.view_side;
     // The box stays centered, so growing it on every side leaves the squares
     // where they were on screen.
     let sx = |x: f64| w / 2.0 + (x - side / 2.0) * scale;
