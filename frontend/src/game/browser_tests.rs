@@ -688,13 +688,13 @@ fn slide(root: &Element, selector: &str, value: &str) -> f64 {
     slider.value().parse().unwrap()
 }
 
-/// The Squeeze slider, in the main panel beside Settle.
-const SQUEEZE: &str = ".pg-submit #pg-size";
+/// Optional precision slider inside Advanced.
+const SQUEEZE: &str = ".pg-advanced #pg-size";
 
 fn squeeze_slider(root: &Element) -> HtmlInputElement {
     root.query_selector(SQUEEZE)
         .unwrap()
-        .expect("Squeeze slider in the main panel")
+        .expect("precision slider in Advanced")
         .dyn_into()
         .unwrap()
 }
@@ -774,7 +774,7 @@ fn assert_shows_side(root: &Element, slider: &HtmlInputElement, physics: &Physic
 }
 
 #[wasm_bindgen_test]
-async fn the_squeeze_slider_is_the_only_size_control() {
+async fn corner_controls_keep_the_precision_slider_in_advanced() {
     let _gpu = NoWebGpu::install();
     let (handle, root, _) = mount().await;
     assert_eq!(root.query_selector_all("#pg-size").unwrap().length(), 1);
@@ -791,12 +791,13 @@ async fn the_squeeze_slider_is_the_only_size_control() {
     assert_eq!(
         ids,
         [
+            "pg-size",
             "pg-band",
             "pg-edge-attraction",
             "pg-damping",
             "pg-stiffness"
         ],
-        "Advanced keeps the band slider and no size slider"
+        "Advanced keeps one precision slider"
     );
     handle.destroy();
     root.remove();
@@ -2981,6 +2982,96 @@ async fn a_stale_sign_in_does_not_share_for_a_newer_ask() {
     wait_until("the share", || shares.requests.borrow().len() == 1).await;
     wait_share(&root).await;
     assert_eq!(shares.requests.borrow().len(), 1);
+    handle.destroy();
+    root.remove();
+}
+
+#[wasm_bindgen_test]
+async fn corner_tap_and_keyboard_nudge_really_shrink_the_box() {
+    let _gpu = NoWebGpu::install();
+    let (handle, root, physics) = mount().await;
+    let mut steps = Vec::new();
+    wait_ready(&root, &physics, &mut steps, "before corner").await;
+    let corner = root
+        .query_selector(".pg-corner")
+        .unwrap()
+        .unwrap()
+        .dyn_into::<HtmlElement>()
+        .unwrap();
+    let before = physics.side();
+    // Native keyboard activation follows the button's zero-detail click path.
+    corner.click();
+    for _ in 0..100 {
+        if physics.side() < before - 0.001 {
+            break;
+        }
+        sleep(20).await;
+    }
+    assert!(
+        physics.side() < before - 0.001,
+        "the nudge must act before releasing"
+    );
+    for _ in 0..100 {
+        if physics.params().band_tension == 0.0 {
+            break;
+        }
+        sleep(20).await;
+    }
+    assert_eq!(physics.params().band_tension, 0.0, "nudge releases itself");
+    handle.destroy();
+    root.remove();
+}
+
+#[wasm_bindgen_test]
+async fn corner_drag_squeezes_without_teleport_and_cancel_releases() {
+    let _gpu = NoWebGpu::install();
+    let (handle, root, physics) = mount().await;
+    let mut steps = Vec::new();
+    wait_ready(&root, &physics, &mut steps, "before corner drag").await;
+    let corner = root.query_selector(".pg-corner").unwrap().unwrap();
+    let r = corner.get_bounding_client_rect();
+    let x = r.x() + r.width() / 2.0;
+    let y = r.y() + r.height() / 2.0;
+    let send = |kind: &str, dx: i32| {
+        let init = PointerEventInit::new();
+        init.set_bubbles(true);
+        init.set_is_primary(true);
+        init.set_pointer_id(71);
+        init.set_client_x(x as i32 + dx);
+        init.set_client_y(y as i32 + dx);
+        corner
+            .dispatch_event(&PointerEvent::new_with_event_init_dict(kind, &init).unwrap())
+            .unwrap();
+    };
+    // A new hold must cancel the previous tap's timed nudge.
+    corner.clone().dyn_into::<HtmlElement>().unwrap().click();
+    sleep(20).await;
+    send("pointerdown", 0);
+    sleep(3000).await;
+    assert!(
+        !text(&root, ".pg-status").starts_with("Ready"),
+        "holding a corner excludes auto-measure"
+    );
+    let before = physics.side();
+    send("pointermove", 20);
+    sleep(20).await;
+    assert!(
+        physics.side() > before - 0.1,
+        "spring input must not teleport"
+    );
+    assert!(physics.params().band_tension > 0.0);
+    sleep(200).await;
+    assert!(physics.side() < before, "inward movement squeezes");
+    send("pointercancel", 20);
+    sleep(30).await;
+    assert_eq!(physics.params().band_tension, 0.0);
+    send("pointermove", 40);
+    sleep(20).await;
+    assert_eq!(
+        physics.params().band_tension,
+        0.0,
+        "late moves cannot revive capture"
+    );
     handle.destroy();
     root.remove();
 }
