@@ -10,10 +10,12 @@ pub mod username;
 mod tests;
 
 use crate::config::PublicOrigin;
+use axum::http::HeaderMap;
 use ceremony::CeremonyStore;
-use ratelimit::RateLimiter;
+use ratelimit::{client_ip, RateKey, RateLimiter};
 use std::net::IpAddr;
-use std::time::Duration;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::{Duration, Instant};
 use webauthn_rs::prelude::{
     PasskeyAuthentication, PasskeyRegistration, Url, Webauthn, WebauthnBuilder,
 };
@@ -21,16 +23,23 @@ use webauthn_rs::prelude::{
 /// Ceremonies expire after five minutes, matching the WebAuthn timeout.
 pub const CEREMONY_TTL: Duration = Duration::from_secs(300);
 const CEREMONY_CAP: usize = 10_000;
-/// Per client address, shared by every start and finish endpoint.
+/// Live ceremonies per client (IPv4 address or IPv6 /64), and per IPv6 /48.
+const CEREMONIES_PER_CLIENT: usize = 5;
+const CEREMONIES_PER_SITE: usize = 50;
+/// Per client, shared by every start and finish endpoint.
 const IP_BURST: u32 = 30;
 const IP_REFILL: Duration = Duration::from_secs(2);
-/// Per username, on login start.
+/// Per IPv6 /48, across all of its /64s.
+const SITE_BURST: u32 = 120;
+const SITE_REFILL: Duration = Duration::from_millis(500);
+/// Per username and client, on login start.
 const USERNAME_BURST: u32 = 10;
 const USERNAME_REFILL: Duration = Duration::from_secs(30);
 const MAX_RATE_KEYS: usize = 100_000;
 
 /// Library state of an in-flight ceremony, plus anything the finish step
-/// must take from the server rather than the client.
+/// must take from the server rather than the client. The variant is the
+/// operation.
 pub enum Pending {
     Register {
         username: String,
@@ -43,10 +52,12 @@ pub enum Pending {
 pub struct Auth {
     pub webauthn: Webauthn,
     pub origin: PublicOrigin,
-    pub trusted_proxy: Option<IpAddr>,
+    trusted_proxy: Option<IpAddr>,
     pub ceremonies: CeremonyStore<Pending>,
-    pub ip_limiter: RateLimiter<IpAddr>,
-    pub username_limiter: RateLimiter<String>,
+    ip_limiter: RateLimiter<IpAddr>,
+    site_limiter: RateLimiter<IpAddr>,
+    username_limiter: RateLimiter<(String, IpAddr)>,
+    warned_forwarded: AtomicBool,
 }
 
 impl Auth {
@@ -60,10 +71,52 @@ impl Auth {
             webauthn,
             origin,
             trusted_proxy,
-            ceremonies: CeremonyStore::new(CEREMONY_CAP, CEREMONY_TTL),
+            ceremonies: CeremonyStore::new(
+                CEREMONY_CAP,
+                CEREMONIES_PER_CLIENT,
+                CEREMONIES_PER_SITE,
+                CEREMONY_TTL,
+            ),
             ip_limiter: RateLimiter::new(IP_BURST, IP_REFILL, MAX_RATE_KEYS),
+            site_limiter: RateLimiter::new(SITE_BURST, SITE_REFILL, MAX_RATE_KEYS),
             username_limiter: RateLimiter::new(USERNAME_BURST, USERNAME_REFILL, MAX_RATE_KEYS),
+            warned_forwarded: AtomicBool::new(false),
         })
+    }
+
+    /// The rate-limit identity of a request from `peer`.
+    pub fn client(&self, peer: IpAddr, headers: &HeaderMap) -> RateKey {
+        if self.trusted_proxy.is_none()
+            && headers.contains_key("x-forwarded-for")
+            && !self.warned_forwarded.swap(true, Ordering::Relaxed)
+        {
+            tracing::warn!(
+                "requests carry X-Forwarded-For but TRUSTED_PROXY is unset, so every client \
+                 behind the proxy shares one rate limit; set TRUSTED_PROXY to the proxy's IP"
+            );
+        }
+        RateKey::of(client_ip(peer, headers, self.trusted_proxy))
+    }
+
+    /// Spend a token from the client's bucket and, for IPv6, its /48's.
+    pub fn check_client(&self, client: RateKey, now: Instant) -> Result<(), Duration> {
+        self.ip_limiter.check(&client.subnet, now)?;
+        match client.site {
+            Some(site) => self.site_limiter.check(&site, now),
+            None => Ok(()),
+        }
+    }
+
+    /// Spend a login-start token for `username` from this client. Keyed on
+    /// both, so nobody can lock another client out of an account.
+    pub fn check_username(
+        &self,
+        username: &str,
+        client: RateKey,
+        now: Instant,
+    ) -> Result<(), Duration> {
+        self.username_limiter
+            .check(&(username.to_string(), client.subnet), now)
     }
 }
 

@@ -32,3 +32,6 @@ CREATE INDEX sessions_expires_at_idx ON sessions (expires_at);
 -- Ownership for later; existing rows stay anonymous.
 ALTER TABLE scores ADD COLUMN user_id UUID REFERENCES users (id) ON DELETE SET NULL;
 ALTER TABLE solution_shares ADD COLUMN created_by UUID REFERENCES users (id) ON DELETE SET NULL;
+-- Also keeps the ON DELETE SET NULL above from scanning either table.
+CREATE INDEX scores_user_id_idx ON scores (user_id);
+CREATE INDEX solution_shares_created_by_idx ON solution_shares (created_by);

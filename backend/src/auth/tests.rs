@@ -1,11 +1,14 @@
 //! End-to-end passkey flows through the real router, with software
 //! authenticators. Database tests skip when TEST_DATABASE_URL is unset.
 
-use super::{hex, random_bytes, session, username, IP_BURST, USERNAME_BURST};
+use super::{
+    hex, random_bytes, session, username, CEREMONIES_PER_CLIENT, CEREMONIES_PER_SITE, IP_BURST,
+    SITE_BURST, USERNAME_BURST,
+};
 use crate::build_app;
 use crate::config::PublicOrigin;
 use crate::handlers::auth::{
-    CEREMONY_INVALID, NOT_SIGNED_IN, PASSKEY_TAKEN, REAUTH, SIGN_IN_FAILED, VERIFY_FAILED,
+    CEREMONY_INVALID, NOT_SIGNED_IN, PASSKEY_TAKEN, REAUTH, SIGN_IN_FAILED, TOO_MANY, VERIFY_FAILED,
 };
 use crate::schema::{passkeys, sessions, users};
 use crate::test_support::{state_for, test_db, unconnected_pool, TEST_URL};
@@ -17,7 +20,7 @@ use axum::Router;
 use chrono::{DateTime, TimeDelta, Utc};
 use diesel::pg::PgConnection;
 use diesel::prelude::*;
-use diesel::r2d2::{ConnectionManager, PooledConnection};
+use diesel::r2d2::{ConnectionManager, Pool, PooledConnection};
 use openssl::bn::{BigNum, BigNumContext};
 use openssl::ec::{EcGroup, EcKey};
 use openssl::hash::MessageDigest;
@@ -29,8 +32,10 @@ use serde_cbor_2::Value as Cbor;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, HashMap};
-use std::net::{IpAddr, SocketAddr};
+use std::net::{IpAddr, Ipv6Addr, SocketAddr};
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
+use std::time::Duration;
 use tower::ServiceExt;
 use tower_cookies::cookie::time;
 use tower_cookies::Cookie;
@@ -552,8 +557,9 @@ async fn register_me_logout_roundtrip() {
         assert!(cookie.contains(part), "{cookie}");
     }
     assert!(!cookie.contains("Domain"), "{cookie}");
-    assert!(r.set_cookie(CEREMONY).unwrap().contains("Max-Age=0"));
-    assert!(!b.cookies.contains_key(CEREMONY));
+    // The nonce cookie stays for the browser's other ceremonies.
+    assert!(r.set_cookie(CEREMONY).is_none());
+    assert!(b.cookies.contains_key(CEREMONY));
 
     // The user handle offered at start is the stored account id.
     let handle: Base64UrlSafeData = serde_json::from_value(opts["user"]["id"].clone()).unwrap();
@@ -1384,23 +1390,307 @@ async fn forwarded_for_counts_only_from_the_trusted_proxy() {
     assert_eq!(call(&app, req).await.status, StatusCode::TOO_MANY_REQUESTS);
 }
 
+fn ipv6_browser(site: u16, subnet: u16) -> Browser {
+    let mut b = Browser::new();
+    b.ip = Ipv6Addr::new(0x2001, 0xdb8, site, subnet, 0, 0, 0, 1).into();
+    b
+}
+
+/// The login-start username limit is per client, so exhausting it locks out
+/// only the client doing it.
 #[tokio::test]
-async fn login_start_is_rate_limited_per_username() {
+async fn login_start_is_rate_limited_per_username_and_client() {
     let Some((_state, app)) = db_app() else {
         return;
     };
     let name = fresh("limit");
+    let mut attacker = Browser::new();
     for _ in 0..USERNAME_BURST {
-        let r = start(&app, &mut Browser::new(), LOGIN_START, &name).await;
+        let r = start(&app, &mut attacker, LOGIN_START, &name).await;
         assert_eq!(r.status, StatusCode::UNAUTHORIZED);
     }
     for variant in [name.clone(), format!(" {} ", name.to_uppercase())] {
-        let r = start(&app, &mut Browser::new(), LOGIN_START, &variant).await;
+        let r = start(&app, &mut attacker, LOGIN_START, &variant).await;
         assert_eq!(r.status, StatusCode::TOO_MANY_REQUESTS, "{variant}");
+        assert_eq!(r.error(), TOO_MANY);
         assert!(r.headers.contains_key(header::RETRY_AFTER));
     }
-    let r = start(&app, &mut Browser::new(), LOGIN_START, &fresh("limit")).await;
+    // Another name from that client is fine, and so is this name from
+    // anyone else.
+    let r = start(&app, &mut attacker, LOGIN_START, &fresh("limit")).await;
     assert_eq!(r.status, StatusCode::UNAUTHORIZED);
+    let r = start(&app, &mut Browser::new(), LOGIN_START, &name).await;
+    assert_eq!(r.status, StatusCode::UNAUTHORIZED);
+
+    // A real account stays usable while another client hammers it.
+    let victim = fresh("victim");
+    let mut key = soft();
+    assert_eq!(
+        register(&app, &mut Browser::new(), &mut key, &victim)
+            .await
+            .status,
+        StatusCode::OK
+    );
+    let mut attacker = Browser::new();
+    let mut refused = false;
+    for _ in 0..=USERNAME_BURST {
+        let r = start(&app, &mut attacker, LOGIN_START, &victim).await;
+        refused |= r.status == StatusCode::TOO_MANY_REQUESTS;
+    }
+    assert!(refused);
+    let r = login(&app, &mut Browser::new(), &mut key, &victim).await;
+    assert_eq!(r.status, StatusCode::OK);
+}
+
+#[tokio::test]
+async fn each_client_gets_a_few_ceremonies_in_progress() {
+    let Some((_state, app)) = db_app() else {
+        return;
+    };
+    let name = fresh("busy");
+    let mut key = soft();
+    assert_eq!(
+        register(&app, &mut Browser::new(), &mut key, &name)
+            .await
+            .status,
+        StatusCode::OK
+    );
+    let mut greedy = Browser::new();
+    for _ in 0..CEREMONIES_PER_CLIENT {
+        let r = start(&app, &mut greedy, LOGIN_START, &name).await;
+        assert_eq!(r.status, StatusCode::OK);
+    }
+    let r = start(&app, &mut greedy, LOGIN_START, &name).await;
+    assert_eq!(r.status, StatusCode::TOO_MANY_REQUESTS);
+    assert_eq!(r.error(), TOO_MANY);
+    let retry: u64 = r.headers[header::RETRY_AFTER]
+        .to_str()
+        .unwrap()
+        .parse()
+        .unwrap();
+    assert!((1..=300).contains(&retry), "{retry}");
+    // Registration draws on the same allowance.
+    let r = start(&app, &mut greedy, REGISTER_START, &fresh("more")).await;
+    assert_eq!(r.status, StatusCode::TOO_MANY_REQUESTS);
+    // Everyone else still signs in.
+    let r = login(&app, &mut Browser::new(), &mut key, &name).await;
+    assert_eq!(r.status, StatusCode::OK);
+}
+
+#[tokio::test]
+async fn an_ipv6_site_shares_a_ceremony_cap() {
+    let Some((_state, app)) = db_app() else {
+        return;
+    };
+    let name = fresh("site");
+    let mut key = soft();
+    assert_eq!(
+        register(&app, &mut Browser::new(), &mut key, &name)
+            .await
+            .status,
+        StatusCode::OK
+    );
+    // Fill the /48 from several /64s, each within its own cap.
+    for subnet in 0..(CEREMONIES_PER_SITE / CEREMONIES_PER_CLIENT) as u16 {
+        let mut b = ipv6_browser(1, subnet);
+        for _ in 0..CEREMONIES_PER_CLIENT {
+            let r = start(&app, &mut b, LOGIN_START, &name).await;
+            assert_eq!(r.status, StatusCode::OK, "subnet {subnet}");
+        }
+    }
+    let r = start(&app, &mut ipv6_browser(1, 999), LOGIN_START, &name).await;
+    assert_eq!(r.status, StatusCode::TOO_MANY_REQUESTS);
+    let r = start(&app, &mut ipv6_browser(2, 0), LOGIN_START, &name).await;
+    assert_eq!(r.status, StatusCode::OK);
+    let r = login(&app, &mut Browser::new(), &mut key, &name).await;
+    assert_eq!(r.status, StatusCode::OK);
+}
+
+#[tokio::test]
+async fn an_ipv6_site_shares_a_rate_limit_across_its_64s() {
+    let app = build_app(state_for(unconnected_pool()));
+    // One request from each fresh /64, so only the /48 bucket can run out.
+    let mut sent: u16 = 0;
+    let limited = loop {
+        let r = start(&app, &mut ipv6_browser(1, sent), REGISTER_START, "x").await;
+        sent += 1;
+        if r.status == StatusCode::TOO_MANY_REQUESTS {
+            break r;
+        }
+        assert_eq!(r.status, StatusCode::BAD_REQUEST);
+        assert!(u32::from(sent) <= SITE_BURST + 50, "never limited");
+    };
+    assert!(u32::from(sent) > SITE_BURST, "{sent}");
+    assert!(limited.headers.contains_key(header::RETRY_AFTER));
+    let r = start(&app, &mut ipv6_browser(2, 0), REGISTER_START, "x").await;
+    assert_eq!(r.status, StatusCode::BAD_REQUEST);
+    // A /48 has no say over IPv4 clients.
+    let r = start(&app, &mut Browser::new(), REGISTER_START, "x").await;
+    assert_eq!(r.status, StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn untrusted_forwarded_for_is_reported_once() {
+    let state = state_for(unconnected_pool());
+    let app = build_app(state.clone());
+    let b = Browser::new();
+    let send = |forwarded: Option<&str>| {
+        let mut req = b.request(
+            Method::POST,
+            REGISTER_START,
+            Some(&json!({ "username": "x" })),
+        );
+        if let Some(v) = forwarded {
+            req.headers_mut()
+                .insert("x-forwarded-for", v.parse().unwrap());
+        }
+        req
+    };
+    call(&app, send(None)).await;
+    assert!(!state.auth.warned_forwarded.load(Ordering::Relaxed));
+    for _ in 0..3 {
+        let r = call(&app, send(Some("203.0.113.7"))).await;
+        assert_eq!(r.status, StatusCode::BAD_REQUEST);
+        assert!(state.auth.warned_forwarded.load(Ordering::Relaxed));
+    }
+
+    // With a trusted proxy configured the header is expected: no warning.
+    let origin = PublicOrigin::parse(TEST_URL, false).unwrap();
+    let proxied = Arc::new(AppState::new(true, unconnected_pool(), origin, Some(b.ip)).unwrap());
+    let app = build_app(proxied.clone());
+    call(&app, send(Some("203.0.113.7"))).await;
+    assert!(!proxied.auth.warned_forwarded.load(Ordering::Relaxed));
+}
+
+#[tokio::test]
+async fn adding_a_passkey_rechecks_recent_sign_in_at_finish() {
+    let Some((state, app)) = db_app() else {
+        return;
+    };
+    let name = fresh("slow");
+    let mut b = Browser::new();
+    assert_eq!(
+        register(&app, &mut b, &mut soft(), &name).await.status,
+        StatusCode::OK
+    );
+    let s = b.post(&app, ADD_START, json!({})).await;
+    assert_eq!(s.status, StatusCode::OK);
+    let body = finish_body(&s, &soft().create(&origin(), creation(&s)).unwrap());
+    // The sign-in ages past the window between start and finish.
+    diesel::update(sessions::table.filter(sessions::token_hash.eq(b.session_hash())))
+        .set(sessions::created_at.eq(Utc::now() - TimeDelta::minutes(6)))
+        .execute(&mut conn(&state))
+        .unwrap();
+    let r = b.post(&app, ADD_FINISH, body).await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN);
+    assert_eq!(r.error(), REAUTH);
+    assert_eq!(passkey_ids(&state, user_id(&state, &name)).len(), 1);
+}
+
+#[tokio::test]
+async fn the_nonce_cookie_survives_other_tabs_and_bad_finishes() {
+    let Some((state, app)) = db_app() else {
+        return;
+    };
+    let (first, second) = (fresh("tab"), fresh("tab"));
+    let mut b = Browser::new();
+    let s1 = start(&app, &mut b, REGISTER_START, &first).await;
+    let nonce = b.cookies[CEREMONY].clone();
+    // A second tab reuses the nonce, refreshing its lifetime.
+    let s2 = start(&app, &mut b, REGISTER_START, &second).await;
+    assert!(s2.set_cookie(CEREMONY).unwrap().contains(&nonce));
+    assert_eq!(b.cookies[CEREMONY], nonce);
+    let c1 = soft().create(&origin(), creation(&s1)).unwrap();
+    let c2 = soft().create(&origin(), creation(&s2)).unwrap();
+
+    // Finishes for unknown or malformed ceremonies leave the cookie alone.
+    for ceremony in ["00".repeat(16), "zz".into()] {
+        let body = json!({ "ceremony": ceremony, "credential": &c1 });
+        let r = b.post(&app, REGISTER_FINISH, body).await;
+        assert_eq!(r.status, StatusCode::BAD_REQUEST);
+        assert!(r.set_cookie(CEREMONY).is_none());
+        assert_eq!(b.cookies[CEREMONY], nonce);
+    }
+
+    // Both tabs finish, in either order.
+    let r = b.post(&app, REGISTER_FINISH, finish_body(&s2, &c2)).await;
+    assert_eq!(r.status, StatusCode::OK, "{:?}", r.body);
+    let r = b.post(&app, REGISTER_FINISH, finish_body(&s1, &c1)).await;
+    assert_eq!(r.status, StatusCode::OK, "{:?}", r.body);
+    assert_eq!(user_count(&state, &first), 1);
+    assert_eq!(user_count(&state, &second), 1);
+}
+
+#[tokio::test]
+async fn a_ceremony_only_finishes_the_operation_it_started() {
+    let Some((state, app)) = db_app() else {
+        return;
+    };
+    let name = fresh("op");
+    let mut b = Browser::new();
+    let mut key = soft();
+    assert_eq!(
+        register(&app, &mut b, &mut key, &name).await.status,
+        StatusCode::OK
+    );
+    let login_started = start(&app, &mut b, LOGIN_START, &name).await;
+    let assertion = key.get(&origin(), request_options(&login_started)).unwrap();
+    let other = fresh("op");
+    let reg_started = start(&app, &mut b, REGISTER_START, &other).await;
+    let attestation = soft().create(&origin(), creation(&reg_started)).unwrap();
+
+    // Each id sent to the wrong finish fails, and is used up by it.
+    let r = b
+        .post(&app, LOGIN_FINISH, finish_body(&reg_started, &assertion))
+        .await;
+    assert_eq!(r.error(), CEREMONY_INVALID);
+    let r = b
+        .post(&app, ADD_FINISH, finish_body(&login_started, &attestation))
+        .await;
+    assert_eq!(r.error(), CEREMONY_INVALID);
+    let r = b
+        .post(
+            &app,
+            REGISTER_FINISH,
+            finish_body(&reg_started, &attestation),
+        )
+        .await;
+    assert_eq!(r.error(), CEREMONY_INVALID);
+    let r = b
+        .post(&app, LOGIN_FINISH, finish_body(&login_started, &assertion))
+        .await;
+    assert_eq!(r.error(), CEREMONY_INVALID);
+    assert_eq!(user_count(&state, &other), 0);
+}
+
+#[tokio::test]
+async fn logout_clears_the_cookie_even_if_the_database_fails() {
+    let pool = Pool::builder()
+        .connection_timeout(Duration::from_millis(200))
+        .build_unchecked(ConnectionManager::<PgConnection>::new(
+            "postgres://invalid/db",
+        ));
+    let app = build_app(state_for(pool));
+    let mut b = Browser::new();
+    b.cookies.insert(SESSION.into(), "ab".repeat(32));
+    let r = b.post(&app, LOGOUT, json!({})).await;
+    assert_eq!(r.status, StatusCode::INTERNAL_SERVER_ERROR);
+    assert!(r.set_cookie(SESSION).unwrap().contains("Max-Age=0"));
+    assert!(!b.cookies.contains_key(SESSION));
+}
+
+#[tokio::test]
+async fn ownership_columns_are_indexed() {
+    let Some((state, _app)) = db_app() else {
+        return;
+    };
+    let found: i64 = diesel::select(diesel::dsl::sql::<diesel::sql_types::BigInt>(
+        "(SELECT count(*) FROM pg_indexes WHERE indexname IN \
+         ('scores_user_id_idx', 'solution_shares_created_by_idx'))",
+    ))
+    .get_result(&mut conn(&state))
+    .unwrap();
+    assert_eq!(found, 2);
 }
 
 /// Accounts gate nothing else: the public API works with no Origin, from

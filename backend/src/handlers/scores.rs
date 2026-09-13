@@ -2,7 +2,7 @@ use crate::models::{NewScore, Score};
 use crate::schema::scores;
 use crate::AppState;
 use axum::extract::{Path, Query, State};
-use axum::http::StatusCode;
+use axum::http::{header, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::Json;
 use diesel::prelude::*;
@@ -11,40 +11,54 @@ use shared::{
     ApiError, Arrangement, ScoreDetail, ScoreEntry, ScoresQuery, SubmitScore, MAX_N, VALIDATION_TOL,
 };
 use std::sync::Arc;
+use std::time::Duration;
 use uuid::Uuid;
 
 pub const MAX_PLAYER_LEN: usize = 32;
 pub const DEFAULT_LIMIT: u32 = 50;
 pub const MAX_LIMIT: u32 = 200;
 
-/// An error response carrying an HTTP status and a JSON [`ApiError`] body.
+/// An error response carrying an HTTP status, a JSON [`ApiError`] body and,
+/// for 429s, a `Retry-After` in seconds.
 #[derive(Debug)]
-pub struct HandlerError(StatusCode, String);
+pub struct HandlerError(StatusCode, String, Option<u64>);
 
 impl HandlerError {
     pub(crate) fn new(status: StatusCode, msg: impl Into<String>) -> Self {
-        Self(status, msg.into())
+        Self(status, msg.into(), None)
     }
 
     pub(super) fn not_found(msg: impl Into<String>) -> Self {
-        Self(StatusCode::NOT_FOUND, msg.into())
+        Self::new(StatusCode::NOT_FOUND, msg)
     }
 
     pub(super) fn bad_request(msg: impl Into<String>) -> Self {
-        Self(StatusCode::BAD_REQUEST, msg.into())
+        Self::new(StatusCode::BAD_REQUEST, msg)
+    }
+
+    /// Ask the client to wait `wait`, rounded up to whole seconds.
+    pub(crate) fn retry_after(mut self, wait: Duration) -> Self {
+        self.2 = Some((wait.as_secs() + u64::from(wait.subsec_nanos() > 0)).max(1));
+        self
     }
 }
 
 impl<E: std::fmt::Display> From<E> for HandlerError {
     fn from(e: E) -> Self {
         tracing::error!("internal error: {e}");
-        Self(StatusCode::INTERNAL_SERVER_ERROR, "internal error".into())
+        Self::new(StatusCode::INTERNAL_SERVER_ERROR, "internal error")
     }
 }
 
 impl IntoResponse for HandlerError {
     fn into_response(self) -> Response {
-        (self.0, Json(ApiError { error: self.1 })).into_response()
+        let mut response = (self.0, Json(ApiError { error: self.1 })).into_response();
+        if let Some(secs) = self.2 {
+            response
+                .headers_mut()
+                .insert(header::RETRY_AFTER, HeaderValue::from(secs));
+        }
+        response
     }
 }
 
@@ -211,8 +225,7 @@ pub async fn detail(
         }
     })
     .await?;
-    let (entry, arrangement) =
-        found.ok_or_else(|| HandlerError(StatusCode::NOT_FOUND, "score not found".into()))?;
+    let (entry, arrangement) = found.ok_or_else(|| HandlerError::not_found("score not found"))?;
     let arrangement: Arrangement = serde_json::from_value(arrangement)?;
     Ok(Json(ScoreDetail { entry, arrangement }))
 }

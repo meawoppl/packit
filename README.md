@@ -88,19 +88,30 @@ anonymously.
   SameSite=Lax). The database stores only a SHA-256 of the token, and every
   sign-in issues a new one.
 - Every auth POST must send an `Origin` equal to `PUBLIC_URL`, and `/api/auth`
-  has no CORS.
-- Start and finish endpoints are rate limited per client IP, and login start
-  also per username.
+  has no CORS. The public API keeps permissive CORS and no Origin check, so
+  before `/api/scores` or `/api/shares` start reading the session cookie
+  (PR 2) they must get the same exact-Origin check.
+- A client is an IPv4 address or an IPv6 /64, and IPv6 clients are also
+  grouped by /48. Start and finish endpoints are rate limited per client and
+  per /48; login start is also limited per username and client. Each client
+  may have 5 sign-ins in progress at once, and each /48 50.
+- Sign-in is username-first, so anyone can find out whether a username
+  exists; registration reports taken names too. That enumeration is accepted.
 
 ### Behind a reverse proxy
 
-Rate limits key on the TCP peer address. Behind Traefik, set `TRUSTED_PROXY`
-to Traefik's IP as the backend sees it, e.g. a fixed address for the Traefik
-container on the shared Docker network. Only requests from that exact address
-take the client IP from `X-Forwarded-For`, and then only its last entry, which
-the proxy adds for the client it saw; earlier entries are client-supplied and
-ignored. Leave it unset when clients connect directly, or every request would
-share the proxy's limit.
+**Production behind Traefik must set `TRUSTED_PROXY`.** Rate limits key on the
+TCP peer address, so without it every client shares Traefik's buckets and one
+client can lock everyone out of signing in. The server logs a warning, once,
+when it sees `X-Forwarded-For` while `TRUSTED_PROXY` is unset.
+
+Set it to Traefik's IP as the backend sees it, e.g. a fixed address for the
+Traefik container on the shared Docker network. This assumes a single proxy
+hop. Only requests from that exact address take the client IP from
+`X-Forwarded-For`, and then only the rightmost entry of the last header,
+which Traefik appends for the client it saw. Earlier entries are
+client-supplied and ignored, and a malformed last entry falls back to the
+proxy's own address. Leave it unset only when clients connect directly.
 
 ## Quick start
 

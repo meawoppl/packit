@@ -63,10 +63,15 @@ impl<K: Eq + Hash + Clone> RateLimiter<K> {
     }
 }
 
-/// The address a request came from. X-Forwarded-For is used only when the
-/// socket peer is the configured trusted proxy, and then only its last hop,
-/// which that proxy appended itself. Anything earlier in the list is
-/// client-supplied and never trusted.
+/// The address a request came from.
+///
+/// This assumes exactly one proxy hop: clients reach the configured trusted
+/// proxy (Traefik) directly, and it appends the address it saw to
+/// X-Forwarded-For. So only the rightmost entry of the last X-Forwarded-For
+/// header is trusted, and only when the socket peer is that proxy. Everything
+/// to its left is client-supplied. If that entry is empty or not an IP
+/// address, the peer is used rather than any other entry. Without a trusted
+/// proxy, or from any other peer, the header is ignored.
 pub fn client_ip(peer: IpAddr, headers: &HeaderMap, trusted_proxy: Option<IpAddr>) -> IpAddr {
     let peer = peer.to_canonical();
     if trusted_proxy.map(|p| p.to_canonical()) != Some(peer) {
@@ -75,21 +80,39 @@ pub fn client_ip(peer: IpAddr, headers: &HeaderMap, trusted_proxy: Option<IpAddr
     headers
         .get_all("x-forwarded-for")
         .iter()
-        .filter_map(|v| v.to_str().ok())
-        .flat_map(|v| v.split(','))
-        .map(str::trim)
-        .rfind(|hop| !hop.is_empty())
-        .and_then(|hop| hop.parse::<IpAddr>().ok())
+        .next_back()
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.rsplit(',').next())
+        .and_then(|hop| hop.trim().parse::<IpAddr>().ok())
         .map_or(peer, |ip| ip.to_canonical())
 }
 
-/// Rate-limit key for an address: IPv6 clients are grouped by /64, the
-/// smallest block a single subscriber is usually given.
-pub fn rate_key(ip: IpAddr) -> IpAddr {
-    match ip {
-        IpAddr::V4(_) => ip,
-        IpAddr::V6(v6) => IpAddr::V6(Ipv6Addr::from(u128::from(v6) & !((1u128 << 64) - 1))),
+/// Who a limit applies to. `subnet` is an IPv4 address or an IPv6 /64, the
+/// smallest block a single subscriber is usually given. IPv6 clients also
+/// carry their /48 `site`, since one site can hold 65,536 /64s.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct RateKey {
+    pub subnet: IpAddr,
+    pub site: Option<IpAddr>,
+}
+
+impl RateKey {
+    pub fn of(ip: IpAddr) -> Self {
+        match ip.to_canonical() {
+            IpAddr::V4(v4) => Self {
+                subnet: IpAddr::V4(v4),
+                site: None,
+            },
+            IpAddr::V6(v6) => Self {
+                subnet: v6_prefix(v6, 64),
+                site: Some(v6_prefix(v6, 48)),
+            },
+        }
     }
+}
+
+fn v6_prefix(ip: Ipv6Addr, bits: u32) -> IpAddr {
+    IpAddr::V6(Ipv6Addr::from(u128::from(ip) & (u128::MAX << (128 - bits))))
 }
 
 #[cfg(test)]
@@ -148,23 +171,75 @@ mod tests {
         h
     }
 
+    const PROXY: &str = "10.0.0.2";
+    const REAL: &str = "203.0.113.9";
+
+    fn ip(s: &str) -> IpAddr {
+        s.parse().unwrap()
+    }
+
+    fn via_proxy(values: &[&str]) -> IpAddr {
+        client_ip(ip(PROXY), &xff(values), Some(ip(PROXY)))
+    }
+
+    #[test]
+    fn trusted_proxy_keys_on_the_hop_it_appended() {
+        // A client-supplied prefix is ignored in favor of the rightmost entry.
+        assert_eq!(via_proxy(&["1.2.3.4, 203.0.113.9"]), ip(REAL));
+        assert_eq!(via_proxy(&["1.2.3.4,203.0.113.9"]), ip(REAL));
+        assert_eq!(via_proxy(&[" 203.0.113.9 "]), ip(REAL));
+        assert_eq!(
+            via_proxy(&["1.2.3.4, 5.6.7.8, 2001:db8::1"]),
+            ip("2001:db8::1")
+        );
+    }
+
+    #[test]
+    fn with_several_headers_the_last_value_of_the_last_wins() {
+        assert_eq!(via_proxy(&["1.2.3.4", "203.0.113.9"]), ip(REAL));
+        assert_eq!(
+            via_proxy(&["1.2.3.4, 5.6.7.8", "9.9.9.9, 203.0.113.9"]),
+            ip(REAL)
+        );
+        // An earlier header never stands in for a bad last one.
+        assert_eq!(via_proxy(&["203.0.113.9", "junk"]), ip(PROXY));
+        assert_eq!(via_proxy(&["203.0.113.9", ""]), ip(PROXY));
+    }
+
+    #[test]
+    fn malformed_or_empty_last_entries_fall_back_to_the_peer() {
+        for values in [
+            &[][..],
+            &[""],
+            &[" "],
+            &[" , "],
+            &["1.2.3.4, "],
+            &["1.2.3.4,"],
+            &["1.2.3.4, junk"],
+            &["1.2.3.4, 203.0.113.9:443"],
+            &["1.2.3.4, [2001:db8::1]"],
+            &["1.2.3.4, unknown"],
+        ] {
+            assert_eq!(via_proxy(values), ip(PROXY), "{values:?}");
+        }
+        // Not valid header text at all.
+        let mut h = HeaderMap::new();
+        h.insert(
+            "x-forwarded-for",
+            axum::http::HeaderValue::from_bytes(b"1.2.3.4, \xff").unwrap(),
+        );
+        assert_eq!(client_ip(ip(PROXY), &h, Some(ip(PROXY))), ip(PROXY));
+    }
+
     #[test]
     fn forwarded_for_ignored_unless_peer_is_the_trusted_proxy() {
-        let proxy: IpAddr = "10.0.0.2".parse().unwrap();
-        let client: IpAddr = "203.0.113.9".parse().unwrap();
-        let spoof = xff(&["198.51.100.1, 203.0.113.9"]);
+        let spoof = xff(&["1.2.3.4, 203.0.113.9"]);
         // No proxy configured: always the peer.
-        assert_eq!(client_ip(client, &spoof, None), client);
+        assert_eq!(client_ip(ip(REAL), &spoof, None), ip(REAL));
+        assert_eq!(client_ip(ip(PROXY), &spoof, None), ip(PROXY));
         // A proxy configured, but this peer is someone else.
-        assert_eq!(client_ip(client, &spoof, Some(proxy)), client);
-        // Through the proxy: the last hop, never the client-supplied first.
-        let via = xff(&["198.51.100.1", "203.0.113.9"]);
-        assert_eq!(client_ip(proxy, &via, Some(proxy)), client);
-        assert_eq!(client_ip(proxy, &spoof, Some(proxy)), client);
-        // Through the proxy with a missing or unparsable last hop: the proxy.
-        for h in [xff(&[]), xff(&["203.0.113.9, junk"]), xff(&[" , "])] {
-            assert_eq!(client_ip(proxy, &h, Some(proxy)), proxy);
-        }
+        let other = ip("198.51.100.5");
+        assert_eq!(client_ip(other, &spoof, Some(ip(PROXY))), other);
     }
 
     #[test]
@@ -180,14 +255,22 @@ mod tests {
     }
 
     #[test]
-    fn ipv6_keys_group_by_64() {
-        let a: IpAddr = "2001:db8:1:2:aaaa::1".parse().unwrap();
-        let b: IpAddr = "2001:db8:1:2:bbbb::2".parse().unwrap();
-        let c: IpAddr = "2001:db8:1:3::1".parse().unwrap();
-        assert_eq!(rate_key(a), rate_key(b));
-        assert_ne!(rate_key(a), rate_key(c));
-        assert_eq!(rate_key(a), "2001:db8:1:2::".parse::<IpAddr>().unwrap());
-        let v4: IpAddr = "203.0.113.9".parse().unwrap();
-        assert_eq!(rate_key(v4), v4);
+    fn ipv6_keys_group_by_64_and_48() {
+        let key = |s: &str| RateKey::of(s.parse().unwrap());
+        let ip = |s: &str| s.parse::<IpAddr>().unwrap();
+        let a = key("2001:db8:1:2:aaaa::1");
+        assert_eq!(a.subnet, ip("2001:db8:1:2::"));
+        assert_eq!(a.site, Some(ip("2001:db8:1::")));
+        // Same /64.
+        assert_eq!(key("2001:db8:1:2:bbbb::2"), a);
+        // Another /64 in the same /48.
+        let c = key("2001:db8:1:3::1");
+        assert_ne!(c.subnet, a.subnet);
+        assert_eq!(c.site, a.site);
+        // Another /48.
+        assert_ne!(key("2001:db8:2:2::1").site, a.site);
+        let v4 = key("203.0.113.9");
+        assert_eq!((v4.subnet, v4.site), (ip("203.0.113.9"), None));
+        assert_eq!(key("::ffff:203.0.113.9"), v4);
     }
 }

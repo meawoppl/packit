@@ -1,12 +1,12 @@
 //! `/api/auth`: passkey registration, sign-in, sessions and extra passkeys.
 //!
 //! Every POST here must carry the site's exact `Origin`, start and finish
-//! endpoints are rate limited per client address, there is no CORS, and no
-//! response is cached. None of this gates the rest of the API.
+//! endpoints are rate limited per client, there is no CORS, and no response
+//! is cached. None of this gates the rest of the API.
 
 use super::scores::{with_conn, HandlerError};
-use crate::auth::ceremony::{Ceremony, CeremonyId, Operation};
-use crate::auth::ratelimit::{client_ip, rate_key};
+use crate::auth::ceremony::{Ceremony, CeremonyId, InsertError};
+use crate::auth::ratelimit::RateKey;
 use crate::auth::session::{self, Session, REAUTH_WINDOW};
 use crate::auth::{hex, random_bytes, username, Pending};
 use crate::schema::{passkeys, sessions, users};
@@ -16,7 +16,7 @@ use axum::http::{header, HeaderValue, Method, StatusCode};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
-use axum::{Json, Router};
+use axum::{Extension, Json, Router};
 use chrono::Utc;
 use diesel::prelude::*;
 use diesel::result::{DatabaseErrorKind, Error as DieselError};
@@ -28,8 +28,9 @@ use std::time::{Duration, Instant};
 use tower_cookies::{CookieManagerLayer, Cookies};
 use uuid::Uuid;
 use webauthn_rs::prelude::{
-    CreationChallengeResponse, Credential, CredentialID, Passkey, PublicKeyCredential,
-    RegisterPublicKeyCredential, RequestChallengeResponse, WebauthnError,
+    CreationChallengeResponse, Credential, CredentialID, Passkey, PasskeyAuthentication,
+    PasskeyRegistration, PublicKeyCredential, RegisterPublicKeyCredential,
+    RequestChallengeResponse, WebauthnError,
 };
 use webauthn_rs_proto::ResidentKeyRequirement;
 
@@ -40,6 +41,7 @@ pub const PASSKEY_TAKEN: &str = "That passkey is already registered";
 pub const VERIFY_FAILED: &str = "Passkey verification failed";
 pub const REAUTH: &str = "Sign in again to add a passkey";
 pub const NOT_SIGNED_IN: &str = "Not signed in";
+pub const TOO_MANY: &str = "Too many attempts; try again later";
 
 /// Options for the browser's WebAuthn call, and the handle to finish with.
 #[derive(Serialize)]
@@ -105,34 +107,24 @@ async fn require_origin(State(state): State<Arc<AppState>>, req: Request, next: 
     next.run(req).await
 }
 
+/// Spend the client's rate-limit tokens, and hand its [`RateKey`] to the
+/// handler for the per-client ceremony and username limits.
 async fn rate_limit(
     State(state): State<Arc<AppState>>,
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
-    req: Request,
+    mut req: Request,
     next: Next,
 ) -> Response {
-    let ip = rate_key(client_ip(
-        peer.ip(),
-        req.headers(),
-        state.auth.trusted_proxy,
-    ));
-    match state.auth.ip_limiter.check(&ip, Instant::now()) {
-        Ok(()) => next.run(req).await,
-        Err(wait) => too_many(wait),
+    let client = state.auth.client(peer.ip(), req.headers());
+    if let Err(wait) = state.auth.check_client(client, Instant::now()) {
+        return too_many(wait).into_response();
     }
+    req.extensions_mut().insert(client);
+    next.run(req).await
 }
 
-fn too_many(wait: Duration) -> Response {
-    let secs = (wait.as_secs() + u64::from(wait.subsec_nanos() > 0)).max(1);
-    let mut response = HandlerError::new(
-        StatusCode::TOO_MANY_REQUESTS,
-        "Too many attempts; try again later",
-    )
-    .into_response();
-    response
-        .headers_mut()
-        .insert(header::RETRY_AFTER, HeaderValue::from(secs));
-    response
+fn too_many(wait: Duration) -> HandlerError {
+    HandlerError::new(StatusCode::TOO_MANY_REQUESTS, TOO_MANY).retry_after(wait)
 }
 
 fn sign_in_failed() -> HandlerError {
@@ -147,63 +139,84 @@ fn unavailable() -> HandlerError {
     HandlerError::new(StatusCode::CONFLICT, username::UNAVAILABLE)
 }
 
+fn reauth() -> HandlerError {
+    HandlerError::new(StatusCode::FORBIDDEN, REAUTH)
+}
+
 fn verify_failed(e: WebauthnError) -> HandlerError {
     tracing::info!("passkey registration rejected: {e}");
     HandlerError::new(StatusCode::BAD_REQUEST, VERIFY_FAILED)
 }
 
-/// Bind a new ceremony to this browser with a fresh nonce cookie, and return
-/// its id for the client.
+/// Store a ceremony bound to this browser's nonce cookie, and return its id
+/// for the client. A valid nonce cookie is reused, so a second tab or a
+/// double submit doesn't strand a ceremony already in progress.
 fn begin(
     state: &AppState,
     cookies: &Cookies,
-    op: Operation,
+    client: RateKey,
     user_id: Uuid,
     pending: Pending,
 ) -> Result<String, HandlerError> {
-    let nonce = random_bytes();
+    let https = state.auth.origin.https;
+    let nonce = session::read_token(cookies, session::ceremony_cookie_name(https))
+        .unwrap_or_else(random_bytes);
     let id = state
         .auth
         .ceremonies
-        .insert(op, nonce, user_id, pending, Instant::now())
-        .ok_or_else(|| {
-            HandlerError::new(
+        .insert(client, nonce, user_id, pending, Instant::now())
+        .map_err(|e| match e {
+            InsertError::Busy(wait) => too_many(wait),
+            InsertError::Full => HandlerError::new(
                 StatusCode::SERVICE_UNAVAILABLE,
                 "Too many sign-ins in progress; try again shortly",
-            )
+            ),
         })?;
-    cookies.add(session::ceremony_cookie(
-        state.auth.origin.https,
-        hex::encode(&nonce),
-    ));
+    cookies.add(session::ceremony_cookie(https, hex::encode(&nonce)));
     Ok(id.to_hex())
 }
 
-/// Consume the named ceremony. It must be live, for `op`, and bound to this
-/// browser's nonce cookie; it is used up even if a check fails.
-fn finish(
+/// Consume the named ceremony. It must be live, bound to this browser's
+/// nonce cookie, and for the operation `pick` accepts; it is used up even if
+/// a check fails. The nonce cookie stays for the browser's other ceremonies.
+fn finish<T>(
     state: &AppState,
     cookies: &Cookies,
     ceremony: &str,
-    op: Operation,
-) -> Result<Ceremony<Pending>, HandlerError> {
+    pick: impl FnOnce(Pending) -> Option<T>,
+) -> Result<Ceremony<T>, HandlerError> {
     let https = state.auth.origin.https;
     let nonce = session::read_token(cookies, session::ceremony_cookie_name(https));
-    if cookies.get(session::ceremony_cookie_name(https)).is_some() {
-        cookies.add(session::removal(session::ceremony_cookie(
-            https,
-            String::new(),
-        )));
-    }
     let id = CeremonyId::parse(ceremony).ok_or_else(invalid_ceremony)?;
     state
         .auth
         .ceremonies
-        .take(id, op, nonce, Instant::now())
+        .take(id, nonce, Instant::now(), pick)
         .map_err(|e| {
             tracing::info!("auth ceremony refused: {e:?}");
             invalid_ceremony()
         })
+}
+
+fn registration(pending: Pending) -> Option<(String, PasskeyRegistration)> {
+    match pending {
+        Pending::Register { username, state } => Some((username, state)),
+        Pending::Login(_) | Pending::AddPasskey(_) => None,
+    }
+}
+
+fn authentication(pending: Pending) -> Option<PasskeyAuthentication> {
+    match pending {
+        Pending::Login(state) => Some(state),
+        Pending::Register { .. } | Pending::AddPasskey(_) => None,
+    }
+}
+
+fn added_passkey(pending: Pending) -> Option<PasskeyRegistration> {
+    match pending {
+        Pending::AddPasskey(state) => Some(state),
+        Pending::Register { .. } | Pending::Login(_) => None,
+    }
 }
 
 fn presented_session(state: &AppState, cookies: &Cookies) -> Option<[u8; 32]> {
@@ -224,6 +237,14 @@ async fn signed_in(state: &AppState, cookies: &Cookies) -> Result<Session, Handl
     session::current_session(state, cookies)
         .await?
         .ok_or_else(|| HandlerError::new(StatusCode::UNAUTHORIZED, NOT_SIGNED_IN))
+}
+
+/// Adding a passkey needs a sign-in no older than [`REAUTH_WINDOW`].
+fn require_recent(session: &Session) -> Result<(), HandlerError> {
+    if Utc::now() - session.created_at > REAUTH_WINDOW {
+        return Err(reauth());
+    }
+    Ok(())
 }
 
 /// Ask for a discoverable credential where the authenticator can make one.
@@ -259,6 +280,7 @@ fn conflict(constraint: &str) -> HandlerError {
 
 async fn register_start(
     State(state): State<Arc<AppState>>,
+    Extension(client): Extension<RateKey>,
     cookies: Cookies,
     Json(body): Json<AuthUsername>,
 ) -> Result<Json<Started<CreationChallengeResponse>>, HandlerError> {
@@ -288,7 +310,7 @@ async fn register_start(
         username: name,
         state: registration,
     };
-    let ceremony = begin(&state, &cookies, Operation::Register, user_id, pending)?;
+    let ceremony = begin(&state, &cookies, client, user_id, pending)?;
     Ok(Json(Started { ceremony, options }))
 }
 
@@ -297,14 +319,8 @@ async fn register_finish(
     cookies: Cookies,
     Json(body): Json<Finish<RegisterPublicKeyCredential>>,
 ) -> Result<Json<AuthMe>, HandlerError> {
-    let ceremony = finish(&state, &cookies, &body.ceremony, Operation::Register)?;
-    let Pending::Register {
-        username: name,
-        state: registration,
-    } = ceremony.state
-    else {
-        return Err(invalid_ceremony());
-    };
+    let ceremony = finish(&state, &cookies, &body.ceremony, registration)?;
+    let (name, registration) = ceremony.state;
     let passkey = state
         .auth
         .webauthn
@@ -343,15 +359,17 @@ async fn register_finish(
 
 async fn login_start(
     State(state): State<Arc<AppState>>,
+    Extension(client): Extension<RateKey>,
     cookies: Cookies,
     Json(body): Json<AuthUsername>,
-) -> Result<Response, HandlerError> {
+) -> Result<Json<Started<RequestChallengeResponse>>, HandlerError> {
     let Ok(name) = username::normalize(&body.username) else {
         return Err(sign_in_failed());
     };
-    if let Err(wait) = state.auth.username_limiter.check(&name, Instant::now()) {
-        return Ok(too_many(wait));
-    }
+    state
+        .auth
+        .check_username(&name, client, Instant::now())
+        .map_err(too_many)?;
     let rows = with_conn(&state, move |conn| {
         passkeys::table
             .inner_join(users::table)
@@ -375,11 +393,11 @@ async fn login_start(
     let ceremony = begin(
         &state,
         &cookies,
-        Operation::Login,
+        client,
         user_id,
         Pending::Login(authentication),
     )?;
-    Ok(Json(Started::<RequestChallengeResponse> { ceremony, options }).into_response())
+    Ok(Json(Started { ceremony, options }))
 }
 
 async fn login_finish(
@@ -387,21 +405,17 @@ async fn login_finish(
     cookies: Cookies,
     Json(body): Json<Finish<PublicKeyCredential>>,
 ) -> Result<Json<AuthMe>, HandlerError> {
-    let ceremony = finish(&state, &cookies, &body.ceremony, Operation::Login)?;
-    let Pending::Login(authentication) = ceremony.state else {
-        return Err(invalid_ceremony());
-    };
+    let ceremony = finish(&state, &cookies, &body.ceremony, authentication)?;
+    // Passkey authentication requires user verification, so a result here
+    // is always user-verified.
     let result = state
         .auth
         .webauthn
-        .finish_passkey_authentication(&body.credential, &authentication)
+        .finish_passkey_authentication(&body.credential, &ceremony.state)
         .map_err(|e| {
             tracing::info!("passkey sign-in rejected: {e}");
             sign_in_failed()
         })?;
-    if !result.user_verified() {
-        return Err(sign_in_failed());
-    }
     let user_id = ceremony.user_id;
     let previous = presented_session(&state, &cookies);
     let signed_in_as = with_conn(&state, move |conn| {
@@ -452,12 +466,11 @@ async fn login_finish(
 
 async fn add_passkey_start(
     State(state): State<Arc<AppState>>,
+    Extension(client): Extension<RateKey>,
     cookies: Cookies,
 ) -> Result<Json<Started<CreationChallengeResponse>>, HandlerError> {
     let session = signed_in(&state, &cookies).await?;
-    if Utc::now() - session.created_at > REAUTH_WINDOW {
-        return Err(HandlerError::new(StatusCode::FORBIDDEN, REAUTH));
-    }
+    require_recent(&session)?;
     let user = session.user;
     let owner = user.id;
     let existing = with_conn(&state, move |conn| {
@@ -478,7 +491,7 @@ async fn add_passkey_start(
     let ceremony = begin(
         &state,
         &cookies,
-        Operation::AddPasskey,
+        client,
         user.id,
         Pending::AddPasskey(registration),
     )?;
@@ -490,20 +503,18 @@ async fn add_passkey_finish(
     cookies: Cookies,
     Json(body): Json<Finish<RegisterPublicKeyCredential>>,
 ) -> Result<Json<AuthMe>, HandlerError> {
-    let ceremony = finish(&state, &cookies, &body.ceremony, Operation::AddPasskey)?;
-    let Pending::AddPasskey(registration) = ceremony.state else {
-        return Err(invalid_ceremony());
-    };
+    let ceremony = finish(&state, &cookies, &body.ceremony, added_passkey)?;
     // The passkey goes to the account the ceremony was started for, and only
-    // while that account is still the one signed in here.
+    // while that account is still signed in here, recently.
     let session = signed_in(&state, &cookies).await?;
     if session.user.id != ceremony.user_id {
-        return Err(HandlerError::new(StatusCode::FORBIDDEN, REAUTH));
+        return Err(reauth());
     }
+    require_recent(&session)?;
     let passkey = state
         .auth
         .webauthn
-        .finish_passkey_registration(&body.credential, &registration)
+        .finish_passkey_registration(&body.credential, &ceremony.state)
         .map_err(verify_failed)?;
     let owner = ceremony.user_id;
     let credential_id = passkey.cred_id().to_vec();
@@ -527,21 +538,24 @@ async fn add_passkey_finish(
     }))
 }
 
+/// Clear the cookie first, so the browser is signed out even if deleting the
+/// session row fails.
 async fn logout(
     State(state): State<Arc<AppState>>,
     cookies: Cookies,
 ) -> Result<StatusCode, HandlerError> {
-    if let Some(token) = presented_session(&state, &cookies) {
+    let presented = presented_session(&state, &cookies);
+    cookies.add(session::removal(session::session_cookie(
+        state.auth.origin.https,
+        String::new(),
+    )));
+    if let Some(token) = presented {
         let hash = session::hash_token(&token);
         with_conn(&state, move |conn| {
             diesel::delete(sessions::table.filter(sessions::token_hash.eq(hash))).execute(conn)
         })
         .await?;
     }
-    cookies.add(session::removal(session::session_cookie(
-        state.auth.origin.https,
-        String::new(),
-    )));
     Ok(StatusCode::NO_CONTENT)
 }
 
