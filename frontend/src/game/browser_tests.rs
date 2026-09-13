@@ -53,6 +53,7 @@ async fn mount_at(query: &str) -> (yew::AppHandle<Host>, Element, Physics) {
         .replace_state_with_url(&wasm_bindgen::JsValue::NULL, "", Some(&url))
         .unwrap();
     TEST_REPORT.with(|r| r.take());
+    TEST_EXTENT.with(|e| e.set(0.0));
     let document = window.document().unwrap();
     let root = document.create_element("div").unwrap();
     root.set_attribute("style", "width: 600px").unwrap();
@@ -668,7 +669,11 @@ async fn wheel_and_keys_wake_physics_and_turn_without_teleporting() {
         .unwrap()
         .dyn_into()
         .unwrap();
-    // Select the square, then pause; keyboard turns must wake it again.
+    // Select the square, then pause; keyboard turns must wake it again. A
+    // calm grid settles and measures itself, and input is ignored while it
+    // measures, so each step waits until the controls take input.
+    let mut steps = Vec::new();
+    wait_ready(&root, &physics, &mut steps, "before selecting").await;
     let b = physics.bodies()[0];
     pointer(
         &canvas,
@@ -683,8 +688,7 @@ async fn wheel_and_keys_wake_physics_and_turn_without_teleporting() {
         physics.side(),
     );
     sleep(30).await;
-    force_button(&root, "Pause").click();
-    sleep(30).await;
+    pause_when_ready(&root, &physics, &mut steps, "after selecting").await;
     let start = physics.bodies()[0].theta;
     let key = web_sys::KeyboardEventInit::new();
     key.set_bubbles(true);
@@ -699,7 +703,16 @@ async fn wheel_and_keys_wake_physics_and_turn_without_teleporting() {
         }
         sleep(10).await;
     }
-    assert!(!physics.paused(), "a key turn wakes the scene");
+    if physics.paused() {
+        // The turn button reports when nothing is selected.
+        let state = screen_state(&root, &physics);
+        turn_button(&root, "Turn right").click();
+        sleep(50).await;
+        panic!(
+            "a key turn wakes the scene: {state}; a turn button then says {:?}; steps {steps:?}",
+            text(&root, ".pg-status")
+        );
+    }
     assert!(
         (physics.bodies()[0].theta - start).abs() < 0.02,
         "key does not teleport"
@@ -711,8 +724,7 @@ async fn wheel_and_keys_wake_physics_and_turn_without_teleporting() {
         sleep(30).await;
     }
     assert!(physics.bodies()[0].theta > start + 0.015);
-    force_button(&root, "Pause").click();
-    sleep(30).await;
+    pause_when_ready(&root, &physics, &mut steps, "before the wheel").await;
     let b = physics.bodies()[0];
     let r = canvas.get_bounding_client_rect();
     let pad = r.width() * 0.045;
@@ -726,8 +738,17 @@ async fn wheel_and_keys_wake_physics_and_turn_without_teleporting() {
     canvas
         .dispatch_event(&WheelEvent::new_with_event_init_dict("wheel", &wheel).unwrap())
         .unwrap();
-    sleep(30).await;
-    assert!(!physics.paused());
+    for _ in 0..50 {
+        if !physics.paused() {
+            break;
+        }
+        sleep(10).await;
+    }
+    assert!(
+        !physics.paused(),
+        "a wheel turn wakes the scene: {}; steps {steps:?}",
+        screen_state(&root, &physics)
+    );
     assert!(
         (physics.bodies()[0].theta - b.theta).abs() < 0.02,
         "wheel does not teleport"
@@ -1717,6 +1738,84 @@ async fn tighten_loads_the_solvers_smaller_box_on_request() {
     assert!(physics.paused());
     handle.destroy();
     root.remove();
+}
+
+fn settle_button(root: &Element) -> HtmlElement {
+    root.query_selector(".pg-submit .pg-actions .pg-primary")
+        .unwrap()
+        .expect("Settle button rendered")
+        .dyn_into()
+        .unwrap()
+}
+
+/// What the screen is doing, for timing-sensitive tests to report.
+fn screen_state(root: &Element, physics: &Physics) -> String {
+    let settle = settle_button(root);
+    format!(
+        "status {:?}, Settle button {:?} (disabled {}), paused {}, settle {:?}, measured {}, drawn extent {} for side {}",
+        text(root, ".pg-status"),
+        settle.text_content().unwrap_or_default(),
+        settle.has_attribute("disabled"),
+        physics.paused(),
+        physics.settle_status().phase,
+        TEST_REPORT.with(|r| r.borrow().is_some()),
+        TEST_EXTENT.with(Cell::get),
+        physics.side()
+    )
+}
+
+/// Wait until the screen takes input: a frame is drawn, the canvas has
+/// stopped moving (a pointer's world position is read from its rect when
+/// the event is handled), and it's not settling or measuring, which the
+/// Settle button shows. Records the moment and state in `steps`.
+async fn wait_ready(root: &Element, physics: &Physics, steps: &mut Vec<String>, at: &str) {
+    let now = || web_sys::window().unwrap().performance().unwrap().now();
+    let rect = || {
+        let r = canvas_of(root).get_bounding_client_rect();
+        (r.left(), r.top(), r.width(), r.height())
+    };
+    let mut last = rect();
+    for _ in 0..250 {
+        sleep(20).await;
+        let (settle, placed) = (settle_button(root), rect());
+        let still = std::mem::replace(&mut last, placed) == placed;
+        if still
+            && TEST_EXTENT.with(Cell::get) > 0.0
+            && !settle.has_attribute("disabled")
+            && settle.text_content().unwrap_or_default() == "Settle"
+        {
+            steps.push(format!(
+                "{:.0} ms {at}: {}",
+                now(),
+                screen_state(root, physics)
+            ));
+            return;
+        }
+    }
+    panic!(
+        "controls never ready {at}: {}; steps {steps:?}",
+        screen_state(root, physics)
+    );
+}
+
+/// Once the screen takes input, pause the scene unless a measurement
+/// already has.
+async fn pause_when_ready(root: &Element, physics: &Physics, steps: &mut Vec<String>, at: &str) {
+    wait_ready(root, physics, steps, at).await;
+    if !physics.paused() {
+        force_button(root, "Pause").click();
+    }
+    for _ in 0..50 {
+        if physics.paused() {
+            break;
+        }
+        sleep(10).await;
+    }
+    assert!(
+        physics.paused(),
+        "paused {at}: {}; steps {steps:?}",
+        screen_state(root, physics)
+    );
 }
 
 /// A settle the user didn't start, like the automatic one on a calm scene,
