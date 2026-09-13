@@ -10,6 +10,7 @@ use super::{hex, random_bytes, CEREMONY_TTL};
 use crate::handlers::scores::{with_conn, HandlerError};
 use crate::schema::{sessions, users};
 use crate::AppState;
+use axum::http::StatusCode;
 use chrono::{DateTime, TimeDelta, Utc};
 use diesel::prelude::*;
 use sha2::{Digest, Sha256};
@@ -157,13 +158,25 @@ pub async fn current_session(
     .await
 }
 
-/// The signed-in user, if any. Handlers that want to attribute work to an
-/// account call this; nothing requires it yet.
+/// The signed-in user, if any.
 pub async fn current_user(
     state: &AppState,
     cookies: &Cookies,
 ) -> Result<Option<User>, HandlerError> {
     Ok(current_session(state, cookies).await?.map(|s| s.user))
+}
+
+/// The account a write is credited to, or a 401 whose message says what
+/// signing in is needed for. Routes that call this must also require the
+/// exact `Origin` (`handlers::auth::require_origin`).
+pub async fn require_user(
+    state: &AppState,
+    cookies: &Cookies,
+    why: &'static str,
+) -> Result<User, HandlerError> {
+    current_user(state, cookies)
+        .await?
+        .ok_or_else(|| HandlerError::new(StatusCode::UNAUTHORIZED, why))
 }
 
 #[cfg(test)]

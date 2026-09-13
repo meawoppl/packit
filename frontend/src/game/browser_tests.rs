@@ -3,15 +3,61 @@
 //! wasm32-unknown-unknown` under wasm-bindgen-test-runner.
 
 use super::*;
+use crate::account::browser_tests::{
+    click, empty, find, login_started, not_signed_in, reply, text_of, type_username, wait_until,
+    Api, Passkeys,
+};
+use crate::account::{AccountMenu, AccountProvider};
 use wasm_bindgen_test::*;
 use web_sys::{Element, HtmlElement, PointerEventInit};
 
 wasm_bindgen_test_configure!(run_in_browser);
 
-/// `Game` renders router links, so tests mount it inside a router.
+thread_local! {
+    /// Sign-in asks from the play screen, in order.
+    static ASKS: std::cell::RefCell<Vec<SignInAsk>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// An account context that is signed in as `username`, or signed out, and
+/// records sign-in asks for [`answer`].
+fn account(username: Option<&str>) -> Account {
+    ASKS.with(|a| a.borrow_mut().clear());
+    Account {
+        username: username.map(Into::into),
+        ask: Callback::from(|ask| ASKS.with(|a| a.borrow_mut().push(ask))),
+    }
+}
+
+/// The reasons of the asks so far.
+fn asks() -> Vec<&'static str> {
+    ASKS.with(|a| a.borrow().iter().map(|ask| ask.reason).collect())
+}
+
+/// Answer the latest ask, as the account would after a sign-in (`true`) or
+/// a dismissed dialog.
+fn answer(signed_in: bool) {
+    let done = ASKS
+        .with(|a| a.borrow().last().map(|ask| ask.done.clone()))
+        .expect("the play screen asked to sign in");
+    done.emit(signed_in);
+}
+
+#[derive(Properties, PartialEq)]
+struct HostProps {
+    account: Account,
+}
+
+/// `Game` renders router links, so tests mount it inside a router, with an
+/// account context.
 #[function_component(Host)]
-fn host() -> Html {
-    html! { <BrowserRouter><Game n={2} /></BrowserRouter> }
+fn host(props: &HostProps) -> Html {
+    html! {
+        <BrowserRouter>
+            <ContextProvider<Account> context={props.account.clone()}>
+                <Game n={2} />
+            </ContextProvider<Account>>
+        </BrowserRouter>
+    }
 }
 
 /// Remove `navigator.gpu` so the CPU path runs deterministically; returns a
@@ -37,9 +83,31 @@ async fn mount() -> (yew::AppHandle<Host>, Element, Physics) {
     mount_at("").await
 }
 
-/// Mount with `?{query}` as the page query (empty clears it). Settling writes a
-/// share code into the URL, so every mount sets the query it expects.
+/// Mount signed in with `?{query}` as the page query (empty clears it).
+/// Settling writes a share code into the URL, so every mount sets the query
+/// it expects.
 async fn mount_at(query: &str) -> (yew::AppHandle<Host>, Element, Physics) {
+    mount_as(query, Some("tester")).await
+}
+
+/// Mount as `username`, or signed out.
+async fn mount_as(query: &str, username: Option<&str>) -> (yew::AppHandle<Host>, Element, Physics) {
+    set_query(query);
+    let root = new_root();
+    let props = HostProps {
+        account: account(username),
+    };
+    let handle = yew::Renderer::<Host>::with_root_and_props(root.clone(), props).render();
+    sleep(100).await;
+    let physics = TEST_PHYSICS
+        .with(|p| p.borrow().clone())
+        .expect("Game registered its physics");
+    (handle, root, physics)
+}
+
+/// Set the page query for the next mount, and clear what the last one
+/// reported and drew.
+fn set_query(query: &str) {
     let window = web_sys::window().unwrap();
     let path = window.location().pathname().unwrap();
     let url = if query.is_empty() {
@@ -54,16 +122,14 @@ async fn mount_at(query: &str) -> (yew::AppHandle<Host>, Element, Physics) {
         .unwrap();
     TEST_REPORT.with(|r| r.take());
     TEST_EXTENT.with(|e| e.set(0.0));
-    let document = window.document().unwrap();
+}
+
+fn new_root() -> Element {
+    let document = web_sys::window().unwrap().document().unwrap();
     let root = document.create_element("div").unwrap();
     root.set_attribute("style", "width: 600px").unwrap();
     document.body().unwrap().append_child(&root).unwrap();
-    let handle = yew::Renderer::<Host>::with_root(root.clone()).render();
-    sleep(100).await;
-    let physics = TEST_PHYSICS
-        .with(|p| p.borrow().clone())
-        .expect("Game registered its physics");
-    (handle, root, physics)
+    root
 }
 
 async fn sleep(ms: u64) {
@@ -2050,15 +2116,6 @@ async fn starting_a_run_cancels_a_settle() {
 async fn cancelling_a_settle_drops_its_pending_submit() {
     let _gpu = NoWebGpu::install();
     let (handle, root, physics) = mount_at(&format!("s={}", share::encode(&cramped(), &[]))).await;
-    let name: HtmlInputElement = root
-        .query_selector("#pg-player")
-        .unwrap()
-        .unwrap()
-        .dyn_into()
-        .unwrap();
-    name.set_value("relax-test");
-    name.dispatch_event(&Event::new("input").unwrap()).unwrap();
-    sleep(30).await;
     click_button(&root, ".pg-submit", "Submit packing");
     sleep(100).await;
     let status = text(&root, ".pg-status");
@@ -2097,14 +2154,6 @@ async fn cancelling_a_settle_drops_its_pending_submit() {
 async fn submitting_during_a_settle_submits_when_it_measures() {
     let _gpu = NoWebGpu::install();
     let (handle, root, _physics) = mount_at(&format!("s={}", share::encode(&cramped(), &[]))).await;
-    let name: HtmlInputElement = root
-        .query_selector("#pg-player")
-        .unwrap()
-        .unwrap()
-        .dyn_into()
-        .unwrap();
-    name.set_value("relax-test");
-    name.dispatch_event(&Event::new("input").unwrap()).unwrap();
     click_button(&root, ".pg-submit", "Settle");
     sleep(100).await;
     let status = text(&root, ".pg-status");
@@ -2504,6 +2553,365 @@ async fn turn_buttons_turn_the_selected_square() {
         start,
         physics.bodies()[0].theta
     );
+    handle.destroy();
+    root.remove();
+}
+
+fn sign_in_note(root: &Element) -> Option<String> {
+    root.query_selector(".pg-sign-in[role='alert']")
+        .unwrap()
+        .map(|e| e.text_content().unwrap_or_default())
+}
+
+/// A saved score, as `POST /api/scores` returns it.
+fn saved() -> crate::account::browser_tests::Reply {
+    reply(
+        200,
+        serde_json::json!({
+            "id": "00000000-0000-0000-0000-000000000001",
+            "player": "tester",
+            "n": 2,
+            "side": 2.0,
+            "submitted_at": "2026-09-13T00:00:00",
+            "rank": 1,
+            "account": true,
+        }),
+    )
+}
+
+/// The shared two-square packing with every kind of glue.
+fn glued_code() -> String {
+    share::encode(&two_squares(), &two_square_glues())
+}
+
+#[wasm_bindgen_test]
+async fn signed_out_share_and_submit_ask_to_sign_in_and_send_nothing() {
+    let _gpu = NoWebGpu::install();
+    let shares = ShareApi::install(&[OK]);
+    let scores = Api::install(&[("/api/scores", vec![saved()])]);
+    let (handle, root, _) = mount_as("", None).await;
+    submit_button(&root, "Share").click();
+    sleep(30).await;
+    assert_eq!(sign_in_note(&root).as_deref(), Some(SHARE_NOTE));
+    submit_button(&root, "Submit packing").click();
+    sleep(30).await;
+    assert_eq!(
+        sign_in_note(&root).as_deref(),
+        Some(SUBMIT_UNCERTIFIED_NOTE)
+    );
+    submit_button(&root, "Settle").click();
+    wait_for_report(8000).await;
+    submit_button(&root, "Submit packing").click();
+    sleep(30).await;
+    assert_eq!(sign_in_note(&root).as_deref(), Some(SUBMIT_NOTE));
+    assert_eq!(asks(), [SHARE_NOTE, SUBMIT_UNCERTIFIED_NOTE, SUBMIT_NOTE]);
+    sleep(300).await;
+    assert!(shares.requests.borrow().is_empty(), "nothing was shared");
+    assert!(
+        scores.sent("/api/scores").is_empty(),
+        "nothing was submitted"
+    );
+    assert_eq!(text(&root, ".pg-share-status"), "");
+    handle.destroy();
+    root.remove();
+}
+
+/// A Share pressed while signed out is frozen then, and sent once after
+/// signing in: edits made while the sign-in is open stay out of it.
+#[wasm_bindgen_test]
+async fn a_frozen_share_goes_out_once_after_signing_in() {
+    let _gpu = NoWebGpu::install();
+    let api = ShareApi::install(&[OK]);
+    let clipboard = Clipboard::install(false);
+    let (handle, root, physics) = mount_as(&format!("s={}", glued_code()), None).await;
+    submit_button(&root, "Share").click();
+    sleep(30).await;
+    physics.set_glues(&[]).unwrap();
+    force_button(&root, "Shake").click();
+    sleep(100).await;
+    assert!(api.requests.borrow().is_empty());
+    answer(true);
+    sleep(30).await;
+    wait_share(&root).await;
+    let requests = api.requests.borrow().clone();
+    assert_eq!(requests.len(), 1);
+    assert_eq!(
+        share::decode(&requests[0].code, 2).unwrap(),
+        share::Snapshot {
+            arrangement: two_squares(),
+            glues: two_square_glues(),
+        }
+    );
+    answer(true);
+    sleep(300).await;
+    assert_eq!(api.requests.borrow().len(), 1, "sent at most once");
+    assert_eq!(sign_in_note(&root), None);
+    assert_eq!(clipboard.values.borrow().len(), 1);
+    handle.destroy();
+    root.remove();
+}
+
+#[wasm_bindgen_test]
+async fn dismissing_sign_in_drops_the_frozen_requests() {
+    let _gpu = NoWebGpu::install();
+    let shares = ShareApi::install(&[OK]);
+    let scores = Api::install(&[("/api/scores", vec![saved()])]);
+    let (handle, root, _) = mount_as("", None).await;
+    submit_button(&root, "Share").click();
+    sleep(30).await;
+    answer(false);
+    sleep(30).await;
+    assert_eq!(sign_in_note(&root).as_deref(), Some(UNSHARED_NOTE));
+    // A late yes to the same ask finds nothing left to send.
+    answer(true);
+    submit_button(&root, "Settle").click();
+    wait_for_report(8000).await;
+    submit_button(&root, "Submit packing").click();
+    sleep(30).await;
+    answer(false);
+    sleep(30).await;
+    assert_eq!(sign_in_note(&root).as_deref(), Some(UNSUBMITTED_NOTE));
+    sleep(300).await;
+    assert!(shares.requests.borrow().is_empty());
+    assert!(scores.sent("/api/scores").is_empty());
+    handle.destroy();
+    root.remove();
+}
+
+#[wasm_bindgen_test]
+async fn unmounting_drops_a_request_waiting_for_sign_in() {
+    let _gpu = NoWebGpu::install();
+    let api = ShareApi::install(&[OK]);
+    let (handle, root, _) = mount_as("", None).await;
+    submit_button(&root, "Share").click();
+    sleep(30).await;
+    handle.destroy();
+    root.remove();
+    answer(true);
+    sleep(300).await;
+    assert!(api.requests.borrow().is_empty());
+}
+
+#[wasm_bindgen_test]
+async fn signed_in_submit_sends_only_the_arrangement() {
+    let _gpu = NoWebGpu::install();
+    let scores = Api::install(&[("/api/scores", vec![saved()])]);
+    let (handle, root, _) = mount().await;
+    submit_button(&root, "Settle").click();
+    wait_for_report(8000).await;
+    let report = TEST_REPORT.with(|r| r.borrow().clone()).unwrap();
+    submit_button(&root, "Submit packing").click();
+    wait_until("the saved score", || {
+        text(&root, ".pg-status").starts_with("Saved! Rank #1")
+    })
+    .await;
+    let sent = scores.sent("/api/scores");
+    assert_eq!(sent.len(), 1);
+    let body: serde_json::Value = serde_json::from_str(&sent[0]).unwrap();
+    assert_eq!(body, serde_json::json!({ "arrangement": report }));
+    assert!(asks().is_empty());
+    handle.destroy();
+    root.remove();
+}
+
+/// An expired session's 401 isn't retried: it asks to sign in, and then
+/// the same code goes out again.
+#[wasm_bindgen_test]
+async fn a_401_on_share_asks_to_sign_in_and_resends_the_same_code() {
+    let _gpu = NoWebGpu::install();
+    let expired = Reply {
+        status: 401,
+        retry_after: None,
+        stall_body: false,
+    };
+    let api = ShareApi::install(&[expired, OK]);
+    let clipboard = Clipboard::install(false);
+    let (handle, root, _) = mount().await;
+    submit_button(&root, "Share").click();
+    wait_until("the sign-in prompt", || sign_in_note(&root).is_some()).await;
+    assert_eq!(sign_in_note(&root).as_deref(), Some(EXPIRED_SHARE_NOTE));
+    assert_eq!(asks(), [EXPIRED_SHARE_NOTE]);
+    assert_eq!(api.requests.borrow().len(), 1, "a 401 is not retried");
+    assert_eq!(share_alert(&root), None);
+    answer(true);
+    sleep(30).await;
+    wait_share(&root).await;
+    let requests = api.requests.borrow().clone();
+    assert_eq!(requests.len(), 2);
+    assert_eq!(requests[0], requests[1], "the same snapshot again");
+    assert_eq!(clipboard.values.borrow().len(), 1);
+    handle.destroy();
+    root.remove();
+}
+
+#[wasm_bindgen_test]
+async fn a_401_on_submit_asks_to_sign_in_and_resubmits() {
+    let _gpu = NoWebGpu::install();
+    let expired = reply(
+        401,
+        serde_json::json!({ "error": "Sign in to submit a score" }),
+    );
+    let scores = Api::install(&[("/api/scores", vec![expired, saved()])]);
+    let (handle, root, _) = mount().await;
+    submit_button(&root, "Settle").click();
+    wait_for_report(8000).await;
+    submit_button(&root, "Submit packing").click();
+    wait_until("the sign-in prompt", || sign_in_note(&root).is_some()).await;
+    assert_eq!(sign_in_note(&root).as_deref(), Some(EXPIRED_SUBMIT_NOTE));
+    assert_eq!(scores.sent("/api/scores").len(), 1);
+    answer(true);
+    wait_until("the saved score", || {
+        text(&root, ".pg-status").starts_with("Saved!")
+    })
+    .await;
+    let sent = scores.sent("/api/scores");
+    assert_eq!(sent.len(), 2);
+    assert_eq!(sent[0], sent[1], "the same packing again");
+    handle.destroy();
+    root.remove();
+}
+
+/// The whole site: the real account provider and header control.
+#[function_component(Site)]
+fn site() -> Html {
+    html! {
+        <BrowserRouter>
+            <AccountProvider>
+                <AccountMenu />
+                <Game n={2} />
+            </AccountProvider>
+        </BrowserRouter>
+    }
+}
+
+async fn mount_site(query: &str) -> (yew::AppHandle<Site>, Element, Physics) {
+    set_query(query);
+    let root = new_root();
+    let handle = yew::Renderer::<Site>::with_root(root.clone()).render();
+    sleep(100).await;
+    let physics = TEST_PHYSICS
+        .with(|p| p.borrow().clone())
+        .expect("Game registered its physics");
+    (handle, root, physics)
+}
+
+fn sign_in_api() -> Api {
+    let ada = reply(200, serde_json::json!({ "username": "ada" }));
+    Api::install(&[
+        ("/api/auth/me", vec![not_signed_in(), ada]),
+        ("/api/auth/login/start", vec![login_started()]),
+        (
+            "/api/auth/login/finish",
+            vec![reply(200, serde_json::json!({ "username": "ada" }))],
+        ),
+    ])
+}
+
+#[wasm_bindgen_test]
+async fn a_share_opens_the_sign_in_dialog_and_signing_in_sends_it() {
+    let _gpu = NoWebGpu::install();
+    let shares = ShareApi::install(&[OK]);
+    let _clipboard = Clipboard::install(false);
+    let _auth = sign_in_api();
+    let _keys = Passkeys::install();
+    let (handle, root, physics) = mount_site(&format!("s={}", glued_code())).await;
+    submit_button(&root, "Share").click();
+    sleep(50).await;
+    assert_eq!(
+        text_of(&root, ".account-reason").as_deref(),
+        Some(SHARE_NOTE)
+    );
+    physics.set_glues(&[]).unwrap();
+    type_username(&root, "ada");
+    sleep(30).await;
+    click(&root, ".account-sign-in");
+    wait_until("the share", || shares.requests.borrow().len() == 1).await;
+    wait_share(&root).await;
+    assert_eq!(shares.requests.borrow()[0].code, glued_code());
+    assert_eq!(text_of(&root, ".account-name").as_deref(), Some("ada"));
+    assert!(find(&root, ".account-dialog").is_none());
+    assert_eq!(sign_in_note(&root), None);
+    handle.destroy();
+    root.remove();
+}
+
+#[wasm_bindgen_test]
+async fn cancelling_the_sign_in_dialog_drops_the_share() {
+    let _gpu = NoWebGpu::install();
+    let shares = ShareApi::install(&[OK]);
+    let _auth = sign_in_api();
+    let _keys = Passkeys::install();
+    let (handle, root, _) = mount_site(&format!("s={}", glued_code())).await;
+    submit_button(&root, "Share").click();
+    sleep(50).await;
+    click(&root, ".account-cancel");
+    sleep(30).await;
+    assert!(find(&root, ".account-dialog").is_none());
+    assert_eq!(sign_in_note(&root).as_deref(), Some(UNSHARED_NOTE));
+    // Signing in afterwards sends nothing.
+    click(&root, ".account-open");
+    sleep(30).await;
+    type_username(&root, "ada");
+    sleep(30).await;
+    click(&root, ".account-sign-in");
+    wait_until("the sign-in", || {
+        text_of(&root, ".account-name").as_deref() == Some("ada")
+    })
+    .await;
+    sleep(300).await;
+    assert!(shares.requests.borrow().is_empty());
+    handle.destroy();
+    root.remove();
+}
+
+/// A sign-in that finishes after its dialog was cancelled, and after a
+/// newer Share asked again, shares nothing. Only a sign-in for the newer
+/// ask sends its snapshot.
+#[wasm_bindgen_test]
+async fn a_stale_sign_in_does_not_share_for_a_newer_ask() {
+    let _gpu = NoWebGpu::install();
+    let shares = ShareApi::install(&[OK]);
+    let _clipboard = Clipboard::install(false);
+    let ada = || reply(200, serde_json::json!({ "username": "ada" }));
+    let auth = Api::install(&[
+        (
+            "/api/auth/me",
+            vec![not_signed_in(), not_signed_in(), ada()],
+        ),
+        ("/api/auth/login/start", vec![login_started()]),
+        ("/api/auth/login/finish", vec![ada().after(800), ada()]),
+        ("/api/auth/logout", vec![empty(204)]),
+    ]);
+    let _keys = Passkeys::install();
+    let (handle, root, _) = mount_site(&format!("s={}", glued_code())).await;
+    submit_button(&root, "Share").click();
+    sleep(50).await;
+    type_username(&root, "ada");
+    sleep(30).await;
+    click(&root, ".account-sign-in");
+    wait_until("the first finish", || {
+        auth.sent("/api/auth/login/finish").len() == 1
+    })
+    .await;
+    click(&root, ".account-cancel");
+    sleep(30).await;
+    submit_button(&root, "Share").click();
+    sleep(1100).await;
+    assert!(
+        shares.requests.borrow().is_empty(),
+        "the stale sign-in shared nothing"
+    );
+    assert!(find(&root, ".account-name").is_none());
+    assert_eq!(
+        auth.sent("/api/auth/logout").len(),
+        1,
+        "that session was signed out"
+    );
+    assert_eq!(sign_in_note(&root).as_deref(), Some(SHARE_NOTE));
+    click(&root, ".account-sign-in");
+    wait_until("the share", || shares.requests.borrow().len() == 1).await;
+    wait_share(&root).await;
+    assert_eq!(shares.requests.borrow().len(), 1);
     handle.destroy();
     root.remove();
 }

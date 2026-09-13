@@ -13,12 +13,14 @@ pub struct Score {
     pub side: f64,
     pub arrangement: serde_json::Value,
     pub submitted_at: NaiveDateTime,
+    pub user_id: Option<Uuid>,
 }
 
 #[derive(Debug, Insertable)]
 #[diesel(table_name = scores)]
 pub struct NewScore {
     pub player: String,
+    pub user_id: Uuid,
     pub n: i32,
     pub side: f64,
     pub arrangement: serde_json::Value,

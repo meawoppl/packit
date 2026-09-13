@@ -148,3 +148,56 @@ jobs:
               json.dump(config, f)
           PYTHON
           cargo test -p physics -p frontend --target wasm32-unknown-unknown --locked
+
+  e2e:
+    name: Passkey E2E
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: packit_test
+          POSTGRES_USER: packit
+          POSTGRES_PASSWORD: dev_password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U packit"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "e2e"
+
+      - name: Install trunk
+        run: cargo install trunk --locked
+
+      - name: Build frontend (served by the backend under test)
+        run: cd frontend && trunk build
+
+      - name: Install Chrome and matching driver
+        uses: browser-actions/setup-chrome@v2
+        id: chrome
+        with:
+          chrome-version: stable
+          install-chromedriver: true
+
+      # PACKIT_E2E=1 fails the run if the driver or database is missing,
+      # rather than skipping.
+      - name: Run passkey flows in Chrome with a virtual authenticator
+        env:
+          PACKIT_E2E: "1"
+          CHROME_BINARY: ${{ steps.chrome.outputs.chrome-path }}
+          CHROMEDRIVER: ${{ steps.chrome.outputs.chromedriver-path }}
+          TEST_DATABASE_URL: postgresql://packit:dev_password@localhost:5432/packit_test
+        run: cargo test -p backend --locked e2e -- --test-threads=1

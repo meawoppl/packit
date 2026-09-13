@@ -35,11 +35,11 @@ at the bottom-left. Every crate uses `shared::Placement` and
 | Method | Path | Body / query | Returns |
 | --- | --- | --- | --- |
 | GET | `/api/health` | | `HealthResponse` |
-| POST | `/api/scores` | `SubmitScore` | `ScoreEntry` |
+| POST | `/api/scores` | `SubmitScore` (`{ arrangement }`) | `ScoreEntry`; needs a session |
 | GET | `/api/scores` | `?n=&limit=` | `Vec<ScoreEntry>` |
 | GET | `/api/scores/:id` | | `ScoreDetail` |
 | GET | `/api/records` | | `Vec<KnownRecord>` |
-| POST | `/api/shares` | `{ n, code }` | Durable short URL for a share-code snapshot |
+| POST | `/api/shares` | `{ n, code }` | Durable short URL for a share-code snapshot; needs a session |
 | GET | `/s/:token` | — | Redirect to the saved solution and its preview |
 | GET | `/api/preview.png` | `?n=&s=` | 1200×630 PNG of a share code |
 | GET | `/play/:n` | `?s=` | The app page with link-preview metadata |
@@ -53,11 +53,19 @@ at the bottom-left. Every crate uses `shared::Placement` and
 | GET | `/api/auth/me` | — | `{ username }`, or 401 |
 
 Submissions are validated server-side with `shared::geometry::validate`
-using `shared::VALIDATION_TOL`.
+using `shared::VALIDATION_TOL`. A score's leaderboard name is its account's
+username.
+
+Arrangements travel and are stored as JSON, and every crate that parses them
+enables serde_json's `float_roundtrip`, so each double comes back bit for bit
+(the default parser can land a ULP off). This doesn't repair scores stored
+with drift before it. jsonb keeps numbers as Postgres `numeric`, which has no
+negative zero, so a stored `-0.0` reads back as `0.0`, an equal value.
 
 The **Share** button saves an immutable snapshot in Postgres and copies a short
 `/s/<token>` URL, suitable for posting on social media. Identical snapshots reuse
-the same URL. Unfinished packings can be shared without submitting a score, and
+the same URL, whoever shares them, and the link keeps the account that first
+created it. Unfinished packings can be shared without submitting a score, and
 the snapshot keeps any glue between squares and walls. If
 a browser blocks automatic clipboard access, use **Copy link** or select the
 shown URL. Automatic settle still updates the address bar with the self-contained
@@ -72,9 +80,48 @@ cached as immutable.
 
 ## Accounts
 
-Players can create an account with a passkey (WebAuthn, via `webauthn-rs`).
-Accounts don't gate anything yet: scores, shares and previews work
-anonymously.
+Players create an account with a username and a passkey (WebAuthn, via
+`webauthn-rs`) from the header's account control, and sign in the same way.
+Submitting a score and creating a short link need an account. Playing,
+opening existing links (`/s/:token` and `/play/:n?s=`), link previews,
+records and the leaderboards stay public and anonymous.
+
+- On the play screen, Share or Submit while signed out opens sign-in instead
+  of sending anything. The request is frozen as it was when pressed (the
+  certified packing for Submit; the snapshot and its glue for Share), kept
+  in memory, and sent once if the sign-in succeeds. Dismissing sign-in,
+  leaving the page or unmounting the screen drops it. Submit with no
+  certified packing asks for a sign-in and then for Submit again. A 401 from
+  either, such as an expired session, goes the same way, and Share resends
+  the same code.
+- A score is credited to the signed-in account (`scores.user_id`) and named
+  by its username; a name in the request body is ignored. Scores from before
+  accounts keep their stored names and stay unowned, even if an account later
+  takes the same name. Every `ScoreEntry` carries `account` (true when the
+  score has an owner), and the leaderboards show legacy names muted, with a
+  "legacy" tag.
+- There is no account recovery. An account whose passkeys are all lost can't
+  be recovered, so the sign-up help asks players to keep a synced passkey or
+  add a second one.
+- The browser applies a response's `Set-Cookie` whether or not the page
+  still wants it, so requests that set or clear the session cookie
+  (sign-in and registration finishes, sign-out) run one at a time. Each is
+  followed, under the same lock, by an `/api/auth/me` check, and the page
+  shows whichever account the server says the cookie holds. A ceremony
+  cancelled before its finish never sends it. One cancelled while its finish
+  is in flight is signed out again once it lands, so Cancel never leaves a
+  sign-in behind. Until that has settled, no other sign-in, registration or
+  sign-out starts (the dialog says "Finishing sign-in…"), and a late
+  response never answers a dismissed or newer request. The startup `/me`
+  counts only if nothing has happened since.
+- A short link records its creator (`solution_shares.created_by`). Sharing a
+  snapshot that already has a link returns that link unchanged, so it never
+  reveals or changes who created it, and links from before accounts stay
+  unowned.
+- The frontend calls WebAuthn from Rust (`frontend/src/webauthn.rs`): base64url
+  fields in the server's options become `ArrayBuffer`s for
+  `navigator.credentials`, and the credential's become base64url again for
+  the finish endpoints. There is no hand-written JavaScript.
 
 - `PUBLIC_URL` is the relying party. Its hostname is the RP ID and its exact
   origin is the only one accepted. It must be a bare `https://` origin;
@@ -88,10 +135,11 @@ anonymously.
 - Sessions are 30-day `__Host-packit_session` cookies (HttpOnly, Secure,
   SameSite=Lax). The database stores only a SHA-256 of the token, and every
   sign-in issues a new one.
-- Every auth POST must send an `Origin` equal to `PUBLIC_URL`, and `/api/auth`
-  has no CORS. The public API keeps permissive CORS and no Origin check, so
-  before `/api/scores` or `/api/shares` start reading the session cookie
-  (PR 2) they must get the same exact-Origin check.
+- Every auth POST, and `POST /api/scores` and `POST /api/shares`, must send
+  exactly one `Origin` equal to `PUBLIC_URL` (403 otherwise), checked before
+  the session cookie is read; none of them get CORS. Signed out, those two
+  answer 401 once their body has passed validation. Public reads keep
+  permissive CORS and no Origin check.
 - A client is an IPv4 address or an IPv6 /64, and IPv6 clients are also
   grouped by /48. Start and finish endpoints are rate limited per client and
   per /48; login start is also limited per username and client. Each client
@@ -162,4 +210,17 @@ cargo fmt --all --check
 cargo clippy --workspace --all-targets --locked
 cargo test --workspace --locked
 ./scripts/check-migration-names.sh
+```
+
+The passkey flows also run end to end in Chrome, against the built frontend
+served by the backend, with a WebDriver virtual authenticator (see
+`backend/src/e2e.rs`; CI's **Passkey E2E** job). Plain `cargo test` skips
+them without `CHROMEDRIVER`; `PACKIT_E2E=1` makes a missing driver or database
+fail instead:
+
+```sh
+(cd frontend && trunk build)
+PACKIT_E2E=1 CHROMEDRIVER=/path/to/chromedriver \
+TEST_DATABASE_URL=postgresql://packit:dev_password@localhost:5433/packit_test \
+  cargo test -p backend --locked e2e -- --test-threads=1
 ```

@@ -108,10 +108,10 @@ pub struct HealthResponse {
     pub status: String,
 }
 
-/// Body of `POST /api/scores`.
+/// Body of `POST /api/scores`. The score is credited to the signed-in
+/// account; its username is the leaderboard name.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SubmitScore {
-    pub player: String,
     pub arrangement: Arrangement,
 }
 
@@ -125,6 +125,9 @@ pub struct ScoreEntry {
     pub submitted_at: chrono::NaiveDateTime,
     /// 1-based position among all submissions for this `n` (smaller side wins).
     pub rank: u32,
+    /// Whether an account submitted it, so `player` is its username. Scores
+    /// from before accounts keep a name anyone could have typed.
+    pub account: bool,
 }
 
 /// Query string for `GET /api/scores`.
@@ -216,6 +219,7 @@ mod tests {
                 .unwrap()
                 .naive_utc(),
             rank: 1,
+            account: true,
         }
     }
 
@@ -291,7 +295,6 @@ mod tests {
     #[test]
     fn submit_score_roundtrip() {
         roundtrip(SubmitScore {
-            player: "ada".to_string(),
             arrangement: sample_arrangement(),
         });
     }
