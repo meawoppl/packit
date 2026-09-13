@@ -160,6 +160,20 @@ pub async fn prepare_sign_in() -> Result<Prepared, Failure> {
     })
 }
 
+/// An advisory hint; register/start and the unique index remain authoritative.
+pub async fn username_available(username: &str) -> Result<bool, Failure> {
+    #[derive(serde::Deserialize)]
+    struct Available {
+        available: bool,
+    }
+    let encoded = js_sys::encode_uri_component(username);
+    let response = gloo_net::http::Request::get(&format!("/api/auth/usernames/{encoded}"))
+        .send()
+        .await
+        .map_err(network)?;
+    Ok(decode::<Available>(response).await?.available)
+}
+
 /// Finish a prepared ceremony and return the account's username. For a
 /// sign-in or registration this sets the session cookie.
 pub async fn finish(prepared: Prepared) -> Result<String, Failure> {
@@ -628,18 +642,4 @@ mod tests {
             assert!(!transient_status(status), "{status}");
         }
     }
-}
-
-/// An advisory hint; register/start and the unique index remain authoritative.
-pub async fn username_available(username: &str) -> Result<bool, Failure> {
-    #[derive(serde::Deserialize)]
-    struct Available {
-        available: bool,
-    }
-    let encoded = js_sys::encode_uri_component(username);
-    let response = gloo_net::http::Request::get(&format!("/api/auth/usernames/{encoded}"))
-        .send()
-        .await
-        .map_err(network)?;
-    Ok(decode::<Available>(response).await?.available)
 }
