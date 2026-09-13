@@ -2138,6 +2138,7 @@ fn saved() -> crate::account::browser_tests::Reply {
             "side": 2.0,
             "submitted_at": "2026-09-13T00:00:00",
             "rank": 1,
+            "account": true,
         }),
     )
 }
@@ -2422,6 +2423,49 @@ async fn cancelling_the_sign_in_dialog_drops_the_share() {
     .await;
     sleep(300).await;
     assert!(shares.requests.borrow().is_empty());
+    handle.destroy();
+    root.remove();
+}
+
+/// A sign-in that finishes after its dialog was cancelled, and after a
+/// newer Share asked again, shares nothing. Only a sign-in for the newer
+/// ask sends its snapshot.
+#[wasm_bindgen_test]
+async fn a_stale_sign_in_does_not_share_for_a_newer_ask() {
+    let _gpu = NoWebGpu::install();
+    let shares = ShareApi::install(&[OK]);
+    let _clipboard = Clipboard::install(false);
+    let ada = || reply(200, serde_json::json!({ "username": "ada" }));
+    let auth = Api::install(&[
+        ("/api/auth/me", vec![not_signed_in()]),
+        ("/api/auth/login/start", vec![login_started()]),
+        ("/api/auth/login/finish", vec![ada().after(800), ada()]),
+    ]);
+    let _keys = Passkeys::install();
+    let (handle, root, _) = mount_site(&format!("s={}", glued_code())).await;
+    submit_button(&root, "Share").click();
+    sleep(50).await;
+    type_username(&root, "ada");
+    sleep(30).await;
+    click(&root, ".account-sign-in");
+    wait_until("the first finish", || {
+        auth.sent("/api/auth/login/finish").len() == 1
+    })
+    .await;
+    click(&root, ".account-cancel");
+    sleep(30).await;
+    submit_button(&root, "Share").click();
+    sleep(1100).await;
+    assert!(
+        shares.requests.borrow().is_empty(),
+        "the stale sign-in shared nothing"
+    );
+    assert!(find(&root, ".account-name").is_none());
+    assert_eq!(sign_in_note(&root).as_deref(), Some(SHARE_NOTE));
+    click(&root, ".account-sign-in");
+    wait_until("the share", || shares.requests.borrow().len() == 1).await;
+    wait_share(&root).await;
+    assert_eq!(shares.requests.borrow().len(), 1);
     handle.destroy();
     root.remove();
 }

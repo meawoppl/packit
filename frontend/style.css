@@ -229,6 +229,16 @@ th {
     cursor: help;
 }
 
+/* A name typed before accounts, so not a verified username. */
+.legacy {
+    color: var(--muted);
+    cursor: help;
+}
+
+.badge.legacy-badge {
+    background: var(--muted);
+}
+
 .badge {
     margin-left: 0.5rem;
     padding: 0.05rem 0.4rem;

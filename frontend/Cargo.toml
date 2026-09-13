@@ -27,4 +27,4 @@ base64 = "0.22"
 
 [target.wasm32-unknown-unknown.dev-dependencies]
 wasm-bindgen-test = "0.3.78"
-web-sys = { version = "0.3", features = ["PointerEvent", "PointerEventInit", "Node", "HtmlElement", "Document", "Window", "Navigator", "Element", "DomRect", "HtmlCanvasElement", "KeyboardEventInit", "WheelEventInit"] }
+web-sys = { version = "0.3", features = ["PointerEvent", "PointerEventInit", "Node", "HtmlElement", "Document", "Window", "Navigator", "Element", "DomRect", "HtmlCanvasElement", "KeyboardEventInit", "WheelEventInit", "EventInit"] }

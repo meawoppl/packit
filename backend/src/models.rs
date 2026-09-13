@@ -13,6 +13,7 @@ pub struct Score {
     pub side: f64,
     pub arrangement: serde_json::Value,
     pub submitted_at: NaiveDateTime,
+    pub user_id: Option<Uuid>,
 }
 
 #[derive(Debug, Insertable)]

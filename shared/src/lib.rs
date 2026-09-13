@@ -125,6 +125,9 @@ pub struct ScoreEntry {
     pub submitted_at: chrono::NaiveDateTime,
     /// 1-based position among all submissions for this `n` (smaller side wins).
     pub rank: u32,
+    /// Whether an account submitted it, so `player` is its username. Scores
+    /// from before accounts keep a name anyone could have typed.
+    pub account: bool,
 }
 
 /// Query string for `GET /api/scores`.
@@ -216,6 +219,7 @@ mod tests {
                 .unwrap()
                 .naive_utc(),
             rank: 1,
+            account: true,
         }
     }
 

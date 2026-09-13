@@ -91,7 +91,17 @@ records and the leaderboards stay public and anonymous.
 - A score is credited to the signed-in account (`scores.user_id`) and named
   by its username; a name in the request body is ignored. Scores from before
   accounts keep their stored names and stay unowned, even if an account later
-  takes the same name.
+  takes the same name. Every `ScoreEntry` carries `account` (true when the
+  score has an owner), and the leaderboards show legacy names muted, with a
+  "legacy" tag.
+- There is no account recovery. An account whose passkeys are all lost can't
+  be recovered, so the sign-up help asks players to keep a synced passkey or
+  add a second one.
+- The header's account state numbers each auth operation (the startup
+  `/api/auth/me`, sign-in, registration, adding a passkey, sign-out) and
+  applies only the latest one's response. Closing the dialog or a new sign-in
+  request abandons a ceremony in flight, so a late response can't undo a
+  newer sign-in or sign-out, or complete another request.
 - A short link records its creator (`solution_shares.created_by`). Sharing a
   snapshot that already has a link returns that link unchanged, so it never
   reveals or changes who created it, and links from before accounts stay

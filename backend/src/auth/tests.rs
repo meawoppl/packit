@@ -1873,6 +1873,89 @@ async fn scores_are_named_by_the_account() {
     assert_eq!(stored, name);
 }
 
+/// Every score response says whether an account submitted it: the
+/// overview, one `n`'s board, and a score's page.
+#[tokio::test]
+async fn score_responses_mark_account_and_legacy_names() {
+    let Some((state, app)) = db_app() else {
+        return;
+    };
+    let name = fresh("marked");
+    let mut b = Browser::new();
+    assert_eq!(
+        register(&app, &mut b, &mut soft(), &name).await.status,
+        StatusCode::OK
+    );
+    let r = b
+        .post(
+            &app,
+            "/api/scores",
+            json!({ "arrangement": unique_squares() }),
+        )
+        .await;
+    assert_eq!(r.body["account"], true);
+
+    // Two rows for n = 97 with a side below every earlier run's (it falls
+    // 1e-7 a second), so they lead that board and the overview: the
+    // account's first, then a legacy name.
+    let since = Utc::now().timestamp_millis() - 1_700_000_000_000;
+    let side = 30.0 - since as f64 * 1e-10;
+    let (owned, legacy) = (Uuid::new_v4(), Uuid::new_v4());
+    for (id, player, owner, side) in [
+        (owned, name.as_str(), Some(user_id(&state, &name)), side),
+        (legacy, "old-name", None, side + 1e-11),
+    ] {
+        let arrangement = shared::Arrangement {
+            n: 97,
+            side,
+            squares: vec![],
+        };
+        diesel::insert_into(scores::table)
+            .values((
+                scores::id.eq(id),
+                scores::player.eq(player),
+                scores::n.eq(97),
+                scores::side.eq(side),
+                scores::arrangement.eq(serde_json::to_value(arrangement).unwrap()),
+                scores::user_id.eq(owner),
+            ))
+            .execute(&mut conn(&state))
+            .unwrap();
+    }
+    let mut anon = Browser::new();
+    let board = anon.get(&app, "/api/scores?n=97&limit=2").await;
+    let marks: Vec<(String, Value)> = board
+        .body
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| (e["id"].as_str().unwrap().to_owned(), e["account"].clone()))
+        .collect();
+    assert_eq!(
+        marks,
+        [
+            (owned.to_string(), json!(true)),
+            (legacy.to_string(), json!(false))
+        ]
+    );
+    let overview = anon.get(&app, "/api/scores").await;
+    let top = overview
+        .body
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|e| e["n"] == 97)
+        .unwrap();
+    assert_eq!(
+        (&top["id"], &top["account"]),
+        (&json!(owned.to_string()), &json!(true))
+    );
+    for (id, account) in [(owned, true), (legacy, false)] {
+        let detail = anon.get(&app, &format!("/api/scores/{id}")).await;
+        assert_eq!(detail.body["entry"]["account"], account, "{id}");
+    }
+}
+
 /// Anonymous scores from before accounts keep their names and stay
 /// unowned, even when an account later takes the same name.
 #[tokio::test]
