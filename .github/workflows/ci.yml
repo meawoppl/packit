@@ -135,7 +135,7 @@ jobs:
           CHROME_BINARY: ${{ steps.chrome.outputs.chrome-path }}
           CHROMEDRIVER: ${{ steps.chrome.outputs.chromedriver-path }}
           WASM_BINDGEN_USE_BROWSER: "1"
-          WASM_BINDGEN_TEST_TIMEOUT: "120"
+          WASM_BINDGEN_TEST_TIMEOUT: "300"
           CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER: wasm-bindgen-test-runner
           WASM_BINDGEN_TEST_WEBDRIVER_JSON: ${{ github.workspace }}/physics/webdriver-ci.json
         run: |

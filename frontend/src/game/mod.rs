@@ -15,7 +15,6 @@ use gloo_events::{EventListener, EventListenerOptions};
 use gloo_render::{request_animation_frame, AnimationFrame};
 use physics::{Backend, Feature, Glue, Physics, SettlePhase, SETTLE_GLUE_ERROR};
 use shared::{share, Arrangement, KnownRecord, ScoreEntry, SubmitScore, MAX_N};
-use solver::SolveReport;
 use std::cell::Cell;
 use std::rc::Rc;
 use std::time::Duration;
@@ -46,24 +45,23 @@ const TOUCH_TURN: f32 = 0.12;
 /// How far the effective size target may lead the actual container at full
 /// band tension (100); lower tension shortens the reach proportionally.
 const MAX_SCRUB: f64 = 1.0;
-/// Most the solver may move any square (or change the side) when it
-/// certifies a settled packing. More than this would visibly pop the
-/// squares, so the packing is reported unresolved instead of loaded.
-const CERTIFY_MOVE: f64 = 0.05;
+/// Farthest certification may nudge any square, in square widths, to clear
+/// the numerical overlap a settled contact leaves. Past this the packing
+/// isn't certified rather than moved.
+const CERTIFY_MOVE: f64 = 1e-4;
 
-/// Largest distance any square's center moves relative to its box's center
-/// between two arrangements of the same squares. The box is drawn centered,
-/// so this is how far a square visibly jumps; a box that only tightens
-/// around the squares doesn't count.
-fn displacement(a: &Arrangement, b: &Arrangement) -> f64 {
-    let (ca, cb) = (a.side / 2.0, b.side / 2.0);
-    a.squares
-        .iter()
-        .zip(&b.squares)
-        .map(|(p, q)| ((p.cx - ca) - (q.cx - cb)).hypot((p.cy - ca) - (q.cy - cb)))
-        .fold(0.0, f64::max)
+/// Whether two arrangements are the same packing to within rounding, so a
+/// solver result for one describes the other.
+fn same_packing(a: &Arrangement, b: &Arrangement) -> bool {
+    const SAME: f64 = 1e-9;
+    (a.side - b.side).abs() <= SAME
+        && a.squares.len() == b.squares.len()
+        && a.squares.iter().zip(&b.squares).all(|(p, q)| {
+            (p.cx - q.cx).abs() <= SAME
+                && (p.cy - q.cy).abs() <= SAME
+                && (p.theta - q.theta).abs() <= SAME
+        })
 }
-
 /// The band's size target for a requested `desired` side: it can only run
 /// ahead of the actual `side` as far as the band pressure reaches.
 fn scrub_target(desired: f64, side: f64, tension: f32) -> f64 {
@@ -102,6 +100,8 @@ pub enum Msg {
     Squeeze,
     SqueezeDown,
     Measure,
+    /// Load the solver's smaller packing of the certified scene.
+    Tighten,
     Refine,
     Player(String),
     Submit,
@@ -163,7 +163,12 @@ pub struct Game {
     record_note: String,
     /// Credit drawn beside the best-known square.
     best_label: String,
-    last_report: Option<SolveReport>,
+    /// The settled packing certified where it stands: the score, and what
+    /// Submit and Share send. Any change to the scene clears it.
+    certified: Option<Arrangement>,
+    /// A smaller valid packing the solver found for the certified one, which
+    /// Tighten loads on request.
+    tighter: Option<Arrangement>,
     bound: String,
     status: String,
     status_error: bool,
@@ -284,7 +289,8 @@ impl Component for Game {
             record: None,
             record_note: "Loading reference record…".into(),
             best_label: String::new(),
-            last_report: None,
+            certified: None,
+            tighter: None,
             bound: String::new(),
             status: "Find your rhythm. Then squeeze a little.".into(),
             status_error: false,
@@ -405,8 +411,8 @@ impl Component for Game {
                     .last_time
                     .map_or(0.0, |last| ((time - last) / 1000.0).clamp(0.0, 0.05));
                 self.last_time = Some(time);
-                self.tick_anneal(elapsed);
-                self.tick_settle(ctx);
+                // Either can change the status, which the readout doesn't track.
+                let changed = self.tick_anneal(elapsed) | self.tick_settle(ctx);
                 if self.physics.paused() {
                     self.accumulator = 0.0;
                 } else {
@@ -420,10 +426,10 @@ impl Component for Game {
                             physics.step(steps).await;
                             Msg::Stepped
                         });
-                        return false;
+                        return changed;
                     }
                 }
-                self.after_frame(ctx)
+                self.after_frame(ctx) || changed
             }
             Msg::Stepped => {
                 self.stepping = false;
@@ -678,6 +684,7 @@ impl Component for Game {
                 self.stop_anneal();
                 self.settle()
             }
+            Msg::Tighten => self.tighten(ctx),
             Msg::Refine => {
                 if self.stepping {
                     ctx.link().send_future(async {
@@ -699,15 +706,8 @@ impl Component for Game {
                     self.set_status("Choose a leaderboard name first.", true);
                     return true;
                 }
-                match &self.last_report {
-                    Some(r) if r.valid => {
-                        let arrangement = r.arrangement.clone();
-                        self.send_submit(ctx, player, arrangement);
-                    }
-                    Some(_) => self.set_status(
-                        "This packing still has overlaps. Give it a little more room.",
-                        true,
-                    ),
+                match self.certified.clone() {
+                    Some(arrangement) => self.send_submit(ctx, player, arrangement),
                     None => {
                         self.submit_after_measure = true;
                         // A Settle in progress measures (and so submits) once
@@ -731,12 +731,9 @@ impl Component for Game {
                 true
             }
             Msg::Export => {
-                let value = match &self.last_report {
-                    Some(report) => serde_json::to_value(report),
-                    None => serde_json::to_value(serde_json::json!({
-                        "arrangement": self.physics.arrangement()
-                    })),
-                };
+                let value = serde_json::to_value(serde_json::json!({
+                    "arrangement": self.share_arrangement()
+                }));
                 let result = value
                     .map_err(|e| e.to_string())
                     .and_then(|v| files::download_json(&format!("packit-{n}.json"), &v));
@@ -857,9 +854,9 @@ impl Component for Game {
         let size_max = (n as f64).sqrt().ceil() + 3.0;
         let status_class = classes!("pg-status", self.status_error.then_some("pg-invalid"));
         // Compare the refined f64 side once validated; otherwise the live side.
-        let (bench_side, validated) = match &self.last_report {
-            Some(report) if report.valid => (report.arrangement.side, true),
-            _ => (self.physics.side(), false),
+        let (bench_side, validated) = match &self.certified {
+            Some(arrangement) => (arrangement.side, true),
+            None => (self.physics.side(), false),
         };
         html! {
             <div class="packing-game">
@@ -928,6 +925,11 @@ impl Component for Game {
                                 <button class="pg-primary" disabled={self.busy} onclick={link.callback(|_| Msg::Measure)}>
                                     { if self.settling { "Settling…" } else { "Settle" } }
                                 </button>
+                                { self.tighter.as_ref().map(|t| html! {
+                                    <button disabled={self.busy} onclick={link.callback(|_| Msg::Tighten)}>
+                                        { format!("Tighten to {:.4}", t.side) }
+                                    </button>
+                                }) }
                                 <button disabled={self.sharing} onclick={link.callback(|_| Msg::Share)}>{ if self.sharing { "Sharing…" } else { "Share" } }</button>
                             </div>
                             <p class="pg-share-status pg-help" role="status" aria-live="polite">{ &self.share_status }</p>
@@ -1031,9 +1033,10 @@ impl Component for Game {
 
 impl Game {
     /// Advance an annealing run by `dt` seconds and apply its commands.
-    fn tick_anneal(&mut self, dt: f64) {
+    /// Returns whether the run ended in a settle, which sets the status.
+    fn tick_anneal(&mut self, dt: f64) -> bool {
         let Some(anneal) = self.anneal.as_mut() else {
-            return;
+            return false;
         };
         let commands = anneal.advance(dt);
         if anneal.is_finished() {
@@ -1052,15 +1055,18 @@ impl Game {
                     self.physics.set_params(params);
                 }
                 Command::Measure => {
-                    // Release the band so it stops compressing once the run
-                    // ends, then settle and measure.
+                    // The run ends here: a later band update would cancel
+                    // the settle. Release the band, then settle and measure.
+                    self.anneal = None;
                     let mut params = self.physics.params();
                     params.band_tension = 0.0;
                     self.physics.set_params(params);
                     self.settle();
+                    return true;
                 }
             }
         }
+        false
     }
 
     /// Start a scheduled run of `kind`, or stop it if it is the active one.
@@ -1106,10 +1112,9 @@ impl Game {
     }
 
     fn share_arrangement(&self) -> Arrangement {
-        match &self.last_report {
-            Some(r) if r.valid => r.arrangement.clone(),
-            _ => self.physics.arrangement(),
-        }
+        self.certified
+            .clone()
+            .unwrap_or_else(|| self.physics.arrangement())
     }
 
     fn copy_share(&self, ctx: &Context<Self>) {
@@ -1177,16 +1182,19 @@ impl Game {
     }
 
     /// Follow the physics Settle each frame: measure once it settles, and
-    /// explain when it can't.
-    fn tick_settle(&mut self, ctx: &Context<Self>) {
+    /// explain when it can't. Returns whether it changed the status.
+    fn tick_settle(&mut self, ctx: &Context<Self>) -> bool {
         if !self.settling {
-            return;
+            return false;
         }
         let status = self.physics.settle_status();
         match status.phase {
-            SettlePhase::Running => {}
+            SettlePhase::Running => return false,
             // Direct interaction cancelled it.
-            SettlePhase::Idle => self.settling = false,
+            SettlePhase::Idle => {
+                self.settling = false;
+                self.set_status("Settle stopped. Press Settle when ready.", false);
+            }
             SettlePhase::Settled => {
                 self.settling = false;
                 self.begin_measure(ctx);
@@ -1208,6 +1216,7 @@ impl Game {
                 );
             }
         }
+        true
     }
 
     /// Pause and refine the current scene, once the status has painted.
@@ -1291,7 +1300,7 @@ impl Game {
                 best: self
                     .record
                     .as_ref()
-                    .filter(|_| self.last_report.as_ref().is_some_and(|r| r.valid))
+                    .filter(|_| self.certified.is_some())
                     .map(|r| (r.side, self.best_label.as_str())),
             },
         );
@@ -1388,7 +1397,8 @@ impl Game {
 
     /// Any change to the scene makes the last measurement stale.
     fn invalidate(&mut self) {
-        self.last_report = None;
+        self.certified = None;
+        self.tighter = None;
         self.auto_measured = false;
         self.settled_frames = 0;
     }
@@ -1527,29 +1537,43 @@ impl Game {
         self.set_status("Imported. Settle to validate.", false);
     }
 
+    /// Certify the settled packing where it stands: that's the score, and
+    /// what Submit and Share send. The solver then reports how it compares,
+    /// but its own packing is never loaded or credited to this one.
     fn refine(&mut self, ctx: &Context<Self>) {
         let submit = std::mem::take(&mut self.submit_after_measure);
-        match solver::refine(&self.physics.arrangement()) {
+        self.busy = false;
+        self.tighter = None;
+        let live = self.physics.arrangement();
+        let glues = self.physics.glues();
+        let Some((certified, moved)) = self.certify(&live, &glues) else {
+            self.certified = None;
+            self.set_status(
+                "Couldn't certify: squares still overlap. Adjust the packing, then press Settle again.",
+                true,
+            );
+            return;
+        };
+        #[cfg(all(test, target_arch = "wasm32"))]
+        TEST_REPORT.with(|r| r.replace(Some(certified.clone())));
+        // Stay at the certified packing; don't resume squeezing.
+        self.desired_side = None;
+        let side = certified.side;
+        let mut status = format!("Ready · {side:.9} side");
+        if moved > 0.0 {
+            status += &format!(" · nudged {moved:.1e} to clear contacts");
+        }
+        status += ".";
+        match solver::refine(&certified) {
             Ok(report) => {
-                let side = report.arrangement.side;
                 self.bound = format!(
                     "Lower bound {:.6} · gap {:.3}%",
                     report.lower_bound,
                     100.0 * (side / report.lower_bound - 1.0)
                 );
-                let moved = displacement(&self.physics.arrangement(), &report.arrangement);
-                let certified = report.valid && moved <= CERTIFY_MOVE;
-                if certified {
-                    #[cfg(all(test, target_arch = "wasm32"))]
-                    TEST_REPORT.with(|r| r.replace(Some(report.arrangement.clone())));
-                    // Settle at the measured packing; don't resume squeezing.
-                    self.desired_side = None;
-                    // Loading clears glue; the measured packing has the same
-                    // squares, so every link still applies.
-                    let glues = self.physics.glues();
-                    self.physics.load(&report.arrangement);
-                    let _ = self.physics.set_glues(&glues);
-                    self.view_side.set(self.physics.side());
+                // An exact form or residual describes the solver's packing,
+                // so it's shown only when that's the one displayed.
+                if report.valid && same_packing(&report.arrangement, &certified) {
                     let exact = report
                         .algebraic
                         .as_ref()
@@ -1561,42 +1585,73 @@ impl Game {
                         })
                         .or_else(|| report.candidate_expression.clone())
                         .unwrap_or_else(|| "Numerical local solution.".into());
-                    self.set_status(
-                        &format!(
-                            "Ready · {side:.9} side · contact residual {:.1e}. {exact}",
-                            report.contacts.max_residual
-                        ),
-                        false,
+                    status += &format!(
+                        " Contact residual {:.1e}. {exact}",
+                        report.contacts.max_residual
                     );
-                    if submit {
-                        let player = self.player.trim().to_string();
-                        self.send_submit(ctx, player, report.arrangement.clone());
-                    }
-                } else if report.valid {
-                    // Loading the certified packing would visibly pop the
-                    // squares away from where they settled; keep the pose.
-                    self.set_status(
-                        &format!(
-                            "Unresolved: certifying would move squares by {moved:.3}. Keep adjusting, then press Settle again."
-                        ),
-                        true,
+                } else if report.valid && report.arrangement.side < side - 1e-6 {
+                    status += &format!(
+                        " The solver can tighten this to {:.6}. Press Tighten to use it.",
+                        report.arrangement.side
                     );
-                } else if submit {
-                    self.set_status(
-                        "This packing still has overlaps. Give it a little more room.",
-                        true,
-                    );
-                } else {
-                    self.set_status(&report.status, true);
-                }
-                // An uncertified valid report isn't kept, so Submit measures again.
-                if certified || !report.valid {
-                    self.last_report = Some(report);
+                    self.tighter = Some(report.arrangement);
                 }
             }
-            Err(e) => self.set_status(&e, true),
+            Err(_) => self.bound.clear(),
         }
-        self.busy = false;
+        self.set_status(&status, false);
+        if submit {
+            let player = self.player.trim().to_string();
+            self.send_submit(ctx, player, certified.clone());
+        }
+        self.certified = Some(certified);
+    }
+
+    /// `live` certified where it stands, and the farthest any square was
+    /// nudged to clear the settle's numerical contact overlap. A nudged
+    /// packing is kept only if every glue still holds on it; otherwise the
+    /// scene goes back exactly as it was.
+    fn certify(&mut self, live: &Arrangement, glues: &[Glue]) -> Option<(Arrangement, f64)> {
+        let (certified, moved) =
+            shared::geometry::certify(live, shared::VALIDATION_TOL, CERTIFY_MOVE)?;
+        if moved > 0.0 {
+            // Loading clears glue; the nudged packing has the same squares.
+            self.physics.load(&certified);
+            let _ = self.physics.set_glues(glues);
+            self.physics.set_paused(true);
+            if self.physics.violations().max_glue_error > SETTLE_GLUE_ERROR {
+                self.physics.load(live);
+                let _ = self.physics.set_glues(glues);
+                self.physics.set_paused(true);
+                return None;
+            }
+        }
+        Some((certified, moved))
+    }
+
+    /// On request, jump to the solver's smaller packing and certify it like
+    /// any other, unless the jump would break a glue link.
+    fn tighten(&mut self, ctx: &Context<Self>) -> bool {
+        let (Some(tighter), Some(certified)) = (self.tighter.take(), self.certified.clone()) else {
+            return false;
+        };
+        let glues = self.physics.glues();
+        // Loading clears glue; the smaller packing has the same squares.
+        self.physics.load(&tighter);
+        let _ = self.physics.set_glues(&glues);
+        self.physics.set_paused(true);
+        if self.physics.violations().max_glue_error > SETTLE_GLUE_ERROR {
+            self.physics.load(&certified);
+            let _ = self.physics.set_glues(&glues);
+            self.physics.set_paused(true);
+            self.set_status(
+                "Tightening would break a glue link, so the packing stays as it is.",
+                true,
+            );
+            return true;
+        }
+        self.certified = None;
+        self.begin_measure(ctx)
     }
 
     fn send_submit(&mut self, ctx: &Context<Self>, player: String, arrangement: Arrangement) {
@@ -1636,6 +1691,28 @@ mod tests {
     use super::*;
 
     #[test]
+    fn same_packing_allows_only_rounding() {
+        let sq = |cx| shared::Placement {
+            cx,
+            cy: 0.5,
+            theta: 0.0,
+        };
+        let a = Arrangement {
+            n: 2,
+            side: 2.0,
+            squares: vec![sq(0.5), sq(1.5)],
+        };
+        let mut b = a.clone();
+        b.squares[1].cx += 1e-12;
+        assert!(same_packing(&a, &b));
+        b.squares[1].cx += 1e-6;
+        assert!(!same_packing(&a, &b), "a slid square");
+        let mut c = a.clone();
+        c.side -= 1e-6;
+        assert!(!same_packing(&a, &c), "a tighter box");
+    }
+
+    #[test]
     fn best_label_credits_finders_and_provers() {
         let record = |packing_by: &[&str], disputed, proof_by: &[&str], trivial| KnownRecord {
             n: 10,
@@ -1670,28 +1747,6 @@ mod tests {
             best_label(&record(&[], false, &[], true)),
             "Best known 3.7071 · optimal"
         );
-    }
-
-    #[test]
-    fn displacement_is_the_largest_move_about_the_box_center() {
-        let sq = |cx, cy| shared::Placement { cx, cy, theta: 0.0 };
-        let a = Arrangement {
-            n: 2,
-            side: 2.0,
-            squares: vec![sq(0.5, 0.5), sq(1.5, 0.5)],
-        };
-        assert_eq!(displacement(&a, &a), 0.0);
-        let mut b = a.clone();
-        b.squares[1] = sq(1.53, 0.54);
-        assert!((displacement(&a, &b) - 0.05).abs() < 1e-12);
-        // A box tightened symmetrically around squares that stay put on
-        // screen isn't a move.
-        let loose = Arrangement {
-            n: 2,
-            side: 2.4,
-            squares: vec![sq(0.7, 0.7), sq(1.7, 0.7)],
-        };
-        assert!(displacement(&loose, &a) < 1e-12);
     }
 
     #[test]

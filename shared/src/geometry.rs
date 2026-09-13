@@ -76,9 +76,15 @@ impl Placement {
 ///
 /// Returns a value `<= 0` when the squares are disjoint or merely touching.
 pub fn penetration(a: &Placement, b: &Placement) -> f64 {
+    separation(a, b).0
+}
+
+/// Penetration depth of two unit squares and the unit axis it's measured
+/// along, pointing from `a` toward `b`.
+fn separation(a: &Placement, b: &Placement) -> (f64, (f64, f64)) {
     let ca = a.corners();
     let cb = b.corners();
-    let mut depth = f64::INFINITY;
+    let mut best = (f64::INFINITY, (1.0, 0.0));
     for (ax, ay) in a.axes().into_iter().chain(b.axes()) {
         let project = |pts: &[(f64, f64); 4]| {
             pts.iter()
@@ -89,9 +95,17 @@ pub fn penetration(a: &Placement, b: &Placement) -> f64 {
         };
         let (alo, ahi) = project(&ca);
         let (blo, bhi) = project(&cb);
-        depth = depth.min(ahi.min(bhi) - alo.max(blo));
+        let depth = ahi.min(bhi) - alo.max(blo);
+        if depth < best.0 {
+            best = (depth, (ax, ay));
+        }
     }
-    depth
+    let (depth, (ax, ay)) = best;
+    if (b.cx - a.cx) * ax + (b.cy - a.cy) * ay < 0.0 {
+        (depth, (-ax, -ay))
+    } else {
+        (depth, (ax, ay))
+    }
 }
 
 /// How far a square extends outside `[0, side]^2`; `<= 0` when contained.
@@ -188,6 +202,76 @@ pub fn tighten(squares: &[Placement]) -> Arrangement {
     }
 }
 
+/// Certify a settled `arr` where it stands, in its own box: it passes
+/// `validate` at `tol`, or does once squares still overlapping or past a
+/// wall are nudged apart, no square moving farther than `bound`. Returns the
+/// certified arrangement and the farthest any center moved (0 when valid as
+/// it stood), or `None` past the bound. The side and rotations never change.
+pub fn certify(arr: &Arrangement, tol: f64, bound: f64) -> Option<(Arrangement, f64)> {
+    let mut nudged = arr.clone();
+    for _ in 0..64 {
+        let moved = farthest_move(arr, &nudged);
+        if moved > bound {
+            return None;
+        }
+        if validate(&nudged, tol).is_ok() {
+            return Some((nudged, moved));
+        }
+        separate(&mut nudged);
+    }
+    None
+}
+
+/// Largest distance any center moves between two arrangements of the same
+/// squares.
+fn farthest_move(a: &Arrangement, b: &Arrangement) -> f64 {
+    a.squares
+        .iter()
+        .zip(&b.squares)
+        .map(|(p, q)| (p.cx - q.cx).hypot(p.cy - q.cy))
+        .fold(0.0, f64::max)
+}
+
+/// One pass pushing each square back inside the walls, then each
+/// overlapping pair apart along its separating axis, a hair past touching.
+fn separate(arr: &mut Arrangement) {
+    const HAIR: f64 = 1e-12;
+    let side = arr.side;
+    for p in &mut arr.squares {
+        let corners = p.corners();
+        let low =
+            |axis: fn(&(f64, f64)) -> f64| corners.iter().map(axis).fold(f64::INFINITY, f64::min);
+        let high = |axis: fn(&(f64, f64)) -> f64| {
+            corners.iter().map(axis).fold(f64::NEG_INFINITY, f64::max)
+        };
+        let shift = |lo: f64, hi: f64| {
+            if lo < 0.0 {
+                HAIR - lo
+            } else if hi > side {
+                side - hi - HAIR
+            } else {
+                0.0
+            }
+        };
+        let dx = shift(low(|c| c.0), high(|c| c.0));
+        let dy = shift(low(|c| c.1), high(|c| c.1));
+        p.cx += dx;
+        p.cy += dy;
+    }
+    for i in 0..arr.squares.len() {
+        for j in i + 1..arr.squares.len() {
+            let (depth, (ax, ay)) = separation(&arr.squares[i], &arr.squares[j]);
+            if depth > 0.0 {
+                let push = depth / 2.0 + HAIR;
+                arr.squares[i].cx -= ax * push;
+                arr.squares[i].cy -= ay * push;
+                arr.squares[j].cx += ax * push;
+                arr.squares[j].cy += ay * push;
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -195,6 +279,93 @@ mod tests {
 
     fn sq(cx: f64, cy: f64, theta: f64) -> Placement {
         Placement { cx, cy, theta }
+    }
+
+    fn pair(gap: f64) -> Arrangement {
+        Arrangement {
+            n: 2,
+            side: 2.0,
+            squares: vec![sq(0.5, 0.5, 0.0), sq(1.5 + gap, 0.5, 0.0)],
+        }
+    }
+
+    /// Certify `arr` and check the result is valid, in the same box and
+    /// rotations, with every center within the reported move of where it was.
+    fn certified(arr: &Arrangement) -> (Arrangement, f64) {
+        let (out, moved) = certify(arr, 1e-9, 1e-4).expect("certified");
+        validate(&out, 1e-9).unwrap();
+        assert_eq!(out.side, arr.side, "the box never changes");
+        assert!(moved <= 1e-4, "{moved}");
+        for (a, b) in arr.squares.iter().zip(&out.squares) {
+            assert_eq!(a.theta, b.theta, "rotations never change");
+            assert!((a.cx - b.cx).hypot(a.cy - b.cy) <= moved);
+        }
+        (out, moved)
+    }
+
+    #[test]
+    fn certify_keeps_valid_packings_exactly() {
+        let loose = Arrangement {
+            n: 2,
+            side: 2.5,
+            squares: vec![sq(0.75, 0.75, 0.0), sq(1.75, 0.75, 0.0)],
+        };
+        let huge = Arrangement {
+            n: 2,
+            side: 1000.0,
+            squares: vec![sq(0.5, 0.5, 0.0), sq(500.0, 500.0, 0.3)],
+        };
+        for arr in [pair(0.0), loose, huge] {
+            assert_eq!(certify(&arr, 1e-9, 1e-4), Some((arr, 0.0)));
+        }
+    }
+
+    #[test]
+    fn certify_nudges_a_hair_of_overlap_apart() {
+        for gap in [-1e-5, -6e-5] {
+            let (_, moved) = certified(&pair(gap));
+            assert!(moved > 0.0 && moved < -gap, "{moved}");
+        }
+    }
+
+    #[test]
+    fn certify_pushes_a_square_back_inside_the_wall() {
+        let mut arr = pair(0.0);
+        arr.squares[1].cx -= 0.5;
+        arr.squares[1].cy = 1.5 + 1e-5;
+        certified(&arr);
+    }
+
+    #[test]
+    fn certify_separates_a_rotated_corner_contact() {
+        let arr = Arrangement {
+            n: 2,
+            side: 3.0,
+            squares: vec![
+                sq(0.5, 0.5, 0.0),
+                // Its left corner pokes 1e-5 into the first square's right side.
+                sq(1.0 + FRAC_PI_4.sin() - 1e-5, 0.9, FRAC_PI_4),
+            ],
+        };
+        certified(&arr);
+    }
+
+    #[test]
+    fn certify_refuses_more_than_the_bound() {
+        let overlapping = pair(-0.01);
+        let before = overlapping.clone();
+        assert_eq!(certify(&overlapping, 1e-9, 1e-4), None);
+        assert_eq!(
+            overlapping, before,
+            "a failed certification changes nothing"
+        );
+        // Wedged between the walls: no nudge within the box can clear it.
+        let wedged = Arrangement {
+            n: 2,
+            side: 2.0 - 1e-5,
+            squares: vec![sq(0.5, 0.5, 0.0), sq(1.5 - 1e-5, 0.5, 0.0)],
+        };
+        assert_eq!(certify(&wedged, 1e-9, 1e-4), None);
     }
 
     fn grid(k: u32) -> Arrangement {

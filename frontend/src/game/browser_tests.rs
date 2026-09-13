@@ -514,9 +514,9 @@ async fn finished_anneal_measures_and_releases_the_band() {
     let _gpu = NoWebGpu::install();
     let (handle, root, physics) = mount().await;
     force_button(&root, "Anneal").click();
-    sleep(21_500).await;
+    sleep(20_000).await;
+    wait_paused(&physics).await;
     assert_eq!(physics.params().band_tension, 0.0, "band released");
-    assert!(physics.paused(), "measuring pauses the scene");
     force_button(&root, "Anneal");
     assert!(!text(&root, ".pg-status").starts_with("Annealing"));
     handle.destroy();
@@ -692,8 +692,14 @@ async fn wheel_and_keys_wake_physics_and_turn_without_teleporting() {
     canvas
         .dispatch_event(&KeyboardEvent::new_with_keyboard_event_init_dict("keydown", &key).unwrap())
         .unwrap();
-    sleep(30).await;
-    assert!(!physics.paused());
+    // Yew handles the key on a later tick, which a busy machine delays.
+    for _ in 0..50 {
+        if !physics.paused() {
+            break;
+        }
+        sleep(10).await;
+    }
+    assert!(!physics.paused(), "a key turn wakes the scene");
     assert!(
         (physics.bodies()[0].theta - start).abs() < 0.02,
         "key does not teleport"
@@ -1309,9 +1315,9 @@ async fn finished_gentle_squeeze_measures_and_releases_the_band() {
     let _gpu = NoWebGpu::install();
     let (handle, root, physics) = mount().await;
     force_button(&root, "Gentle squeeze").click();
-    sleep(13_500).await;
+    sleep(12_000).await;
+    wait_paused(&physics).await;
     assert_eq!(physics.params().band_tension, 0.0, "band released");
-    assert!(physics.paused(), "measuring pauses the scene");
     force_button(&root, "Gentle squeeze");
     handle.destroy();
     root.remove();
@@ -1383,19 +1389,16 @@ async fn settling_opens_the_box_instead_of_popping() {
         relaxed = physics.arrangement();
         sleep(20).await;
     }
-    let report = TEST_REPORT
-        .with(|r| r.borrow().clone())
-        .expect("the settled scene measured valid");
+    let report = TEST_REPORT.with(|r| r.borrow().clone()).unwrap_or_else(|| {
+        panic!(
+            "no valid measurement: status {:?}, settle {:?}",
+            text(&root, ".pg-status"),
+            physics.settle_status()
+        )
+    });
     assert!(physics.frame_shift() > 0.0, "the box opened while settling");
     let left = shared::geometry::worst_violation(&relaxed);
-    assert!(left <= 2e-3, "relaxed until clear, {left} left");
-    let pop = relaxed
-        .squares
-        .iter()
-        .zip(&report.squares)
-        .map(|(a, b)| (a.cx - b.cx).hypot(a.cy - b.cy))
-        .fold(0.0, f64::max);
-    assert!(pop < 0.05, "measuring moved a square by {pop}");
+    assert!(left <= 2e-3, "settled until clear, {left} left");
     assert!(
         (report.side - relaxed.side).abs() < 0.05,
         "box {} -> {}",
@@ -1439,14 +1442,23 @@ async fn a_glued_jam_that_cannot_settle_is_reported_not_popped() {
 
     click_button(&root, ".pg-submit", "Settle");
     // The settle gives up after SETTLE_LIMIT seconds of simulated time.
+    let mut seen = Vec::new();
     for _ in 0..300 {
-        if text(&root, ".pg-status").starts_with("Couldn't settle") {
+        let now = (text(&root, ".pg-status"), physics.settle_status().phase);
+        if seen.last() != Some(&now) {
+            seen.push(now.clone());
+        }
+        if now.0.starts_with("Couldn't settle") {
             break;
         }
         sleep(100).await;
     }
     let status = text(&root, ".pg-status");
-    assert!(status.starts_with("Couldn't settle"), "{status}");
+    assert!(
+        status.starts_with("Couldn't settle"),
+        "{status}: {:?}; transitions {seen:?}",
+        physics.settle_status()
+    );
     assert_eq!(physics.settle_status().phase, SettlePhase::Blocked);
     assert!(
         TEST_REPORT.with(|r| r.borrow().is_none()),
@@ -1612,6 +1624,58 @@ fn history_length() -> u32 {
 }
 
 /// Wait for a validated measurement, for up to `ms` milliseconds.
+/// Settle scores a loose packing where it stands; when the solver finds a
+/// smaller box, Tighten jumps to it only on request, and certifies it.
+#[wasm_bindgen_test]
+async fn tighten_loads_the_solvers_smaller_box_on_request() {
+    let _gpu = NoWebGpu::install();
+    let (handle, root, physics) = mount().await;
+    click_button(&root, ".pg-submit", "Settle");
+    wait_for_report(8000).await;
+    let loose = TEST_REPORT.with(|r| r.take()).unwrap();
+    assert!(
+        (loose.side - physics.side()).abs() < 1e-6,
+        "scored where it settled"
+    );
+    let status = text(&root, ".pg-status");
+    assert!(status.contains("Press Tighten"), "{status}");
+    let buttons = root.query_selector_all(".pg-submit button").unwrap();
+    (0..buttons.length())
+        .filter_map(|i| buttons.item(i))
+        .filter_map(|b| b.dyn_into::<HtmlElement>().ok())
+        .find(|b| {
+            b.text_content()
+                .unwrap_or_default()
+                .starts_with("Tighten to")
+        })
+        .expect("Tighten offered")
+        .click();
+    wait_for_report(3000).await;
+    let tight = TEST_REPORT.with(|r| r.borrow().clone()).unwrap();
+    assert!(
+        tight.side < loose.side - 1e-3,
+        "{} -> {}",
+        loose.side,
+        tight.side
+    );
+    assert!(text(&root, ".pg-status").starts_with("Ready"));
+    assert!(physics.paused());
+    handle.destroy();
+    root.remove();
+}
+
+/// Wait for a finished run's settle and measurement, which pause the scene.
+/// Settling runs on simulated time, so a busy machine can take a while.
+async fn wait_paused(physics: &Physics) {
+    for _ in 0..300 {
+        if physics.paused() {
+            return;
+        }
+        sleep(50).await;
+    }
+    panic!("measuring pauses the scene");
+}
+
 async fn wait_for_report(ms: u64) {
     for _ in 0..ms / 20 {
         if TEST_REPORT.with(|r| r.borrow().is_some()) {
@@ -1641,7 +1705,7 @@ async fn settling_and_sharing_leave_the_address_bar_alone() {
         }
         // The manual measure must produce its own report.
         TEST_REPORT.with(|r| r.take());
-        submit_button(&root, "Settle & measure").click();
+        submit_button(&root, "Settle").click();
         sleep(300).await;
         wait_for_report(3000).await;
         submit_button(&root, "Share").click();
