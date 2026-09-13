@@ -1820,3 +1820,250 @@ async fn existing_endpoints_still_work_anonymously() {
         }
     }
 }
+
+#[test]
+fn a_site_over_its_limit_allocates_no_new_subnets() {
+    let origin = PublicOrigin::parse(TEST_URL, false).unwrap();
+    let auth = super::Auth::new(origin, ProxyTrust::default()).unwrap();
+    let now = std::time::Instant::now();
+    let client = |subnet: u16| {
+        super::ratelimit::RateKey::of(Ipv6Addr::new(0x2001, 0xdb8, 7, subnet, 0, 0, 0, 1).into())
+    };
+    for subnet in 0..SITE_BURST as u16 {
+        assert!(auth.check_client(client(subnet), now).is_ok());
+    }
+    assert_eq!(auth.ip_limiter.len(), SITE_BURST as usize);
+    for subnet in SITE_BURST as u16..SITE_BURST as u16 + 500 {
+        assert!(auth.check_client(client(subnet), now).is_err());
+    }
+    assert_eq!(auth.ip_limiter.len(), SITE_BURST as usize);
+}
+
+#[tokio::test]
+async fn seeded_credited_names_are_taken_and_cannot_sign_in() {
+    let Some((state, app)) = db_app() else {
+        return;
+    };
+    // Seeded by the migration, with no way to sign in.
+    let friedman = user_id(&state, "friedman");
+    assert!(passkey_ids(&state, friedman).is_empty());
+    let (kind, display): (String, Option<String>) = users::table
+        .filter(users::id.eq(friedman))
+        .select((users::kind, users::display_name))
+        .first(&mut conn(&state))
+        .unwrap();
+    assert_eq!(
+        (kind.as_str(), display.as_deref()),
+        ("credited", Some("Erich Friedman"))
+    );
+
+    let taken = fresh("taken");
+    assert_eq!(
+        register(&app, &mut Browser::new(), &mut soft(), &taken)
+            .await
+            .status,
+        StatusCode::OK
+    );
+    let as_taken = start(&app, &mut Browser::new(), REGISTER_START, &taken).await;
+    assert_eq!(as_taken.status, StatusCode::CONFLICT);
+    let as_unknown = start(&app, &mut Browser::new(), LOGIN_START, &fresh("nobody")).await;
+    assert_eq!(as_unknown.status, StatusCode::UNAUTHORIZED);
+    for name in [
+        "friedman",
+        " Goebel ",
+        "HAEMAELAEINEN",
+        "winter",
+        "themagicanimals",
+    ] {
+        let r = start(&app, &mut Browser::new(), REGISTER_START, name).await;
+        assert_eq!(
+            (r.status, &r.body),
+            (as_taken.status, &as_taken.body),
+            "{name}"
+        );
+        let r = start(&app, &mut Browser::new(), LOGIN_START, name).await;
+        assert_eq!(
+            (r.status, &r.body),
+            (as_unknown.status, &as_unknown.body),
+            "{name}"
+        );
+    }
+}
+
+/// A credited profile added between register start and finish wins; the
+/// registration leaves nothing behind.
+#[tokio::test]
+async fn a_name_credited_mid_registration_fails_cleanly() {
+    let Some((state, app)) = db_app() else {
+        return;
+    };
+    let name = fresh("late");
+    let mut b = Browser::new();
+    let s = start(&app, &mut b, REGISTER_START, &name).await;
+    assert_eq!(s.status, StatusCode::OK);
+    let handle: Base64UrlSafeData =
+        serde_json::from_value(s.body["options"]["publicKey"]["user"]["id"].clone()).unwrap();
+    let would_be = Uuid::from_slice(&Vec::<u8>::from(handle)).unwrap();
+    let cred = soft().create(&origin(), creation(&s)).unwrap();
+    diesel::insert_into(users::table)
+        .values((
+            users::id.eq(Uuid::new_v4()),
+            users::username.eq(&name),
+            users::kind.eq("credited"),
+            users::display_name.eq("Late Addition"),
+        ))
+        .execute(&mut conn(&state))
+        .unwrap();
+
+    let r = b.post(&app, REGISTER_FINISH, finish_body(&s, &cred)).await;
+    assert_eq!(r.status, StatusCode::CONFLICT);
+    assert_eq!(r.error(), username::UNAVAILABLE);
+    assert!(r.set_cookie(SESSION).is_none());
+    assert!(!b.cookies.contains_key(SESSION));
+    let rows: i64 = users::table
+        .filter(users::id.eq(would_be))
+        .count()
+        .get_result(&mut conn(&state))
+        .unwrap();
+    assert_eq!(rows, 0);
+    assert!(passkey_ids(&state, would_be).is_empty());
+    assert!(session_hashes(&state, would_be).is_empty());
+    let raw_id = Vec::<u8>::from(cred.raw_id);
+    let stored: i64 = passkeys::table
+        .filter(passkeys::credential_id.eq(&raw_id))
+        .count()
+        .get_result(&mut conn(&state))
+        .unwrap();
+    assert_eq!(stored, 0);
+    let kind: String = users::table
+        .filter(users::username.eq(&name))
+        .select(users::kind)
+        .first(&mut conn(&state))
+        .unwrap();
+    assert_eq!(kind, "credited");
+}
+
+/// The down migration refuses while sign-in data exists. It runs on a scratch
+/// copy of the schema inside a rolled-back transaction in packit_test, so
+/// real rows and concurrent tests are never touched.
+#[test]
+fn the_down_migration_never_drops_sign_in_data() {
+    use diesel::connection::SimpleConnection;
+    use diesel::sql_types::BigInt;
+
+    let Some(pool) = test_db() else {
+        eprintln!("TEST_DATABASE_URL not set; skipping");
+        return;
+    };
+    // Each statement runs in a savepoint, so an expected failure leaves the
+    // enclosing transaction usable.
+    fn run(conn: &mut PgConnection, sql: &str) -> QueryResult<()> {
+        conn.transaction(|conn| conn.batch_execute(sql))
+    }
+    fn count(conn: &mut PgConnection, query: &str) -> i64 {
+        diesel::select(diesel::dsl::sql::<BigInt>(&format!("({query})")))
+            .get_result(conn)
+            .unwrap()
+    }
+    // Every row and column the refusal must preserve.
+    fn snapshot(conn: &mut PgConnection) -> [i64; 6] {
+        [
+            "SELECT count(*) FROM users",
+            "SELECT count(*) FROM users WHERE kind = 'player'",
+            "SELECT count(*) FROM passkeys",
+            "SELECT count(*) FROM sessions",
+            "SELECT count(*) FROM scores WHERE user_id IS NOT NULL",
+            "SELECT count(*) FROM solution_shares WHERE created_by IS NOT NULL",
+        ]
+        .map(|q| count(conn, q))
+    }
+    let up = include_str!("../../migrations/2026-09-14-000100_passkey_auth/up.sql");
+    let down = include_str!("../../migrations/2026-09-14-000100_passkey_auth/down.sql");
+    let seeded = up
+        .lines()
+        .filter(|l| l.trim().starts_with("(gen_random_uuid(), "))
+        .count() as i64;
+    let credited = "(SELECT id FROM users WHERE username = 'friedman')";
+    let cases = [
+        (
+            "INSERT INTO users (id, username, kind) VALUES (gen_random_uuid(), 'someone', 'player')"
+                .to_string(),
+            "DELETE FROM users WHERE kind = 'player'",
+        ),
+        (
+            format!(
+                "INSERT INTO passkeys (credential_id, user_id, passkey) \
+                 VALUES (decode('01', 'hex'), {credited}, '{{}}')"
+            ),
+            "DELETE FROM passkeys",
+        ),
+        (
+            format!(
+                "INSERT INTO sessions (token_hash, user_id, expires_at) \
+                 VALUES (decode(repeat('ab', 32), 'hex'), {credited}, now())"
+            ),
+            "DELETE FROM sessions",
+        ),
+        (
+            format!(
+                "INSERT INTO scores (player, n, side, arrangement, user_id) \
+                 VALUES ('p', 1, 1, '{{}}', {credited})"
+            ),
+            "UPDATE scores SET user_id = NULL",
+        ),
+        (
+            format!(
+                "INSERT INTO solution_shares (token, payload_hash, n, code, created_by) \
+                 VALUES (repeat('a', 24), decode(repeat('cd', 32), 'hex'), 1, repeat('0', 70), \
+                 {credited})"
+            ),
+            "UPDATE solution_shares SET created_by = NULL",
+        ),
+    ];
+    pool.get()
+        .unwrap()
+        .test_transaction::<_, diesel::result::Error, _>(|conn| {
+            let schema = format!("passkey_down_{}", Uuid::new_v4().simple());
+            conn.batch_execute(&format!(
+                "CREATE SCHEMA {schema}; SET LOCAL search_path TO {schema}, public;"
+            ))?;
+            conn.batch_execute(include_str!(
+                "../../migrations/00000000000000_initial/up.sql"
+            ))?;
+            conn.batch_execute(include_str!(
+                "../../migrations/2026-09-13-000000_solution_shares/up.sql"
+            ))?;
+            conn.batch_execute(up)?;
+            assert!(seeded > 0);
+            assert_eq!(snapshot(conn), [seeded, 0, 0, 0, 0, 0]);
+            for (insert, cleanup) in &cases {
+                run(conn, insert)?;
+                let before = snapshot(conn);
+                let refused = run(conn, down).unwrap_err().to_string();
+                assert!(
+                    refused.contains("refusing to drop sign-in data"),
+                    "{refused}"
+                );
+                assert_eq!(snapshot(conn), before, "{insert}");
+                run(conn, cleanup)?;
+            }
+            // Only the seeded credited profiles are left: down goes through.
+            assert_eq!(snapshot(conn), [seeded, 0, 0, 0, 0, 0]);
+            run(conn, down)?;
+            let tables = count(
+                conn,
+                "SELECT count(*) FROM information_schema.tables WHERE table_schema = \
+                 current_schema() AND table_name IN ('users', 'passkeys', 'sessions')",
+            );
+            let columns = count(
+                conn,
+                "SELECT count(*) FROM information_schema.columns WHERE table_schema = \
+                 current_schema() AND column_name IN ('user_id', 'created_by')",
+            );
+            assert_eq!((tables, columns), (0, 0));
+            // The now-anonymous score and share are kept.
+            assert_eq!(count(conn, "SELECT count(*) FROM scores"), 1);
+            assert_eq!(count(conn, "SELECT count(*) FROM solution_shares"), 1);
+            Ok(())
+        });
+}

@@ -45,6 +45,7 @@ diesel::table! {
         id -> Uuid,
         username -> Text,
         kind -> Text,
+        display_name -> Nullable<Text>,
         created_at -> Timestamptz,
     }
 }

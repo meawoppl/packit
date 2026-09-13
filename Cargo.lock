@@ -285,6 +285,7 @@ dependencies = [
  "tower-http",
  "tracing",
  "tracing-subscriber",
+ "unicode-normalization",
  "uuid",
  "webauthn-authenticator-rs",
  "webauthn-rs",

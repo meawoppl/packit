@@ -13,11 +13,20 @@ struct Bucket {
     updated: Instant,
 }
 
+struct Buckets<K> {
+    map: HashMap<K, Bucket>,
+    next_sweep: Instant,
+}
+
+/// How often a full limiter may be swept for idle buckets. Between sweeps a
+/// new key is refused without scanning.
+const SWEEP_INTERVAL: Duration = Duration::from_secs(1);
+
 pub struct RateLimiter<K> {
     burst: f64,
     refill_every: Duration,
     max_keys: usize,
-    buckets: Mutex<HashMap<K, Bucket>>,
+    buckets: Mutex<Buckets<K>>,
 }
 
 impl<K: Eq + Hash + Clone> RateLimiter<K> {
@@ -28,7 +37,10 @@ impl<K: Eq + Hash + Clone> RateLimiter<K> {
             burst: burst as f64,
             refill_every,
             max_keys,
-            buckets: Mutex::new(HashMap::new()),
+            buckets: Mutex::new(Buckets {
+                map: HashMap::new(),
+                next_sweep: Instant::now(),
+            }),
         }
     }
 
@@ -39,16 +51,22 @@ impl<K: Eq + Hash + Clone> RateLimiter<K> {
     }
 
     /// Spend one token for `key`, or return how long until one is available.
+    /// When the table is full, a new key is refused rather than evicting a
+    /// live bucket.
     pub fn check(&self, key: &K, now: Instant) -> Result<(), Duration> {
-        let mut buckets = self.buckets.lock().unwrap_or_else(PoisonError::into_inner);
-        if !buckets.contains_key(key) && buckets.len() >= self.max_keys {
-            // A bucket that has refilled completely holds no state; drop it.
-            buckets.retain(|_, b| self.level(b, now) < self.burst);
-            if buckets.len() >= self.max_keys {
+        let mut state = self.buckets.lock().unwrap_or_else(PoisonError::into_inner);
+        if !state.map.contains_key(key) && state.map.len() >= self.max_keys {
+            // A bucket that has refilled completely holds no state, so it can
+            // go; but sweep at most once per interval to keep denials cheap.
+            if now >= state.next_sweep {
+                state.next_sweep = now + SWEEP_INTERVAL;
+                state.map.retain(|_, b| self.level(b, now) < self.burst);
+            }
+            if state.map.len() >= self.max_keys {
                 return Err(self.refill_every);
             }
         }
-        let bucket = buckets.entry(key.clone()).or_insert(Bucket {
+        let bucket = state.map.entry(key.clone()).or_insert(Bucket {
             tokens: self.burst,
             updated: now,
         });
@@ -60,6 +78,27 @@ impl<K: Eq + Hash + Clone> RateLimiter<K> {
         } else {
             Err(self.refill_every.mul_f64(1.0 - bucket.tokens))
         }
+    }
+
+    /// Whether `key` has a token now, without spending it or starting to
+    /// track the key.
+    pub fn peek(&self, key: &K, now: Instant) -> Result<(), Duration> {
+        let state = self.buckets.lock().unwrap_or_else(PoisonError::into_inner);
+        let level = state
+            .map
+            .get(key)
+            .map_or(self.burst, |b| self.level(b, now));
+        if level >= 1.0 {
+            Ok(())
+        } else {
+            Err(self.refill_every.mul_f64(1.0 - level))
+        }
+    }
+
+    /// How many keys are tracked.
+    #[cfg(test)]
+    pub fn len(&self) -> usize {
+        self.buckets.lock().unwrap().map.len()
     }
 }
 
@@ -159,8 +198,40 @@ mod tests {
         // Once key 2 has refilled it is dropped to make room.
         let later = now + SEC;
         assert!(limiter.check(&3, later).is_ok());
-        assert_eq!(limiter.buckets.lock().unwrap().len(), 2);
-        assert!(limiter.buckets.lock().unwrap().contains_key(&1));
+        assert_eq!(limiter.len(), 2);
+        assert!(limiter.buckets.lock().unwrap().map.contains_key(&1));
+    }
+
+    #[test]
+    fn denials_at_capacity_are_cheap_and_allocate_nothing() {
+        let limiter = RateLimiter::new(1, SEC / 4, 2);
+        let now = Instant::now();
+        assert!(limiter.check(&0, now).is_ok());
+        assert!(limiter.check(&1, now).is_ok());
+        for key in 2..10_000 {
+            assert!(limiter.check(&key, now).is_err());
+        }
+        assert_eq!(limiter.len(), 2);
+        // The live buckets go idle after a quarter second, but the table is
+        // only swept once per interval...
+        let idle = now + SEC / 2;
+        assert!(limiter.check(&10_000, idle).is_err());
+        assert_eq!(limiter.len(), 2);
+        // ...and then makes room.
+        assert!(limiter.check(&10_001, now + SWEEP_INTERVAL).is_ok());
+        assert_eq!(limiter.len(), 1);
+    }
+
+    #[test]
+    fn peeking_neither_spends_nor_allocates() {
+        let limiter = RateLimiter::new(1, SEC, 10);
+        let now = Instant::now();
+        assert!(limiter.peek(&"a", now).is_ok());
+        assert_eq!(limiter.len(), 0);
+        assert!(limiter.peek(&"a", now).is_ok());
+        assert!(limiter.check(&"a", now).is_ok());
+        assert_eq!(limiter.peek(&"a", now), Err(SEC));
+        assert!(limiter.peek(&"a", now + SEC).is_ok());
     }
 
     fn xff(values: &[&str]) -> HeaderMap {

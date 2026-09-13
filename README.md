@@ -97,6 +97,13 @@ anonymously.
   may have 5 sign-ins in progress at once, and each /48 50.
 - Sign-in is username-first, so anyone can find out whether a username
   exists; registration reports taken names too. That enumeration is accepted.
+- Everyone named in `refs/credits.json` has a credited profile, seeded by the
+  migration that creates the tables, so nobody can register their names
+  first. The username is the ASCII-folded surname (`goebel` for Frits Göbel),
+  with the full name in `display_name`. Credited profiles have no passkeys and
+  can't sign in.
+- Reverting that migration refuses while any player, passkey, session or
+  score/share attribution exists; it never drops sign-in data.
 
 ### Behind a reverse proxy
 

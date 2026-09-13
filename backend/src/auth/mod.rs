@@ -118,8 +118,12 @@ impl Auth {
         RateKey::of(client_ip(peer, headers, trusted))
     }
 
-    /// Spend a token from the client's bucket and, for IPv6, its /48's.
+    /// Spend a token from the client's bucket and, for IPv6, its /48's. A /48
+    /// that is out of tokens is refused before any /64 bucket is created.
     pub fn check_client(&self, client: RateKey, now: Instant) -> Result<(), Duration> {
+        if let Some(site) = client.site {
+            self.site_limiter.peek(&site, now)?;
+        }
         self.ip_limiter.check(&client.subnet, now)?;
         match client.site {
             Some(site) => self.site_limiter.check(&site, now),
