@@ -317,7 +317,7 @@ pub(crate) fn login_started() -> Reply {
                 "challenge": b64(&[7; 32]),
                 "timeout": 60000,
                 "rpId": "localhost",
-                "allowCredentials": [{ "type": "public-key", "id": b64(&[9, 9]) }],
+                "allowCredentials": [],
                 "userVerification": "required",
             } },
         }),
@@ -337,8 +337,8 @@ fn creation_started(ceremony: &str) -> Reply {
                 "timeout": 60000,
                 "excludeCredentials": [{ "type": "public-key", "id": b64(&[4, 4]) }],
                 "authenticatorSelection": {
-                    "residentKey": "preferred",
-                    "requireResidentKey": false,
+                    "residentKey": "required",
+                    "requireResidentKey": true,
                     "userVerification": "required",
                 },
                 "attestation": "none",
@@ -412,7 +412,6 @@ fn submit_form(root: &Element) {
 async fn sign_in_as(root: &Element, name: &str) {
     click(root, ".account-open");
     sleep(30).await;
-    type_username(root, name);
     sleep(30).await;
     click(root, ".account-sign-in");
     wait_until("the sign-in", || {
@@ -469,6 +468,8 @@ async fn a_slow_me_does_not_sign_back_in_after_a_sign_out() {
     let _keys = Passkeys::install();
     let (handle, root) = mount().await;
     sign_in_as(&root, "ada").await;
+    click(&root, ".account-name");
+    sleep(30).await;
     click(&root, ".account-sign-out");
     wait_until("signed out", || find(&root, ".account-open").is_some()).await;
     sleep(1800).await;
@@ -509,7 +510,6 @@ async fn a_stale_sign_in_never_answers_a_newer_ask() {
     let (handle, root) = mount().await;
     click(&root, ".asker");
     sleep(30).await;
-    type_username(&root, "ada");
     sleep(30).await;
     click(&root, ".account-sign-in");
     wait_until("the first finish", || {
@@ -573,7 +573,6 @@ async fn a_sign_in_cancelled_before_its_finish_never_sends_it() {
     let (handle, root) = mount().await;
     click(&root, ".account-open");
     sleep(30).await;
-    type_username(&root, "ada");
     sleep(30).await;
     click(&root, ".account-sign-in");
     sleep(100).await;
@@ -609,7 +608,6 @@ async fn enter_while_signing_in_starts_no_second_ceremony() {
     let (handle, root) = mount().await;
     click(&root, ".account-open");
     sleep(30).await;
-    type_username(&root, "ada");
     sleep(30).await;
     submit_form(&root);
     sleep(100).await;
@@ -657,7 +655,6 @@ async fn signing_in_and_out_through_the_account_control() {
     assert!(find(&root, ".account-reason").is_none(), "no page asked");
     let help = text_of(&root, ".account-help").unwrap();
     assert!(help.contains("can't be recovered"), "{help}");
-    type_username(&root, " Ada ");
     sleep(30).await;
     click(&root, ".account-sign-in");
     wait_until("the username", || {
@@ -671,21 +668,26 @@ async fn signing_in_and_out_through_the_account_control() {
             .iter()
             .map(|b| json_of(b))
             .collect::<Vec<_>>(),
-        [json!({ "username": "Ada" })]
+        [json!({})]
     );
     let calls = keys.calls.borrow().clone();
     assert_eq!(calls.len(), 1);
     assert_eq!(calls[0].0, "get");
     assert_eq!(bytes_at(&calls[0].1, "publicKey.challenge"), [7; 32]);
+    let public = Reflect::get(&calls[0].1, &"publicKey".into()).unwrap();
+    let allow = Reflect::get(&public, &"allowCredentials".into()).unwrap();
     assert_eq!(
-        bytes_at(&calls[0].1, "publicKey.allowCredentials.0.id"),
-        [9, 9]
+        js_sys::Array::from(&allow).length(),
+        0,
+        "no username or credential filter"
     );
     assert_eq!(
         json_of(&api.sent("/api/auth/login/finish")[0]),
         json!({ "ceremony": "login-1", "credential": asserted_credential() })
     );
 
+    click(&root, ".account-name");
+    sleep(30).await;
     click(&root, ".account-sign-out");
     wait_until("signed out", || find(&root, ".account-open").is_some()).await;
     assert_eq!(api.sent("/api/auth/logout").len(), 1);
@@ -710,6 +712,8 @@ async fn creating_an_account_converts_the_creation_options() {
     let keys = Passkeys::install();
     let (handle, root) = mount().await;
     click(&root, ".account-open");
+    sleep(30).await;
+    click(&root, ".account-new");
     sleep(30).await;
     type_username(&root, "bob");
     sleep(30).await;
@@ -759,6 +763,10 @@ async fn a_session_loads_on_startup_and_can_add_a_passkey() {
         text_of(&root, ".account-name").as_deref() == Some("carol")
     })
     .await;
+    if find(&root, ".account-dialog").is_none() {
+        click(&root, ".account-name");
+        sleep(30).await;
+    }
     click(&root, ".account-add");
     wait_until("the passkey", || find(&root, ".account-notice").is_some()).await;
     assert_eq!(
@@ -769,6 +777,10 @@ async fn a_session_loads_on_startup_and_can_add_a_passkey() {
         json_of(&api.sent("/api/auth/passkeys/finish")[0]),
         json!({ "ceremony": "add-1", "credential": created_credential() })
     );
+    if find(&root, ".account-dialog").is_none() {
+        click(&root, ".account-name");
+        sleep(30).await;
+    }
     click(&root, ".account-add");
     wait_until("the refusal", || {
         text_of(&root, ".account-notice").as_deref() == Some("Sign in again to add a passkey")
@@ -803,7 +815,6 @@ async fn sign_in_failures_read_clearly() {
     let (handle, root) = mount().await;
     click(&root, ".account-open");
     sleep(30).await;
-    type_username(&root, "dave");
     sleep(30).await;
     let error = |expected: &'static str| {
         let root = root.clone();
@@ -822,6 +833,10 @@ async fn sign_in_failures_read_clearly() {
         error("The passkey request was cancelled or timed out."),
     )
     .await;
+    click(&root, ".account-new");
+    sleep(30).await;
+    type_username(&root, "dave");
+    sleep(30).await;
     click(&root, ".account-create");
     wait_until("the taken name", error("That username isn't available")).await;
     assert!(api.sent("/api/auth/login/finish").is_empty());
@@ -839,6 +854,149 @@ async fn sign_in_failures_read_clearly() {
         .unwrap();
     sleep(30).await;
     assert!(find(&root, ".account-dialog").is_none());
+    handle.destroy();
+    root.remove();
+}
+
+fn key(root: &Element, name: &str, shift: bool) {
+    let init = web_sys::KeyboardEventInit::new();
+    init.set_key(name);
+    init.set_shift_key(shift);
+    init.set_bubbles(true);
+    init.set_cancelable(true);
+    find(root, ".account-dialog")
+        .unwrap()
+        .dispatch_event(
+            &web_sys::KeyboardEvent::new_with_keyboard_event_init_dict("keydown", &init).unwrap(),
+        )
+        .unwrap();
+}
+
+#[wasm_bindgen_test]
+async fn the_modal_traps_focus_and_restores_scroll_and_the_opener() {
+    let _api = Api::install(&[("/api/auth/me", vec![not_signed_in()])]);
+    let (handle, root) = mount().await;
+    let document = web_sys::window().unwrap().document().unwrap();
+    let body = document.body().unwrap();
+    let old = body.style().get_property_value("overflow").unwrap();
+    body.style().set_property("overflow", "scroll").unwrap();
+    let opener = find(&root, ".account-open").unwrap();
+    opener.focus().unwrap();
+    opener.click();
+    sleep(30).await;
+    assert_eq!(
+        body.style().get_property_value("overflow").unwrap(),
+        "hidden"
+    );
+    assert!(find(&root, ".account-page").unwrap().has_attribute("inert"));
+    assert!(
+        find(&root, "#account-username").is_none(),
+        "Existing has no username field"
+    );
+    assert_eq!(
+        document.active_element(),
+        find(&root, ".account-sign-in").map(Into::into)
+    );
+    key(&root, "Tab", true);
+    assert_eq!(
+        document.active_element(),
+        find(&root, ".account-cancel").map(Into::into)
+    );
+    key(&root, "Tab", false);
+    assert_eq!(
+        document.active_element(),
+        find(&root, ".account-sign-in").map(Into::into)
+    );
+    click(&root, ".account-new");
+    sleep(30).await;
+    assert_eq!(
+        document.active_element(),
+        find(&root, "#account-username").map(Into::into)
+    );
+    key(&root, "Escape", false);
+    sleep(30).await;
+    assert!(find(&root, ".account-dialog").is_none());
+    assert!(!find(&root, ".account-page").unwrap().has_attribute("inert"));
+    assert!(
+        opener.is_connected(),
+        "opening and closing must preserve the page subtree"
+    );
+    wait_until("opener focus restored", || {
+        document.active_element() == Some(opener.clone().into())
+    })
+    .await;
+    assert_eq!(
+        body.style().get_property_value("overflow").unwrap(),
+        "scroll"
+    );
+    opener.click();
+    sleep(30).await;
+    handle.destroy();
+    sleep(30).await;
+    assert_eq!(
+        body.style().get_property_value("overflow").unwrap(),
+        "scroll"
+    );
+    body.style().set_property("overflow", &old).unwrap();
+    root.remove();
+}
+
+#[wasm_bindgen_test]
+async fn backdrop_dismissal_drops_the_pending_action() {
+    ANSWERS.with(|a| a.borrow_mut().clear());
+    let _api = Api::install(&[("/api/auth/me", vec![not_signed_in()])]);
+    let (handle, root) = mount().await;
+    click(&root, ".asker");
+    sleep(30).await;
+    click(&root, ".account-modal");
+    sleep(30).await;
+    assert!(find(&root, ".account-dialog").is_none());
+    assert_eq!(ANSWERS.with(|a| a.borrow().clone()), [false]);
+    handle.destroy();
+    root.remove();
+}
+
+#[wasm_bindgen_test]
+async fn username_hints_ignore_a_stale_response_and_registration_checks_again() {
+    let api = Api::install(&[
+        ("/api/auth/me", vec![not_signed_in()]),
+        (
+            "/api/auth/usernames/alice",
+            vec![reply(200, json!({"available": true})).after(900)],
+        ),
+        (
+            "/api/auth/usernames/betty",
+            vec![reply(200, json!({"available": false}))],
+        ),
+        (
+            "/api/auth/register/start",
+            vec![reply(409, json!({"error":"That username isn't available"}))],
+        ),
+    ]);
+    let keys = Passkeys::install();
+    let (handle, root) = mount().await;
+    click(&root, ".account-open");
+    sleep(30).await;
+    click(&root, ".account-new");
+    sleep(30).await;
+    type_username(&root, "alice");
+    sleep(400).await;
+    type_username(&root, "betty");
+    sleep(1300).await;
+    assert_eq!(
+        text_of(&root, ".account-availability").as_deref(),
+        Some("That username is unavailable.")
+    );
+    click(&root, ".account-create");
+    wait_until("authoritative refusal", || {
+        find(&root, ".account-error").is_some()
+    })
+    .await;
+    assert_eq!(api.sent("/api/auth/register/start").len(), 1);
+    assert!(
+        keys.calls.borrow().is_empty(),
+        "uniqueness checked before create"
+    );
     handle.destroy();
     root.remove();
 }
