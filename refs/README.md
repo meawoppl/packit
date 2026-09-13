@@ -17,6 +17,19 @@ It includes high-precision SVG geometry and polynomial forms, with records
 updated during 2025–2026. The snapshot records the displayed values; pending
 improvements or incompletely optimized constructions remain upper bounds.
 
+[`credits.json`](credits.json) names the people behind each entry, one object
+per n with sources. `packing_by` lists who found, improved or optimized the
+current packing; `prior_credits` names earlier or base packings only;
+`proof_by` is who proved the side optimal (`"trivial"` for perfect squares);
+`other_proofs` lists further published proofs. The primary source is the
+page above, cross-checked against a 2021 archive of Friedman's page,
+Friedman's survey (Electronic Journal of Combinatorics DS7) and the papers
+here. When sources disagree on who found a packing, `disputed` is true and
+`packing_by` lists every candidate, each role naming the source that
+credits them, rather than picking one. Other disagreements, such as dates,
+are recorded in `note`. The API serves the finder and prover names with
+each record, plus `packing_disputed` and `proof_trivial` flags.
+
 Useful benchmarks: s(5)=2+1/sqrt(2), s(10)=3+1/sqrt(2). The 11-square
 construction has side approximately 3.87708359002281, while Stromquist's
 lower bound is 2+4/sqrt(5). Thus a gap to the construction and a gap to a

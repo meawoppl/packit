@@ -304,7 +304,7 @@ async fn glue_survives_settle_and_measure() {
         .find(|b| b.text_content().unwrap_or_default() == "Settle & measure")
         .unwrap();
     measure.click();
-    wait_for_share_code(3000).await;
+    wait_for_report(3000).await;
     assert_eq!(
         physics.glues(),
         glued,
@@ -781,21 +781,53 @@ async fn bad_share_link_reports_an_error() {
     root.remove();
 }
 
+/// One scripted `/api/shares` response; status 0 never answers.
+#[derive(Clone, Copy)]
+struct Reply {
+    status: u16,
+    retry_after: Option<&'static str>,
+    /// Send the headers but a body that never finishes arriving.
+    stall_body: bool,
+}
+const HANG: Reply = Reply {
+    status: 0,
+    retry_after: None,
+    stall_body: false,
+};
+const OK: Reply = Reply {
+    status: 200,
+    retry_after: None,
+    stall_body: false,
+};
+const UNAVAILABLE: Reply = Reply {
+    status: 503,
+    retry_after: None,
+    stall_body: false,
+};
+
 /// Stub only /api/shares; other mounted-screen requests still use fetch.
+/// Replies follow the script, repeating its last entry.
 struct ShareApi {
     original: wasm_bindgen::JsValue,
     _fetch: wasm_bindgen::closure::Closure<
         dyn FnMut(wasm_bindgen::JsValue, wasm_bindgen::JsValue) -> js_sys::Promise,
     >,
     requests: Rc<std::cell::RefCell<Vec<shared::CreateShare>>>,
+    /// When each request arrived, in milliseconds.
+    arrivals: Rc<std::cell::RefCell<Vec<f64>>>,
+    /// Each request's abort signal.
+    signals: Rc<std::cell::RefCell<Vec<web_sys::AbortSignal>>>,
 }
 impl ShareApi {
-    fn install(fail: bool) -> Self {
+    fn install(script: &[Reply]) -> Self {
+        let script = script.to_vec();
         let window = web_sys::window().unwrap();
         let original = js_sys::Reflect::get(&window, &"fetch".into()).unwrap();
         let fetch = original.clone().dyn_into::<js_sys::Function>().unwrap();
         let requests = Rc::new(std::cell::RefCell::new(Vec::new()));
-        let captured = requests.clone();
+        let arrivals = Rc::new(std::cell::RefCell::new(Vec::new()));
+        let signals = Rc::new(std::cell::RefCell::new(Vec::new()));
+        let (captured, arrived, signalled) = (requests.clone(), arrivals.clone(), signals.clone());
         let replacement = wasm_bindgen::closure::Closure::wrap(Box::new(
             move |request: wasm_bindgen::JsValue, init: wasm_bindgen::JsValue| {
                 let req = request.clone().dyn_into::<web_sys::Request>().unwrap();
@@ -805,24 +837,51 @@ impl ShareApi {
                         .unwrap()
                         .unchecked_into();
                 }
-                let captured = captured.clone();
+                let (captured, arrived) = (captured.clone(), arrived.clone());
+                signalled.borrow_mut().push(req.signal());
+                let script = script.clone();
                 wasm_bindgen_futures::future_to_promise(async move {
+                    arrived.borrow_mut().push(js_sys::Date::now());
                     let body = wasm_bindgen_futures::JsFuture::from(req.text().unwrap())
                         .await?
                         .as_string()
                         .unwrap();
-                    captured
-                        .borrow_mut()
-                        .push(serde_json::from_str(&body).unwrap());
+                    let reply = {
+                        let mut captured = captured.borrow_mut();
+                        captured.push(serde_json::from_str(&body).unwrap());
+                        script[(captured.len() - 1).min(script.len() - 1)]
+                    };
+                    if reply.status == 0 {
+                        // Never answer; only an abort ends this request.
+                        wasm_bindgen_futures::JsFuture::from(js_sys::Promise::new(&mut |_, _| {}))
+                            .await?;
+                    }
                     sleep(150).await;
                     let options = web_sys::ResponseInit::new();
-                    options.set_status(if fail { 503 } else { 200 });
-                    let text = if fail {
-                        r#"{"error":"storage unavailable"}"#
-                    } else {
+                    options.set_status(reply.status);
+                    let text = if reply.status == 200 {
                         r#"{"url":"https://packit.test/s/0123456789abcdef01234567"}"#
+                    } else {
+                        r#"{"error":"storage unavailable"}"#
                     };
-                    Ok(web_sys::Response::new_with_opt_str_and_init(Some(text), &options)?.into())
+                    let response: web_sys::Response = if reply.stall_body {
+                        // Headers now, then a body stream that never closes.
+                        let window = web_sys::window().unwrap();
+                        let class =
+                            |name: &str| -> Result<js_sys::Function, wasm_bindgen::JsValue> {
+                                js_sys::Reflect::get(&window, &name.into())?.dyn_into()
+                            };
+                        let open = js_sys::Array::of1(&js_sys::Object::new());
+                        let stream = js_sys::Reflect::construct(&class("ReadableStream")?, &open)?;
+                        let args = js_sys::Array::of2(&stream, options.as_ref());
+                        js_sys::Reflect::construct(&class("Response")?, &args)?.unchecked_into()
+                    } else {
+                        web_sys::Response::new_with_opt_str_and_init(Some(text), &options)?
+                    };
+                    if let Some(after) = reply.retry_after {
+                        response.headers().set("retry-after", after)?;
+                    }
+                    Ok(response.into())
                 })
             },
         )
@@ -832,6 +891,8 @@ impl ShareApi {
             original,
             _fetch: replacement,
             requests,
+            arrivals,
+            signals,
         }
     }
 }
@@ -896,8 +957,9 @@ fn submit_button(root: &Element, label: &str) -> HtmlElement {
         .unwrap()
 }
 
+/// Wait for a Share to finish, retries included.
 async fn wait_share(root: &Element) {
-    for _ in 0..100 {
+    for _ in 0..400 {
         if !text(root, ".pg-share-status").contains("Creating") {
             return;
         }
@@ -906,10 +968,16 @@ async fn wait_share(root: &Element) {
     panic!("share request did not complete");
 }
 
+fn share_alert(root: &Element) -> Option<String> {
+    root.query_selector(".pg-share-error[role='alert']")
+        .unwrap()
+        .map(|e| e.text_content().unwrap_or_default())
+}
+
 #[wasm_bindgen_test]
 async fn share_button_copies_a_short_link_for_the_captured_precise_snapshot() {
     let _gpu = NoWebGpu::install();
-    let api = ShareApi::install(false);
+    let api = ShareApi::install(&[OK]);
     let clipboard = Clipboard::install(false);
     let (handle, root, _) = mount().await;
     submit_button(&root, "Settle & measure").click();
@@ -944,7 +1012,7 @@ async fn share_button_copies_a_short_link_for_the_captured_precise_snapshot() {
 #[wasm_bindgen_test]
 async fn sharing_during_relaxation_keeps_the_run_and_its_snapshot() {
     let _gpu = NoWebGpu::install();
-    let api = ShareApi::install(false);
+    let api = ShareApi::install(&[OK]);
     let clipboard = Clipboard::install(false);
     let (handle, root, physics) = mount_at(&format!("s={}", share::encode(&cramped()))).await;
     submit_button(&root, "Settle & measure").click();
@@ -976,7 +1044,7 @@ async fn sharing_during_relaxation_keeps_the_run_and_its_snapshot() {
 #[wasm_bindgen_test]
 async fn share_copy_failure_offers_selectable_url_and_fresh_gesture_retry() {
     let _gpu = NoWebGpu::install();
-    let api = ShareApi::install(false);
+    let api = ShareApi::install(&[OK]);
     let clipboard = Clipboard::install(true);
     let (handle, root, _) = mount().await;
     submit_button(&root, "Share").click();
@@ -1007,15 +1075,166 @@ async fn share_copy_failure_offers_selectable_url_and_fresh_gesture_retry() {
 }
 
 #[wasm_bindgen_test]
-async fn share_storage_failure_is_reported_without_claiming_a_copy() {
+async fn a_transient_failure_then_success_copies_the_short_link() {
     let _gpu = NoWebGpu::install();
-    let _api = ShareApi::install(true);
+    let api = ShareApi::install(&[UNAVAILABLE, OK]);
     let clipboard = Clipboard::install(false);
     let (handle, root, _) = mount().await;
     submit_button(&root, "Share").click();
     sleep(30).await;
     wait_share(&root).await;
-    assert!(text(&root, ".pg-share-status").contains("storage unavailable"));
+    let requests = api.requests.borrow().clone();
+    assert_eq!(requests.len(), 2, "one retry");
+    assert_eq!(
+        requests[0], requests[1],
+        "the retry sends the same snapshot"
+    );
+    assert_eq!(
+        clipboard.values.borrow().as_slice(),
+        ["https://packit.test/s/0123456789abcdef01234567"]
+    );
+    assert_eq!(share_alert(&root), None);
+    handle.destroy();
+    root.remove();
+}
+
+#[wasm_bindgen_test]
+async fn a_hung_request_is_aborted_and_retried() {
+    let _gpu = NoWebGpu::install();
+    let api = ShareApi::install(&[HANG, OK]);
+    let clipboard = Clipboard::install(false);
+    let (handle, root, _) = mount().await;
+    submit_button(&root, "Share").click();
+    sleep(30).await;
+    wait_share(&root).await;
+    assert_eq!(api.requests.borrow().len(), 2);
+    let signals = api.signals.borrow();
+    assert!(signals[0].aborted(), "the hung request was aborted");
+    assert!(!signals[1].aborted(), "the retry completed");
+    assert_eq!(
+        clipboard.values.borrow().as_slice(),
+        ["https://packit.test/s/0123456789abcdef01234567"]
+    );
+    handle.destroy();
+    root.remove();
+}
+
+#[wasm_bindgen_test]
+async fn retry_after_delays_the_next_attempt() {
+    let _gpu = NoWebGpu::install();
+    let limited = Reply {
+        status: 429,
+        retry_after: Some("1"),
+        stall_body: false,
+    };
+    let api = ShareApi::install(&[limited, OK]);
+    let _clipboard = Clipboard::install(false);
+    let (handle, root, _) = mount().await;
+    submit_button(&root, "Share").click();
+    sleep(30).await;
+    wait_share(&root).await;
+    let arrivals = api.arrivals.borrow().clone();
+    assert_eq!(arrivals.len(), 2);
+    // The 429 arrives 150 ms after the first request; the retry waits 1 s.
+    assert!(
+        arrivals[1] - arrivals[0] >= 1150.0,
+        "retried after {} ms",
+        arrivals[1] - arrivals[0]
+    );
+    assert!(text(&root, ".pg-share-status").contains("Snapshot link copied"));
+    handle.destroy();
+    root.remove();
+}
+
+#[wasm_bindgen_test]
+async fn a_rejected_share_is_not_retried_and_alerts() {
+    let _gpu = NoWebGpu::install();
+    let rejected = Reply {
+        status: 400,
+        retry_after: None,
+        stall_body: false,
+    };
+    let api = ShareApi::install(&[rejected]);
+    let clipboard = Clipboard::install(false);
+    let (handle, root, _) = mount().await;
+    submit_button(&root, "Share").click();
+    sleep(30).await;
+    wait_share(&root).await;
+    assert_eq!(api.requests.borrow().len(), 1, "a 400 is not retried");
+    let alert = share_alert(&root).expect("the failure is announced");
+    assert!(alert.starts_with("Couldn't create a short link"), "{alert}");
+    assert!(clipboard.values.borrow().is_empty());
+    handle.destroy();
+    root.remove();
+}
+
+/// A 429's wait comes from its headers, even when its body never arrives.
+#[wasm_bindgen_test]
+async fn a_stalled_429_body_still_honors_retry_after() {
+    let _gpu = NoWebGpu::install();
+    let limited = Reply {
+        status: 429,
+        retry_after: Some("2"),
+        stall_body: true,
+    };
+    let api = ShareApi::install(&[limited, OK]);
+    let clipboard = Clipboard::install(false);
+    let (handle, root, _) = mount().await;
+    submit_button(&root, "Share").click();
+    sleep(30).await;
+    wait_share(&root).await;
+    let arrivals = api.arrivals.borrow().clone();
+    assert_eq!(arrivals.len(), 2);
+    // Reading the stalled body would time out and retry after about 1.15 s.
+    assert!(
+        arrivals[1] - arrivals[0] >= 2150.0,
+        "retried after {} ms",
+        arrivals[1] - arrivals[0]
+    );
+    assert_eq!(clipboard.values.borrow().len(), 1);
+    handle.destroy();
+    root.remove();
+}
+
+/// A 400 fails on its status alone; a stalled body doesn't turn it into a
+/// retried timeout.
+#[wasm_bindgen_test]
+async fn a_stalled_400_body_fails_at_once_without_retrying() {
+    let _gpu = NoWebGpu::install();
+    let rejected = Reply {
+        status: 400,
+        retry_after: None,
+        stall_body: true,
+    };
+    let api = ShareApi::install(&[rejected]);
+    let _clipboard = Clipboard::install(false);
+    let (handle, root, _) = mount().await;
+    submit_button(&root, "Share").click();
+    sleep(30).await;
+    wait_share(&root).await;
+    assert_eq!(api.requests.borrow().len(), 1, "not retried");
+    assert!(share_alert(&root).is_some(), "the failure is announced");
+    handle.destroy();
+    root.remove();
+}
+
+#[wasm_bindgen_test]
+async fn share_gives_up_after_bounded_retries_and_alerts_once() {
+    let _gpu = NoWebGpu::install();
+    let api = ShareApi::install(&[UNAVAILABLE]);
+    let clipboard = Clipboard::install(false);
+    let (handle, root, _) = mount().await;
+    submit_button(&root, "Share").click();
+    sleep(300).await;
+    assert_eq!(share_alert(&root), None, "no alert while retrying");
+    wait_share(&root).await;
+    assert_eq!(api.requests.borrow().len(), 4, "bounded attempts");
+    let alert = share_alert(&root).expect("the final failure is announced");
+    assert!(alert.contains("press Share to try again"), "{alert}");
+    assert!(
+        !alert.contains("storage unavailable"),
+        "no server internals"
+    );
     assert!(root.query_selector("#pg-share-link").unwrap().is_none());
     assert!(clipboard.values.borrow().is_empty());
     handle.destroy();
@@ -1023,9 +1242,26 @@ async fn share_storage_failure_is_reported_without_claiming_a_copy() {
 }
 
 #[wasm_bindgen_test]
+async fn unmounting_during_a_backoff_sends_no_more_requests() {
+    let _gpu = NoWebGpu::install();
+    let api = ShareApi::install(&[UNAVAILABLE, OK]);
+    let clipboard = Clipboard::install(false);
+    let (handle, root, _) = mount().await;
+    submit_button(&root, "Share").click();
+    // The first request fails after 150 ms; the retry waits 400 ms more.
+    sleep(300).await;
+    assert_eq!(api.requests.borrow().len(), 1);
+    handle.destroy();
+    root.remove();
+    sleep(1500).await;
+    assert_eq!(api.requests.borrow().len(), 1, "no retry after unmounting");
+    assert!(clipboard.values.borrow().is_empty());
+}
+
+#[wasm_bindgen_test]
 async fn unmount_discards_pending_share_without_writing_the_clipboard() {
     let _gpu = NoWebGpu::install();
-    let api = ShareApi::install(false);
+    let api = ShareApi::install(&[OK]);
     let clipboard = Clipboard::install(false);
     let (handle, root, _) = mount().await;
     submit_button(&root, "Share").click();
@@ -1406,99 +1642,53 @@ fn history_length() -> u32 {
         .unwrap()
 }
 
-/// Poll the address bar for a share code, for up to `ms` milliseconds.
-async fn wait_for_share_code(ms: u64) -> String {
-    for _ in 0..ms / 100 {
-        let search = web_sys::window().unwrap().location().search().unwrap();
-        if let Some(code) = search.strip_prefix("?s=") {
-            return code.to_string();
+/// Wait for a validated measurement, for up to `ms` milliseconds.
+async fn wait_for_report(ms: u64) {
+    for _ in 0..ms / 20 {
+        if TEST_REPORT.with(|r| r.borrow().is_some()) {
+            return;
         }
-        sleep(100).await;
+        sleep(20).await;
     }
-    panic!("no share code in the URL after {ms} ms");
+    panic!("no validated measurement after {ms} ms");
 }
 
-/// After a valid measure the URL carries the refined f64 arrangement, not the
-/// f32 display scene: refine's final (1 + 2e-10) expansion leaves a side that
-/// f32 cannot represent.
-fn assert_validated_f64(code: &str, root: &Element) {
-    let status = text(root, ".pg-status");
-    assert!(status.starts_with("Ready"), "measure validated: {status}");
-    let shared = share::decode(code, 2).unwrap();
-    let report = TEST_REPORT
-        .with(|r| r.borrow().clone())
-        .expect("a validated report");
-    assert_eq!(
-        shared, report,
-        "URL carries the validated report bit-for-bit"
-    );
-    // Supplemental: the refined side is not something f32 could represent.
-    assert_ne!(
-        shared.side as f32 as f64, shared.side,
-        "URL keeps the refined f64 side"
-    );
-}
-
-/// The URL's code decodes to the arrangement now in the physics (which holds
-/// the refined packing in f32, hence the tolerance).
-fn assert_url_matches_scene(code: &str, physics: &Physics) {
-    let shared = share::decode(code, 2).unwrap();
-    let scene = physics.arrangement();
-    assert!(
-        (shared.side - scene.side).abs() < 1e-6,
-        "{} vs {}",
-        shared.side,
-        scene.side
-    );
-    for (a, b) in shared.squares.iter().zip(&scene.squares) {
-        for (x, y) in [(a.cx, b.cx), (a.cy, b.cy), (a.theta, b.theta)] {
-            assert!((x - y).abs() < 1e-6, "URL {a:?} vs scene {b:?}");
+/// Settling and sharing never touch the address bar, whether the page was
+/// opened fresh or from a solution link: Share copies the link instead.
+#[wasm_bindgen_test]
+async fn settling_and_sharing_leave_the_address_bar_alone() {
+    let _gpu = NoWebGpu::install();
+    let _api = ShareApi::install(&[OK]);
+    let _clipboard = Clipboard::install(false);
+    let solution = format!("s={}", share::encode(&two_squares()));
+    for query in ["", solution.as_str()] {
+        let (handle, root, _) = mount_at(query).await;
+        let href = web_sys::window().unwrap().location().href().unwrap();
+        let entries = history_length();
+        if query.is_empty() {
+            // A fresh grid is already calm, so it measures itself after the
+            // settle window.
+            wait_for_report(8000).await;
         }
+        // The manual measure must produce its own report.
+        TEST_REPORT.with(|r| r.take());
+        submit_button(&root, "Settle & measure").click();
+        sleep(300).await;
+        wait_for_report(3000).await;
+        submit_button(&root, "Share").click();
+        sleep(30).await;
+        wait_share(&root).await;
+        let status = text(&root, ".pg-share-status");
+        assert!(status.contains("Snapshot link copied"), "{query}: {status}");
+        assert_eq!(
+            web_sys::window().unwrap().location().href().unwrap(),
+            href,
+            "the address bar is unchanged ({query})"
+        );
+        assert_eq!(history_length(), entries, "no history entries ({query})");
+        handle.destroy();
+        root.remove();
     }
-}
-
-#[wasm_bindgen_test]
-async fn auto_settle_writes_the_solution_into_the_url() {
-    let _gpu = NoWebGpu::install();
-    let entries = history_length();
-    let (handle, root, physics) = mount().await;
-    // A fresh grid is already calm, so auto-measure runs after the settle window.
-    let code = wait_for_share_code(8000).await;
-    assert!(physics.paused(), "settling measured the scene");
-    assert_url_matches_scene(&code, &physics);
-    assert_validated_f64(&code, &root);
-    assert_eq!(
-        history_length(),
-        entries,
-        "replaceState adds no history entry"
-    );
-    handle.destroy();
-    root.remove();
-}
-
-#[wasm_bindgen_test]
-async fn manual_measure_writes_the_solution_into_the_url() {
-    let _gpu = NoWebGpu::install();
-    let entries = history_length();
-    let (handle, root, physics) = mount().await;
-    let buttons = root.query_selector_all(".pg-submit button").unwrap();
-    let measure: HtmlElement = (0..buttons.length())
-        .filter_map(|i| buttons.item(i))
-        .filter_map(|b| b.dyn_into::<HtmlElement>().ok())
-        .find(|b| b.text_content().unwrap_or_default() == "Settle & measure")
-        .unwrap();
-    measure.click();
-    // Well inside the ~2.5 s auto-settle window, so this is the manual measure.
-    let code = wait_for_share_code(1500).await;
-    assert_url_matches_scene(&code, &physics);
-    assert_validated_f64(&code, &root);
-    assert_eq!(
-        history_length(),
-        entries,
-        "replaceState adds no history entry"
-    );
-    handle.destroy();
-    root.remove();
 }
 
 fn turn_button(root: &Element, label: &str) -> HtmlElement {
