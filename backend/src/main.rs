@@ -59,6 +59,8 @@ pub fn build_app(state: Arc<AppState>) -> Router {
     Router::new()
         .route(
             "/api/shares",
+            // Room for the longest share code (n = 100 with every glue,
+            // about 37.6 KB) plus its JSON framing.
             post(handlers::shares::create).layer(axum::extract::DefaultBodyLimit::max(
                 shared::share::MAX_LEN + 1024,
             )),
@@ -887,7 +889,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn the_largest_share_code_is_stored_and_redirected_but_too_long_to_open() {
+    async fn the_largest_share_code_round_trips_through_a_real_server() {
         use crate::schema::solution_shares as shares;
         use diesel::prelude::*;
         use shared::glue::{Feature, Glue, MAX_GLUES};
@@ -932,6 +934,7 @@ mod tests {
             .collect();
         let code = shared::share::encode(&arr, &glues);
         assert_eq!(code.len(), shared::share::MAX_LEN);
+        assert_eq!(code.len(), 37_598);
         let body = serde_json::to_string(&shared::CreateShare {
             n: 100,
             code: code.clone(),
@@ -977,28 +980,33 @@ mod tests {
         assert_eq!(
             shared::share::decode(location.split("?s=").nth(1).unwrap(), 100).unwrap(),
             shared::share::Snapshot {
-                arrangement: arr.clone(),
-                glues: glues.clone(),
+                arrangement: arr,
+                glues
             }
         );
         // hyper rejects request targets over 65,534 bytes (`MAX_URI_LEN`, not
-        // configurable), so the redirect target of a code this long can't be
-        // opened here. At n = 100 the longest that opens has 3,793 glues.
-        let (status, head, _) =
-            raw_http(addr, get(location.strip_prefix(TEST_URL).unwrap().into())).await;
-        assert_eq!(status, 414, "{head}");
-        let page = |glues: &[Glue]| {
-            get(format!(
-                "/play/100?s={}",
-                shared::share::encode(&arr, glues)
-            ))
-        };
-        let (status, head, _) = raw_http(addr, page(&glues[..3794])).await;
-        assert_eq!(status, 414, "{head}");
-        let (status, head, html) = raw_http(addr, page(&glues[..3793])).await;
+        // configurable); both URLs a shared link leads to must fit.
+        let page = location.strip_prefix(TEST_URL).unwrap();
+        let preview = format!("/api/preview.png?n=100&s={code}");
+        assert!(page.len().max(preview.len()) <= 65_534);
+        let (status, head, html) = raw_http(addr, get(page.into())).await;
         assert_eq!(status, 200, "{head}");
-        assert!(String::from_utf8(html)
-            .unwrap()
-            .contains("/api/preview.png?n=100&amp;s="));
+        let html = String::from_utf8(html).unwrap();
+        for tag in [
+            format!(r#"<meta property="og:url" content="{TEST_URL}{page}">"#),
+            format!(
+                r#"<meta property="og:image" content="{TEST_URL}/api/preview.png?n=100&amp;s={code}">"#
+            ),
+        ] {
+            assert!(html.contains(&tag), "missing {tag}");
+        }
+        let (status, head, png) = raw_http(addr, get(preview)).await;
+        assert_eq!(status, 200, "{head}");
+        assert!(
+            head.to_ascii_lowercase()
+                .contains("content-type: image/png"),
+            "{head}"
+        );
+        assert!(png.starts_with(b"\x89PNG\r\n\x1a\n"));
     }
 }
