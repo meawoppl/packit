@@ -297,13 +297,7 @@ async fn glue_survives_settle_and_measure() {
     let glued = physics.glues();
     assert_eq!(glued.len(), 1);
 
-    let buttons = root.query_selector_all(".pg-submit button").unwrap();
-    let measure: HtmlElement = (0..buttons.length())
-        .filter_map(|i| buttons.item(i))
-        .filter_map(|b| b.dyn_into::<HtmlElement>().ok())
-        .find(|b| b.text_content().unwrap_or_default() == "Settle & measure")
-        .unwrap();
-    measure.click();
+    click_button(&root, ".pg-submit", "Settle");
     wait_for_report(3000).await;
     assert_eq!(
         physics.glues(),
@@ -980,7 +974,7 @@ async fn share_button_copies_a_short_link_for_the_captured_precise_snapshot() {
     let api = ShareApi::install(&[OK]);
     let clipboard = Clipboard::install(false);
     let (handle, root, _) = mount().await;
-    submit_button(&root, "Settle & measure").click();
+    submit_button(&root, "Settle").click();
     for _ in 0..100 {
         if TEST_REPORT.with(|r| r.borrow().is_some()) {
             break;
@@ -1010,19 +1004,14 @@ async fn share_button_copies_a_short_link_for_the_captured_precise_snapshot() {
 }
 
 #[wasm_bindgen_test]
-async fn sharing_during_relaxation_keeps_the_run_and_its_snapshot() {
+async fn sharing_during_a_settle_keeps_it_and_its_snapshot() {
     let _gpu = NoWebGpu::install();
     let api = ShareApi::install(&[OK]);
     let clipboard = Clipboard::install(false);
     let (handle, root, physics) = mount_at(&format!("s={}", share::encode(&cramped()))).await;
-    submit_button(&root, "Settle & measure").click();
-    for _ in 0..50 {
-        if physics.params().band_tension == 20.0 {
-            break;
-        }
-        sleep(20).await;
-    }
-    assert_eq!(physics.params().band_tension, 20.0);
+    submit_button(&root, "Settle").click();
+    sleep(30).await;
+    assert_eq!(physics.settle_status().phase, SettlePhase::Running);
     let snapshot = physics.arrangement();
     submit_button(&root, "Share").click();
     sleep(30).await;
@@ -1031,12 +1020,12 @@ async fn sharing_during_relaxation_keeps_the_run_and_its_snapshot() {
     assert_eq!(share::decode(&body.code, body.n).unwrap(), snapshot);
     assert_eq!(clipboard.values.borrow().len(), 1);
     assert_eq!(
-        physics.params().band_tension,
-        20.0,
-        "sharing leaves the relax in control"
+        physics.settle_status().phase,
+        SettlePhase::Running,
+        "sharing leaves the settle in control"
     );
     assert!(!physics.paused());
-    assert!(text(&root, ".pg-status").starts_with("Relaxing the box"));
+    assert!(text(&root, ".pg-status").starts_with("Settling"));
     handle.destroy();
     root.remove();
 }
@@ -1370,51 +1359,34 @@ async fn squeeze_down_relaxes_between_squeezes_and_stop_keeps_glue() {
     root.remove();
 }
 
-/// Settling a cramped scene relaxes the box first, so the measured packing
-/// is where the squares already are instead of a pop to the solver's result.
+/// Settling a cramped scene opens the box until the squares clear, so the
+/// measured packing is where the squares already are instead of a pop to
+/// the solver's result.
 #[wasm_bindgen_test]
-async fn settling_relaxes_the_box_instead_of_popping() {
+async fn settling_opens_the_box_instead_of_popping() {
     let _gpu = NoWebGpu::install();
-    // Two squares overlapping by 0.2 in a box they need 2.0 to fit.
-    let sq = |cx| shared::Placement {
-        cx,
-        cy: 0.5,
-        theta: 0.0,
-    };
-    let cramped = Arrangement {
-        n: 2,
-        side: 1.8,
-        squares: vec![sq(0.5), sq(1.3)],
-    };
-    let (handle, root, physics) = mount_at(&format!("s={}", share::encode(&cramped))).await;
-    let buttons = root.query_selector_all(".pg-submit button").unwrap();
-    let measure: HtmlElement = (0..buttons.length())
-        .filter_map(|i| buttons.item(i))
-        .filter_map(|b| b.dyn_into::<HtmlElement>().ok())
-        .find(|b| b.text_content().unwrap_or_default() == "Settle & measure")
-        .unwrap();
-    measure.click();
+    let (handle, root, physics) = mount_at(&format!("s={}", share::encode(&cramped()))).await;
+    click_button(&root, ".pg-submit", "Settle");
     sleep(30).await;
     let status = text(&root, ".pg-status");
-    assert!(status.starts_with("Relaxing the box"), "{status}");
+    assert!(status.starts_with("Settling"), "{status}");
+    assert_eq!(physics.params().band_tension, 0.0, "no band while settling");
 
     // The last live frame before the measurement lands. Refine loads its
     // result and records it in the same message, so a frame sampled with
-    // no report yet is always the relaxed scene.
+    // no report yet is always the settled scene.
     let mut relaxed = physics.arrangement();
-    let mut band_relaxed = false;
     for _ in 0..600 {
         if TEST_REPORT.with(|r| r.borrow().is_some()) {
             break;
         }
-        band_relaxed |= physics.params().band_tension > 0.0;
         relaxed = physics.arrangement();
         sleep(20).await;
     }
     let report = TEST_REPORT
         .with(|r| r.borrow().clone())
-        .expect("the relaxed scene measured valid");
-    assert!(band_relaxed, "the band relaxed before measuring");
+        .expect("the settled scene measured valid");
+    assert!(physics.frame_shift() > 0.0, "the box opened while settling");
     let left = shared::geometry::worst_violation(&relaxed);
     assert!(left <= 2e-3, "relaxed until clear, {left} left");
     let pop = relaxed
@@ -1436,10 +1408,10 @@ async fn settling_relaxes_the_box_instead_of_popping() {
     root.remove();
 }
 
-/// A jam the band can't relax is reported rather than measured, since
+/// A jam that can't settle is reported rather than measured, since
 /// measuring it would pop the squares apart.
 #[wasm_bindgen_test]
-async fn a_glued_jam_that_cannot_relax_is_reported_not_popped() {
+async fn a_glued_jam_that_cannot_settle_is_reported_not_popped() {
     let _gpu = NoWebGpu::install();
     let (handle, root, physics) = mount().await;
     // Both side midpoints of square 1 glued to square 2's: only a full
@@ -1465,21 +1437,17 @@ async fn a_glued_jam_that_cannot_relax_is_reported_not_popped() {
     let jammed = shared::geometry::worst_violation(&physics.arrangement());
     assert!(jammed > 2e-3, "the glue holds an overlap: {jammed}");
 
-    let buttons = root.query_selector_all(".pg-submit button").unwrap();
-    let measure: HtmlElement = (0..buttons.length())
-        .filter_map(|i| buttons.item(i))
-        .filter_map(|b| b.dyn_into::<HtmlElement>().ok())
-        .find(|b| b.text_content().unwrap_or_default() == "Settle & measure")
-        .unwrap();
-    measure.click();
-    for _ in 0..120 {
-        if text(&root, ".pg-status").starts_with("Couldn't relax") {
+    click_button(&root, ".pg-submit", "Settle");
+    // The settle gives up after SETTLE_LIMIT seconds of simulated time.
+    for _ in 0..300 {
+        if text(&root, ".pg-status").starts_with("Couldn't settle") {
             break;
         }
         sleep(100).await;
     }
     let status = text(&root, ".pg-status");
-    assert!(status.starts_with("Couldn't relax"), "{status}");
+    assert!(status.starts_with("Couldn't settle"), "{status}");
+    assert_eq!(physics.settle_status().phase, SettlePhase::Blocked);
     assert!(
         TEST_REPORT.with(|r| r.borrow().is_none()),
         "no measurement loaded over the jam"
@@ -1516,18 +1484,19 @@ fn click_button(root: &Element, scope: &str, label: &str) {
 }
 
 #[wasm_bindgen_test]
-async fn starting_a_run_takes_the_band_from_a_relax() {
+async fn starting_a_run_cancels_a_settle() {
     let _gpu = NoWebGpu::install();
     let (handle, root, physics) = mount_at(&format!("s={}", share::encode(&cramped()))).await;
-    click_button(&root, ".pg-submit", "Settle & measure");
+    click_button(&root, ".pg-submit", "Settle");
     sleep(100).await;
     let status = text(&root, ".pg-status");
-    assert!(status.starts_with("Relaxing the box"), "{status}");
+    assert!(status.starts_with("Settling"), "{status}");
 
     force_button(&root, "Anneal").click();
     sleep(50).await;
     let status = text(&root, ".pg-status");
     assert!(status.starts_with("Annealing"), "{status}");
+    assert_eq!(physics.settle_status().phase, SettlePhase::Idle);
     for _ in 0..40 {
         sleep(50).await;
         assert_eq!(physics.params().band_tension, 30.0, "the run owns the band");
@@ -1541,10 +1510,10 @@ async fn starting_a_run_takes_the_band_from_a_relax() {
     root.remove();
 }
 
-/// A submission waits on its measurement; cancelling the relax before it
+/// A submission waits on its measurement; cancelling the settle before it
 /// drops the submission, so a later settle can't submit another scene.
 #[wasm_bindgen_test]
-async fn cancelling_a_relax_drops_its_pending_submit() {
+async fn cancelling_a_settle_drops_its_pending_submit() {
     let _gpu = NoWebGpu::install();
     let (handle, root, physics) = mount_at(&format!("s={}", share::encode(&cramped()))).await;
     let name: HtmlInputElement = root
@@ -1559,17 +1528,17 @@ async fn cancelling_a_relax_drops_its_pending_submit() {
     click_button(&root, ".pg-submit", "Submit packing");
     sleep(100).await;
     let status = text(&root, ".pg-status");
-    assert!(status.starts_with("Relaxing the box"), "{status}");
+    assert!(status.starts_with("Settling"), "{status}");
 
     force_button(&root, "Pause").click();
     sleep(50).await;
     assert_eq!(
-        physics.params().band_tension,
-        0.0,
-        "cancel releases the band"
+        physics.settle_status().phase,
+        SettlePhase::Idle,
+        "pausing cancels the settle"
     );
 
-    click_button(&root, ".pg-submit", "Settle & measure");
+    click_button(&root, ".pg-submit", "Settle");
     for _ in 0..600 {
         if TEST_REPORT.with(|r| r.borrow().is_some()) {
             break;
@@ -1588,10 +1557,10 @@ async fn cancelling_a_relax_drops_its_pending_submit() {
     root.remove();
 }
 
-/// Submitting while a relax is already running rides along with it: the
-/// relax measures once clear and then submits.
+/// Submitting while a settle is already running rides along with it: the
+/// settle measures once clear and then submits.
 #[wasm_bindgen_test]
-async fn submitting_during_a_relax_submits_when_it_measures() {
+async fn submitting_during_a_settle_submits_when_it_measures() {
     let _gpu = NoWebGpu::install();
     let (handle, root, _physics) = mount_at(&format!("s={}", share::encode(&cramped()))).await;
     let name: HtmlInputElement = root
@@ -1602,17 +1571,17 @@ async fn submitting_during_a_relax_submits_when_it_measures() {
         .unwrap();
     name.set_value("relax-test");
     name.dispatch_event(&Event::new("input").unwrap()).unwrap();
-    click_button(&root, ".pg-submit", "Settle & measure");
+    click_button(&root, ".pg-submit", "Settle");
     sleep(100).await;
     let status = text(&root, ".pg-status");
-    assert!(status.starts_with("Relaxing the box"), "{status}");
+    assert!(status.starts_with("Settling"), "{status}");
 
     click_button(&root, ".pg-submit", "Submit packing");
     sleep(50).await;
     let status = text(&root, ".pg-status");
     assert!(
-        status.starts_with("Relaxing the box"),
-        "the relax continues: {status}"
+        status.starts_with("Settling"),
+        "the settle continues: {status}"
     );
     for _ in 0..600 {
         if TEST_REPORT.with(|r| r.borrow().is_some()) {

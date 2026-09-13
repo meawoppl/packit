@@ -13,8 +13,8 @@ use crate::{api, Route};
 use canvas::Scene;
 use gloo_events::{EventListener, EventListenerOptions};
 use gloo_render::{request_animation_frame, AnimationFrame};
-use physics::{Backend, Feature, Glue, Physics};
-use shared::{geometry, share, Arrangement, KnownRecord, ScoreEntry, SubmitScore, MAX_N};
+use physics::{Backend, Feature, Glue, Physics, SettlePhase, SETTLE_GLUE_ERROR};
+use shared::{share, Arrangement, KnownRecord, ScoreEntry, SubmitScore, MAX_N};
 use solver::SolveReport;
 use std::cell::Cell;
 use std::rc::Rc;
@@ -37,7 +37,7 @@ thread_local! {
 
 const STEP_HZ: f64 = 120.0;
 const MAX_SUBSTEPS: u32 = 6;
-/// Frames of near-zero motion before "Settle & measure" runs by itself.
+/// Frames of near-zero motion before "Settle" runs by itself.
 const SETTLE_FRAMES: u32 = 150;
 const NUDGE: f32 = 0.025;
 const ROTATE_STEP: f32 = 0.04;
@@ -46,18 +46,20 @@ const TOUCH_TURN: f32 = 0.12;
 /// How far the effective size target may lead the actual container at full
 /// band tension (100); lower tension shortens the reach proportionally.
 const MAX_SCRUB: f64 = 1.0;
-/// Before measuring an overlapping scene, the band's target grows at this
-/// rate (side units per second) until nothing overlaps, so the measurement
-/// doesn't pop the squares apart.
-const RELAX_RATE: f64 = 0.1;
-const RELAX_TENSION: f32 = 20.0;
-/// Overlap or wall protrusion small enough to measure: well under a pixel.
-const RELAX_TOL: f64 = 2e-3;
-/// Frames the scene must stay clear before measuring.
-const RELAX_CLEAR_FRAMES: u32 = 8;
-/// Give up relaxing after this long. Glue or a jam can hold an overlap the
-/// band can't clear, and measuring it then would pop the squares apart.
-const RELAX_MAX_SECS: f64 = 8.0;
+/// Most the solver may move any square (or change the side) when it
+/// certifies a settled packing. More than this would visibly pop the
+/// squares, so the packing is reported unresolved instead of loaded.
+const CERTIFY_MOVE: f64 = 0.05;
+
+/// Largest distance any square's center moves, or the side changes, between
+/// two arrangements of the same squares.
+fn displacement(a: &Arrangement, b: &Arrangement) -> f64 {
+    a.squares
+        .iter()
+        .zip(&b.squares)
+        .map(|(p, q)| (p.cx - q.cx).hypot(p.cy - q.cy))
+        .fold((a.side - b.side).abs(), f64::max)
+}
 
 /// The band's size target for a requested `desired` side: it can only run
 /// ahead of the actual `side` as far as the band pressure reaches.
@@ -115,14 +117,6 @@ pub enum Msg {
 }
 
 /// The scheduled runs that share one slot: shaking anneal or gentle squeeze.
-/// The band relaxing outward before a measurement.
-struct Relax {
-    start_side: f64,
-    elapsed: f64,
-    /// Consecutive frames with nothing overlapping.
-    clear_frames: u32,
-}
-
 #[derive(Clone, Copy, PartialEq)]
 enum RunKind {
     Anneal,
@@ -195,8 +189,8 @@ pub struct Game {
     glue_tool: Option<Option<Feature>>,
     /// Whether closing the glue tool resumes the simulation it paused.
     glue_resume: bool,
-    /// Set while the band relaxes out of overlap before a measurement.
-    relax: Option<Relax>,
+    /// Set while this screen's Settle runs in the physics.
+    settling: bool,
 }
 
 fn initial_side(n: u32) -> f64 {
@@ -253,6 +247,9 @@ impl Component for Game {
         let n = ctx.props().n;
         let side = initial_side(n);
         let physics = Physics::new(n, side);
+        // Pushing hard against the walls grows the box around its center,
+        // which the canvas keeps fixed on screen.
+        physics.set_drag_expansion(true);
         #[cfg(all(test, target_arch = "wasm32"))]
         TEST_PHYSICS.with(|p| p.replace(Some(physics.clone())));
         let gpu = physics.clone();
@@ -303,7 +300,7 @@ impl Component for Game {
             taps: tap::DoubleTap::default(),
             glue_tool: None,
             glue_resume: false,
-            relax: None,
+            settling: false,
         };
         // A shared packing opens paused and unvalidated, even if it was
         // validated when shared; it has to be measured again here.
@@ -319,7 +316,7 @@ impl Component for Game {
                     game.physics.set_paused(true);
                     game.view_side.set(game.physics.side());
                     game.set_status(
-                        "Shared packing loaded, not yet validated. Settle & measure to check it.",
+                        "Shared packing loaded, not yet validated. Settle to check it.",
                         false,
                     );
                 }
@@ -402,8 +399,8 @@ impl Component for Game {
                     .last_time
                     .map_or(0.0, |last| ((time - last) / 1000.0).clamp(0.0, 0.05));
                 self.last_time = Some(time);
-                self.tick_anneal(ctx, elapsed);
-                self.tick_relax(ctx, elapsed);
+                self.tick_anneal(elapsed);
+                self.tick_settle(ctx);
                 if self.physics.paused() {
                     self.accumulator = 0.0;
                 } else {
@@ -671,7 +668,7 @@ impl Component for Game {
             Msg::SqueezeDown => self.toggle_run(n, RunKind::SqueezeDown),
             Msg::Measure => {
                 self.stop_anneal();
-                self.settle(ctx)
+                self.settle()
             }
             Msg::Refine => {
                 if self.stepping {
@@ -705,9 +702,9 @@ impl Component for Game {
                     ),
                     None => {
                         self.submit_after_measure = true;
-                        // A relax in progress measures (and so submits) once
-                        // it clears; restarting it would drop this request.
-                        if self.relax.is_none() {
+                        // A Settle in progress measures (and so submits) once
+                        // it settles; restarting it would drop this request.
+                        if !self.settling {
                             ctx.link().send_message(Msg::Measure);
                         }
                     }
@@ -904,7 +901,7 @@ impl Component for Game {
                         <details class="pg-details">
                             <summary>{ "How to play & what the score means" }</summary>
                             <p>{ "Each square has side length 1. Make the container smaller while keeping every square inside and avoiding overlap. Dragging and rotating resume physics, push neighbors, and resist blocked motion. Lower the container target with outer band tension enabled to squeeze the packing. Turn on forces, or use Q/E to rotate a selected square. Arrow keys nudge it. Space pauses." }</p>
-                            <p>{ "The simulation has springy contacts. “Settle & measure” first relaxes the box until nothing overlaps, then pauses the scene and refines its contacts with a numerical polynomial solver. Only an independently validated arrangement can be submitted. A best-known packing is an upper bound, not necessarily a proven optimum. A numerical match is not an exact proof." }</p>
+                            <p>{ "The simulation has springy contacts. “Settle” lets the contacts resolve, opening the box only while squares still overlap, then pauses the scene and refines its contacts with a numerical polynomial solver. Only an independently validated arrangement can be submitted. A best-known packing is an upper bound, not necessarily a proven optimum. A numerical match is not an exact proof." }</p>
                             <p>
                                 <a href="https://kingbird.myphotos.cc/packing/squares_in_squares.html" target="_blank" rel="noopener">
                                     { "Explore the research records ↗" }
@@ -921,7 +918,7 @@ impl Component for Game {
                             <div class="pg-help">{ &r.record }</div>
                             <div class="pg-actions">
                                 <button class="pg-primary" disabled={self.busy} onclick={link.callback(|_| Msg::Measure)}>
-                                    { "Settle & measure" }
+                                    { if self.settling { "Settling…" } else { "Settle" } }
                                 </button>
                                 <button disabled={self.sharing} onclick={link.callback(|_| Msg::Share)}>{ if self.sharing { "Sharing…" } else { "Share" } }</button>
                             </div>
@@ -1026,7 +1023,7 @@ impl Component for Game {
 
 impl Game {
     /// Advance an annealing run by `dt` seconds and apply its commands.
-    fn tick_anneal(&mut self, ctx: &Context<Self>, dt: f64) {
+    fn tick_anneal(&mut self, dt: f64) {
         let Some(anneal) = self.anneal.as_mut() else {
             return;
         };
@@ -1048,11 +1045,11 @@ impl Game {
                 }
                 Command::Measure => {
                     // Release the band so it stops compressing once the run
-                    // ends, then relax out of any overlap and measure.
+                    // ends, then settle and measure.
                     let mut params = self.physics.params();
                     params.band_tension = 0.0;
                     self.physics.set_params(params);
-                    self.settle(ctx);
+                    self.settle();
                 }
             }
         }
@@ -1061,8 +1058,8 @@ impl Game {
     /// Start a scheduled run of `kind`, or stop it if it is the active one.
     /// Clicking the other run's button switches runs.
     fn toggle_run(&mut self, n: u32, kind: RunKind) -> bool {
-        // A run takes the band over from a relax in progress.
-        self.stop_relax();
+        // A run takes over from a Settle in progress.
+        self.stop_settle();
         if self.anneal.is_some() {
             let same = self.run_kind == kind;
             self.stop_anneal();
@@ -1139,76 +1136,70 @@ impl Game {
             };
             self.set_status(stopped, false);
         }
-        self.stop_relax();
+        self.stop_settle();
     }
 
-    /// Cancel a relax in progress and release the band. A submission waiting
-    /// on its measurement is dropped too, so a later settle of a different
-    /// scene can't submit it.
-    fn stop_relax(&mut self) {
-        if self.relax.take().is_some() {
-            let mut params = self.physics.params();
-            params.band_tension = 0.0;
-            self.physics.set_params(params);
+    /// Cancel a Settle in progress. A submission waiting on its measurement
+    /// is dropped too, so a later settle of a different scene can't submit it.
+    fn stop_settle(&mut self) {
+        if std::mem::take(&mut self.settling) {
+            self.physics.cancel_settle();
             self.submit_after_measure = false;
-            self.set_status("Relaxing stopped. Settle & measure when ready.", false);
+            self.set_status("Settle stopped. Press Settle when ready.", false);
         }
     }
 
-    /// Settle before measuring. If anything overlaps, relax the band outward
-    /// until nothing does, so the measured packing doesn't pop the squares
-    /// apart; a clear scene is measured right away.
-    fn settle(&mut self, ctx: &Context<Self>) -> bool {
+    /// Settle: the physics lets the constraints resolve (opening the box
+    /// only while squares still overlap), then the settled pose is measured.
+    fn settle(&mut self) -> bool {
         if self.busy {
             return false;
         }
-        if geometry::worst_violation(&self.physics.arrangement()) <= RELAX_TOL {
-            return self.begin_measure(ctx);
-        }
-        self.relax = Some(Relax {
-            start_side: self.physics.side(),
-            elapsed: 0.0,
-            clear_frames: 0,
-        });
+        // The physics drops mouse and rotation input; end the drag here too.
+        self.selected = None;
+        self.dragging = false;
+        self.rotating = false;
+        self.last_pointer = None;
         self.desired_side = None;
-        self.set_pause(false);
-        self.set_status("Relaxing the box until nothing overlaps…", false);
+        self.physics.begin_settle();
+        self.settling = true;
+        self.invalidate();
+        self.set_status("Settling…", false);
         true
     }
 
-    /// Grow the band's target while relaxing, and measure once the scene
-    /// has stayed clear for a few frames (or the relax runs out of time).
-    fn tick_relax(&mut self, ctx: &Context<Self>, dt: f64) {
-        let Some(relax) = self.relax.as_mut() else {
+    /// Follow the physics Settle each frame: measure once it settles, and
+    /// explain when it can't.
+    fn tick_settle(&mut self, ctx: &Context<Self>) {
+        if !self.settling {
             return;
-        };
-        relax.elapsed += dt;
-        let clear = geometry::worst_violation(&self.physics.arrangement()) <= RELAX_TOL;
-        relax.clear_frames = if clear { relax.clear_frames + 1 } else { 0 };
-        let mut params = self.physics.params();
-        let clear = relax.clear_frames >= RELAX_CLEAR_FRAMES;
-        if clear || relax.elapsed >= RELAX_MAX_SECS {
-            self.relax = None;
-            // Zero tension holds the relaxed size.
-            params.band_tension = 0.0;
-            self.physics.set_params(params);
-            if clear {
+        }
+        let status = self.physics.settle_status();
+        match status.phase {
+            SettlePhase::Running => {}
+            // Direct interaction cancelled it.
+            SettlePhase::Idle => self.settling = false,
+            SettlePhase::Settled => {
+                self.settling = false;
                 self.begin_measure(ctx);
-            } else {
-                // Measuring a scene that still overlaps would pop the
-                // squares apart, which is what relaxing is meant to avoid.
+            }
+            SettlePhase::Blocked | SettlePhase::TimedOut => {
+                self.settling = false;
                 self.auto_measured = true;
                 self.submit_after_measure = false;
+                let why = if status.max_glue_error > SETTLE_GLUE_ERROR {
+                    "some glue can't be satisfied"
+                } else {
+                    "squares still overlap"
+                };
                 self.set_status(
-                    "Couldn't relax out of the overlap; glue or a jam is holding it. Loosen it, then Settle & measure.",
+                    &format!(
+                        "Couldn't settle: {why}. Adjust the packing, then press Settle again."
+                    ),
                     true,
                 );
             }
-            return;
         }
-        params.band_tension = RELAX_TENSION;
-        params.target_side = relax.start_side + RELAX_RATE * relax.elapsed;
-        self.physics.set_params(params);
     }
 
     /// Pause and refine the current scene, once the status has painted.
@@ -1257,7 +1248,9 @@ impl Game {
         } else {
             self.physics.side()
         };
-        if extent > self.view_side.get() {
+        // Hold the scale during a drag: a refit would move the pointer's
+        // world position outward and the box would chase it.
+        if extent > self.view_side.get() && !self.dragging {
             self.view_side
                 .set(self.view_side.get() + (extent - self.view_side.get()) * 0.12);
         }
@@ -1266,6 +1259,10 @@ impl Game {
             || self.rotating
             || (self.selected.is_some() && self.physics.motion() > 0.002 * bodies.len() as f32);
         let glues = self.physics.glues();
+        let violations = self.physics.violations();
+        let now_ms = web_sys::window()
+            .and_then(|w| w.performance())
+            .map_or(0.0, |p| p.now());
         canvas::draw(
             &canvas,
             &Scene {
@@ -1281,6 +1278,8 @@ impl Game {
                 mouse_force: self.physics.mouse_force(),
                 selected: self.selected,
                 tether: self.dragging.then_some(self.mouse),
+                violations: &violations,
+                now_ms,
             },
         );
     }
@@ -1292,7 +1291,7 @@ impl Game {
             || self.busy
             || self.auto_measured
             || self.anneal.is_some()
-            || self.relax.is_some()
+            || self.settling
         {
             return;
         }
@@ -1512,7 +1511,7 @@ impl Game {
         self.physics.load(a);
         self.view_side.set(self.physics.side());
         self.invalidate();
-        self.set_status("Imported. Settle & measure to validate.", false);
+        self.set_status("Imported. Settle to validate.", false);
     }
 
     fn refine(&mut self, ctx: &Context<Self>) {
@@ -1525,7 +1524,9 @@ impl Game {
                     report.lower_bound,
                     100.0 * (side / report.lower_bound - 1.0)
                 );
-                if report.valid {
+                let moved = displacement(&self.physics.arrangement(), &report.arrangement);
+                let certified = report.valid && moved <= CERTIFY_MOVE;
+                if certified {
                     #[cfg(all(test, target_arch = "wasm32"))]
                     TEST_REPORT.with(|r| r.replace(Some(report.arrangement.clone())));
                     // Settle at the measured packing; don't resume squeezing.
@@ -1558,6 +1559,15 @@ impl Game {
                         let player = self.player.trim().to_string();
                         self.send_submit(ctx, player, report.arrangement.clone());
                     }
+                } else if report.valid {
+                    // Loading the certified packing would visibly pop the
+                    // squares away from where they settled; keep the pose.
+                    self.set_status(
+                        &format!(
+                            "Unresolved: certifying would move squares by {moved:.3}. Keep adjusting, then press Settle again."
+                        ),
+                        true,
+                    );
                 } else if submit {
                     self.set_status(
                         "This packing still has overlaps. Give it a little more room.",
@@ -1566,7 +1576,10 @@ impl Game {
                 } else {
                     self.set_status(&report.status, true);
                 }
-                self.last_report = Some(report);
+                // An uncertified valid report isn't kept, so Submit measures again.
+                if certified || !report.valid {
+                    self.last_report = Some(report);
+                }
             }
             Err(e) => self.set_status(&e, true),
         }
@@ -1590,6 +1603,22 @@ impl Game {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn displacement_is_the_largest_move_or_side_change() {
+        let sq = |cx, cy| shared::Placement { cx, cy, theta: 0.0 };
+        let a = Arrangement {
+            n: 2,
+            side: 2.0,
+            squares: vec![sq(0.5, 0.5), sq(1.5, 0.5)],
+        };
+        assert_eq!(displacement(&a, &a), 0.0);
+        let mut b = a.clone();
+        b.squares[1] = sq(1.53, 0.54);
+        assert!((displacement(&a, &b) - 0.05).abs() < 1e-12);
+        b.side = 2.2;
+        assert!((displacement(&a, &b) - 0.2).abs() < 1e-12);
+    }
 
     #[test]
     fn scrub_reach_scales_with_band_pressure() {

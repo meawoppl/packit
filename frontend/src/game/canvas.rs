@@ -1,13 +1,19 @@
 //! Canvas rendering, pointer mapping, and hit testing for the play screen.
 
 use super::glue::{self, Anchor};
-use physics::{Body, Feature, Glue};
+use physics::{Body, Feature, Glue, ViolationReport};
 use wasm_bindgen::{JsCast, JsValue};
 use web_sys::{CanvasRenderingContext2d, HtmlCanvasElement};
 
 /// Margin around the playfield as a fraction of the canvas width.
 const PAD_FRACTION: f64 = 0.045;
 const PALETTE: [&str; 5] = ["#c7f36b", "#7dd5ce", "#b2a0ef", "#f0b578", "#8dabf2"];
+const PULSE: &str = "#ff4d5e";
+/// Violations shallower than this are springy contact, not worth flagging.
+const PULSE_DEPTH: f64 = 2e-3;
+/// Violations this deep pulse at full strength.
+const PULSE_FULL: f64 = 0.05;
+const PULSE_PERIOD_MS: f64 = 1600.0;
 
 /// Everything the renderer needs for one frame.
 pub struct Scene<'a> {
@@ -28,6 +34,21 @@ pub struct Scene<'a> {
     pub glues: &'a [Glue],
     /// While the glue tool is open: the first pick, if chosen yet.
     pub glue_tool: Option<Option<Feature>>,
+    /// Overlaps and unmet glue, pulsed in red on squares and walls.
+    pub violations: &'a ViolationReport,
+    /// Animation clock for the pulse, in milliseconds.
+    pub now_ms: f64,
+}
+
+/// Opacity of the red pulse over a violation `depth` deep at `now_ms`, or
+/// `None` when it's too shallow to show. Deeper violations pulse stronger.
+fn pulse_alpha(depth: f64, now_ms: f64) -> Option<f64> {
+    if depth < PULSE_DEPTH {
+        return None;
+    }
+    let strength = 0.4 + 0.6 * (depth / PULSE_FULL).min(1.0);
+    let wave = 0.5 - 0.5 * (std::f64::consts::TAU * now_ms / PULSE_PERIOD_MS).cos();
+    Some(strength * (0.25 + 0.35 * wave))
 }
 
 /// Map a client-space pointer position to world coordinates (origin
@@ -162,6 +183,39 @@ pub fn draw(canvas: &HtmlCanvasElement, scene: &Scene) {
         ctx.set_text_baseline("middle");
         let _ = ctx.fill_text(&(i + 1).to_string(), sx(b.x as f64), sy(b.y as f64));
     }
+
+    ctx.save();
+    ctx.set_fill_style_str(PULSE);
+    ctx.set_stroke_style_str(PULSE);
+    for (b, depth) in scene.bodies.iter().zip(&scene.violations.bodies) {
+        let Some(alpha) = pulse_alpha(*depth, scene.now_ms) else {
+            continue;
+        };
+        ctx.save();
+        let _ = ctx.translate(sx(b.x as f64), sy(b.y as f64));
+        let _ = ctx.rotate(-(b.theta as f64));
+        ctx.set_global_alpha(alpha);
+        ctx.fill_rect(-half + 1.0, -half + 1.0, scale - 2.0, scale - 2.0);
+        ctx.set_global_alpha((alpha * 2.0).min(1.0));
+        ctx.set_line_width(2.0 * dpr);
+        ctx.stroke_rect(-half + 1.0, -half + 1.0, scale - 2.0, scale - 2.0);
+        ctx.restore();
+    }
+    // Walls in glue order: left, bottom, right, top.
+    let walls = [
+        ((0.0, 0.0), (0.0, side)),
+        ((0.0, 0.0), (side, 0.0)),
+        ((side, 0.0), (side, side)),
+        ((0.0, side), (side, side)),
+    ];
+    ctx.set_line_width(5.0 * dpr);
+    for ((a, b), depth) in walls.into_iter().zip(scene.violations.walls) {
+        if let Some(alpha) = pulse_alpha(depth, scene.now_ms) {
+            ctx.set_global_alpha((alpha * 2.0).min(1.0));
+            line(&ctx, (sx(a.0), sy(a.1)), (sx(b.0), sy(b.1)));
+        }
+    }
+    ctx.restore();
 
     ctx.save();
     ctx.set_stroke_style_str("#ffcf4d");
@@ -306,6 +360,24 @@ mod tests {
             theta,
             ..Body::default()
         }
+    }
+
+    #[test]
+    fn pulse_skips_springy_contact_and_grows_with_depth() {
+        assert_eq!(pulse_alpha(1e-3, 0.0), None);
+        let (dim, bright) = (0.0, PULSE_PERIOD_MS / 2.0);
+        let shallow = (
+            pulse_alpha(PULSE_DEPTH, dim),
+            pulse_alpha(PULSE_DEPTH, bright),
+        );
+        let deep = (pulse_alpha(0.2, dim), pulse_alpha(0.2, bright));
+        assert!(shallow.0 < shallow.1, "it pulses");
+        assert!(
+            shallow.0 < deep.0 && shallow.1 < deep.1,
+            "deeper is stronger"
+        );
+        assert!(deep.1.unwrap() <= 0.6, "gentle even at full strength");
+        assert!(shallow.0.unwrap() > 0.0, "never fades out entirely");
     }
 
     #[test]
