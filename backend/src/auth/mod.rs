@@ -69,7 +69,7 @@ impl Auth {
         let rp_origin = Url::parse(&origin.origin)?;
         // Exactly this origin: subdomains and other ports stay disallowed.
         let webauthn = WebauthnBuilder::new(&origin.host, &rp_origin)?
-            .rp_name("packit")
+            .rp_name("Potatos")
             .build()?;
         Ok(Self {
             webauthn,
