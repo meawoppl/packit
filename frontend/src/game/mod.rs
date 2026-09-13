@@ -101,12 +101,14 @@ pub enum Msg {
     Key(KeyboardEvent),
     SetCount(String),
     TargetSide(f64),
-    /// A key went down on the Squeeze slider. Its `change` then fires on
-    /// every step, so the key's release ends the squeeze instead.
+    /// A range-stepping key went down on the Squeeze slider. Its `change`
+    /// then fires on every step, so the key's release ends the squeeze
+    /// instead.
     SqueezeKey,
     /// The Squeeze slider's `change`.
     SqueezeChange,
-    /// The Squeeze slider let go: pointer up or cancel, key up, or blur.
+    /// The Squeeze slider let go: pointer up or cancel, a stepping key's
+    /// release, or blur.
     SqueezeRelease,
     BandTension(f32),
     Attraction(bool),
@@ -161,6 +163,10 @@ struct Readout {
     /// The Squeeze slider's thumb: the requested side while held, else the
     /// live side, so it springs back with the box.
     squeeze: f64,
+    /// The Squeeze slider's range: the usual bounds widened to take in the
+    /// live side, frozen while a squeeze is held so the track doesn't move
+    /// under the pointer.
+    squeeze_range: (f64, f64),
     /// Annealing progress in percent while a run is active.
     anneal: Option<u32>,
 }
@@ -220,7 +226,7 @@ pub struct Game {
     /// the band's target follows it only as far as the band pressure
     /// reaches. Letting go clears it.
     desired_side: Option<f64>,
-    /// Set while a key is held on the Squeeze slider.
+    /// Set while a range-stepping key is held on the Squeeze slider.
     squeeze_key: bool,
     readout: Readout,
     /// Detects the double tap that opens the glue tool.
@@ -246,6 +252,21 @@ struct PlayQuery {
 
 fn input_value(e: &Event) -> String {
     e.target_unchecked_into::<HtmlInputElement>().value()
+}
+
+/// Keys that step a range input; any other key leaves a squeeze alone.
+fn steps_range(e: &KeyboardEvent) -> bool {
+    matches!(
+        e.key().as_str(),
+        "ArrowUp"
+            | "ArrowDown"
+            | "ArrowLeft"
+            | "ArrowRight"
+            | "PageUp"
+            | "PageDown"
+            | "Home"
+            | "End"
+    )
 }
 
 /// `element.focus({preventScroll: true})`; focusing must not scroll the page,
@@ -895,8 +916,6 @@ impl Component for Game {
         let n = ctx.props().n;
         let params = self.physics.params();
         let r = &self.readout;
-        let size_min = ((n as f64).sqrt() * 1000.0).ceil() / 1000.0;
-        let size_max = (n as f64).sqrt().ceil() + 3.0;
         let status_class = classes!("pg-status", self.status_error.then_some("pg-invalid"));
         // Compare the refined f64 side once validated; otherwise the live side.
         let (bench_side, validated) = match &self.certified {
@@ -970,14 +989,14 @@ impl Component for Game {
                                 <label class="pg-row" for="pg-size">
                                     { "Squeeze " }<output>{ format!("{:.3}", r.size_value) }</output>
                                 </label>
-                                <input id="pg-size" type="range" min={size_min.to_string()} max={size_max.to_string()} step="0.001"
+                                <input id="pg-size" type="range" min={r.squeeze_range.0.to_string()} max={r.squeeze_range.1.to_string()} step="0.001"
                                     value={r.squeeze.to_string()}
                                     oninput={link.callback(|e: InputEvent| Msg::TargetSide(input_value(&e).parse().unwrap_or(1.0)))}
                                     onchange={link.callback(|_| Msg::SqueezeChange)}
                                     onpointerup={link.callback(|_| Msg::SqueezeRelease)}
                                     onpointercancel={link.callback(|_| Msg::SqueezeRelease)}
-                                    onkeydown={link.callback(|_| Msg::SqueezeKey)}
-                                    onkeyup={link.callback(|_| Msg::SqueezeRelease)}
+                                    onkeydown={link.batch_callback(|e: KeyboardEvent| steps_range(&e).then_some(Msg::SqueezeKey))}
+                                    onkeyup={link.batch_callback(|e: KeyboardEvent| steps_range(&e).then_some(Msg::SqueezeRelease))}
                                     onblur={link.callback(|_| Msg::SqueezeRelease)} />
                                 <p class="pg-help">{ "Hold to press the band in. Let go and the box springs back until nothing overlaps." }</p>
                             </div>
@@ -1458,6 +1477,13 @@ impl Game {
                 side
             },
             squeeze: self.desired_side.unwrap_or(side),
+            squeeze_range: if self.desired_side.is_some() {
+                self.readout.squeeze_range
+            } else {
+                // Loaded scenes may sit outside the usual bounds.
+                let low = (n.sqrt() * 1000.0).ceil() / 1000.0;
+                (low.min(side), (n.sqrt().ceil() + 3.0).max(side))
+            },
             anneal: self.anneal.as_ref().map(|a| (a.progress() * 100.0) as u32),
         };
         let changed = next != self.readout;

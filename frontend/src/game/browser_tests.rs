@@ -980,6 +980,90 @@ async fn idle_squeeze_slider_follows_loaded_scenes() {
     root.remove();
 }
 
+/// A loaded scene can sit outside the slider's usual bounds: far above them,
+/// or overlapped below sqrt(n). The idle slider widens to take in the live
+/// side, and its bounds hold still while a squeeze is held.
+#[wasm_bindgen_test]
+async fn squeeze_bounds_take_in_out_of_range_scenes() {
+    let _gpu = NoWebGpu::install();
+    let sq = |cx, cy| shared::Placement { cx, cy, theta: 0.0 };
+    let roomy = Arrangement {
+        n: 2,
+        side: 10.0,
+        squares: vec![sq(4.5, 5.0), sq(5.5, 5.0)],
+    };
+    let (handle, root, physics) = mount_at(&format!("s={}", share::encode(&roomy, &[]))).await;
+    let slider = squeeze_slider(&root);
+    assert_eq!(physics.side(), 10.0);
+    assert_shows_side(&root, &slider, &physics, "for a side-10 share");
+    assert_eq!(slider.max(), "10");
+    let bounds = (slider.min(), slider.max());
+    slide(&root, SQUEEZE, "9.5");
+    for _ in 0..60 {
+        if physics.side() < 9.9 {
+            break;
+        }
+        sleep(50).await;
+    }
+    assert!(
+        physics.side() < 9.9,
+        "the squeeze moves the box: {}",
+        physics.side()
+    );
+    assert_eq!(
+        (slider.min(), slider.max()),
+        bounds,
+        "the bounds hold still while held"
+    );
+    fire(&slider, "change");
+    handle.destroy();
+    root.remove();
+
+    let overlapped = Arrangement {
+        n: 2,
+        side: 1.3,
+        squares: vec![sq(0.5, 0.5), sq(0.8, 0.8)],
+    };
+    let (handle, root, physics) = mount_at(&format!("s={}", share::encode(&overlapped, &[]))).await;
+    let slider = squeeze_slider(&root);
+    assert_eq!(physics.side(), 1.3);
+    assert_shows_side(&root, &slider, &physics, "below sqrt(n)");
+    assert_eq!(slider.min(), "1.3");
+    handle.destroy();
+    root.remove();
+}
+
+/// Only keys that step the slider take part in a squeeze: pressing and
+/// releasing Shift mid-drag leaves the squeeze held, and letting go of the
+/// pointer still settles it.
+#[wasm_bindgen_test]
+async fn unrelated_keys_leave_a_held_squeeze_alone() {
+    let _gpu = NoWebGpu::install();
+    let (handle, root, physics) = mount().await;
+    let mut steps = Vec::new();
+    wait_ready(&root, &physics, &mut steps, "before squeezing").await;
+    let slider = squeeze_slider(&root);
+    slide(&root, SQUEEZE, "1.9");
+    sleep(100).await;
+    assert_eq!(physics.params().band_tension, 30.0, "held");
+    slider
+        .dispatch_event(&key_event("keydown", "Shift", false))
+        .unwrap();
+    slider
+        .dispatch_event(&key_event("keyup", "Shift", false))
+        .unwrap();
+    sleep(200).await;
+    assert_eq!(physics.params().band_tension, 30.0, "Shift doesn't let go");
+    assert_eq!(physics.settle_status().phase, SettlePhase::Idle);
+    assert!(!text(&root, ".pg-status").starts_with("Settling"));
+    fire(&slider, "pointerup");
+    sleep(30).await;
+    assert_eq!(physics.params().band_tension, 0.0, "the pointer lets go");
+    assert_eq!(physics.settle_status().phase, SettlePhase::Running);
+    handle.destroy();
+    root.remove();
+}
+
 #[wasm_bindgen_test]
 async fn squeeze_reach_follows_band_pressure() {
     let _gpu = NoWebGpu::install();
