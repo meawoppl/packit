@@ -116,6 +116,15 @@ pub enum Msg {
     Key(KeyboardEvent),
     SetCount(String),
     TargetSide(f64),
+    /// A range-stepping key went down on the Squeeze slider. Its `change`
+    /// then fires on every step, so the key's release ends the squeeze
+    /// instead.
+    SqueezeKey,
+    /// The Squeeze slider's `change`.
+    SqueezeChange,
+    /// The Squeeze slider let go: pointer up or cancel, a stepping key's
+    /// release, or blur.
+    SqueezeRelease,
     BandTension(f32),
     Attraction(bool),
     EdgeAttraction(f32),
@@ -175,7 +184,15 @@ struct Readout {
     density: String,
     meter: String,
     record: String,
+    /// The band's target while a squeeze is held, else the live side.
     size_value: f64,
+    /// The Squeeze slider's thumb: the requested side while held, else the
+    /// live side, so it springs back with the box.
+    squeeze: f64,
+    /// The Squeeze slider's range: the usual bounds widened to take in the
+    /// live side, frozen while a squeeze is held so the track doesn't move
+    /// under the pointer.
+    squeeze_range: (f64, f64),
     /// Annealing progress in percent while a run is active.
     anneal: Option<u32>,
 }
@@ -239,9 +256,12 @@ pub struct Game {
     anneal: Option<Anneal>,
     /// Which button started the active scheduled run.
     run_kind: RunKind,
-    /// Container side requested with the size slider; the band's target
-    /// follows it only as far as the band pressure reaches.
+    /// Container side requested with the Squeeze slider while it's held;
+    /// the band's target follows it only as far as the band pressure
+    /// reaches. Letting go clears it.
     desired_side: Option<f64>,
+    /// Set while a range-stepping key is held on the Squeeze slider.
+    squeeze_key: bool,
     readout: Readout,
     /// Detects the double tap that opens the glue tool.
     taps: tap::DoubleTap,
@@ -266,6 +286,21 @@ struct PlayQuery {
 
 fn input_value(e: &Event) -> String {
     e.target_unchecked_into::<HtmlInputElement>().value()
+}
+
+/// Keys that step a range input; any other key leaves a squeeze alone.
+fn steps_range(e: &KeyboardEvent) -> bool {
+    matches!(
+        e.key().as_str(),
+        "ArrowUp"
+            | "ArrowDown"
+            | "ArrowLeft"
+            | "ArrowRight"
+            | "PageUp"
+            | "PageDown"
+            | "Home"
+            | "End"
+    )
 }
 
 /// `element.focus({preventScroll: true})`; focusing must not scroll the page,
@@ -368,6 +403,7 @@ impl Component for Game {
             anneal: None,
             run_kind: RunKind::Anneal,
             desired_side: None,
+            squeeze_key: false,
             readout: Readout::default(),
             taps: tap::DoubleTap::default(),
             glue_tool: None,
@@ -666,6 +702,15 @@ impl Component for Game {
                 self.refresh_readout();
                 true
             }
+            Msg::SqueezeKey => {
+                self.squeeze_key = true;
+                false
+            }
+            Msg::SqueezeChange => !self.squeeze_key && self.release_squeeze(),
+            Msg::SqueezeRelease => {
+                self.squeeze_key = false;
+                self.release_squeeze()
+            }
             Msg::BandTension(tension) => {
                 self.stop_anneal();
                 let mut params = self.physics.params();
@@ -945,8 +990,6 @@ impl Component for Game {
         let n = ctx.props().n;
         let params = self.physics.params();
         let r = &self.readout;
-        let size_min = ((n as f64).sqrt() * 1000.0).ceil() / 1000.0;
-        let size_max = (n as f64).sqrt().ceil() + 3.0;
         let status_class = classes!("pg-status", self.status_error.then_some("pg-invalid"));
         // Compare the refined f64 side once validated; otherwise the live side.
         let (bench_side, validated) = match &self.certified {
@@ -1000,7 +1043,7 @@ impl Component for Game {
                         <p class="pg-help">{ "Force arrows: blue = net contact and edge pull · gold = mouse spring. Dashed band = target size." }</p>
                         <details class="pg-details">
                             <summary>{ "How to play & what the score means" }</summary>
-                            <p>{ "Each square has side length 1. Make the container smaller while keeping every square inside and avoiding overlap. Dragging and rotating resume physics, push neighbors, and resist blocked motion. Lower the container target with outer band tension enabled to squeeze the packing. Turn on forces, or use Q/E to rotate a selected square. Arrow keys nudge it. Space pauses." }</p>
+                            <p>{ "Each square has side length 1. Make the container smaller while keeping every square inside and avoiding overlap. Dragging and rotating resume physics, push neighbors, and resist blocked motion. Hold the Squeeze slider down to press the band in on the packing; let go and the box springs back out from the squares' pressure until nothing overlaps, then settles. Turn on forces, or use Q/E to rotate a selected square. Arrow keys nudge it. Space pauses." }</p>
                             <p>{ "The simulation has springy contacts. “Settle” lets the contacts resolve, opening the box only while squares still overlap, then pauses the scene and refines its contacts with a numerical polynomial solver. Only an independently validated arrangement can be submitted. A best-known packing is an upper bound, not necessarily a proven optimum. A numerical match is not an exact proof." }</p>
                             <p>
                                 <a href="https://kingbird.myphotos.cc/packing/squares_in_squares.html" target="_blank" rel="noopener">
@@ -1016,6 +1059,21 @@ impl Component for Game {
                             <div class="pg-meter"><span style={format!("width: {}", r.meter)}></span></div>
                             <div class="pg-row"><span>{ "Area filled" }</span><strong>{ &r.density }</strong></div>
                             <div class="pg-help">{ &r.record }</div>
+                            <div class="pg-squeeze">
+                                <label class="pg-row" for="pg-size">
+                                    { "Squeeze " }<output>{ format!("{:.3}", r.size_value) }</output>
+                                </label>
+                                <input id="pg-size" type="range" min={r.squeeze_range.0.to_string()} max={r.squeeze_range.1.to_string()} step="0.001"
+                                    value={r.squeeze.to_string()}
+                                    oninput={link.callback(|e: InputEvent| Msg::TargetSide(input_value(&e).parse().unwrap_or(1.0)))}
+                                    onchange={link.callback(|_| Msg::SqueezeChange)}
+                                    onpointerup={link.callback(|_| Msg::SqueezeRelease)}
+                                    onpointercancel={link.callback(|_| Msg::SqueezeRelease)}
+                                    onkeydown={link.batch_callback(|e: KeyboardEvent| steps_range(&e).then_some(Msg::SqueezeKey))}
+                                    onkeyup={link.batch_callback(|e: KeyboardEvent| steps_range(&e).then_some(Msg::SqueezeRelease))}
+                                    onblur={link.callback(|_| Msg::SqueezeRelease)} />
+                                <p class="pg-help">{ "Hold to press the band in. Let go and the box springs back until nothing overlaps." }</p>
+                            </div>
                             <div class="pg-actions">
                                 <button class="pg-primary" disabled={self.busy} onclick={link.callback(|_| Msg::Measure)}>
                                     { if self.settling { "Settling…" } else { "Settle" } }
@@ -1051,19 +1109,13 @@ impl Component for Game {
                         </section>
                         <details class="pg-panel pg-advanced">
                             <summary>{ "Advanced" }</summary>
-                            <label class="pg-row" for="pg-size">
-                                { "Container target side " }<output>{ format!("{:.3}", r.size_value) }</output>
-                            </label>
-                            <input id="pg-size" type="range" min={size_min.to_string()} max={size_max.to_string()} step="0.001"
-                                value={r.size_value.to_string()}
-                                oninput={link.callback(|e: InputEvent| Msg::TargetSide(input_value(&e).parse().unwrap_or(1.0)))} />
                             <label class="pg-row" for="pg-band">
                                 { "Outer band tension " }
                                 <output>{ if params.band_tension > 0.0 { format!("{}", params.band_tension) } else { "Off".into() } }</output>
                             </label>
                             <input id="pg-band" type="range" min="0" max="100" step="1" value={params.band_tension.to_string()}
                                 oninput={link.callback(|e: InputEvent| Msg::BandTension(input_value(&e).parse().unwrap_or(0.0)))} />
-                            <p class="pg-help">{ "Changing container size animates the band with live pressure. Squares push back, and higher pressure lets the size target run further ahead of the container. Zero holds the current size; moving the size slider re-engages pressure at 30." }</p>
+                            <p class="pg-help">{ "Squeezing animates the band with live pressure. Squares push back, and higher pressure lets the size target run further ahead of the container. Zero holds the current size. The Squeeze slider engages pressure at 30 if it's off, keeps a pressure set here while held, and releases the band when let go." }</p>
                             <label class="pg-row">
                                 { "Square attraction " }
                                 <input type="checkbox" checked={params.attraction}
@@ -1284,6 +1336,21 @@ impl Game {
         true
     }
 
+    /// Let go of the Squeeze slider: release the band and Settle, so the box
+    /// springs back out from the squares' pressure until nothing overlaps.
+    /// Only a squeeze that moved the slider is released, and only once.
+    fn release_squeeze(&mut self) -> bool {
+        // Cleared before settling, so the scrub can't drive the band again.
+        if self.desired_side.take().is_none() {
+            return false;
+        }
+        let mut params = self.physics.params();
+        params.band_tension = 0.0;
+        self.physics.set_params(params);
+        self.settle();
+        true
+    }
+
     /// Follow the physics Settle each frame: measure once it settles, and
     /// explain when it can't. Returns whether it changed the status.
     fn tick_settle(&mut self, ctx: &Context<Self>) -> bool {
@@ -1419,13 +1486,15 @@ impl Game {
     }
 
     fn check_settled(&mut self, ctx: &Context<Self>) {
-        // An annealing run measures on its own schedule.
+        // An annealing run measures on its own schedule, and a held squeeze
+        // when it's let go.
         if self.physics.paused()
             || self.dragging
             || self.busy
             || self.auto_measured
             || self.anneal.is_some()
             || self.settling
+            || self.desired_side.is_some()
         {
             return;
         }
@@ -1476,10 +1545,18 @@ impl Game {
             density: format!("{density:.1}%"),
             meter: format!("{:.1}%", density.min(100.0)),
             record,
-            size_value: if params.band_tension > 0.0 {
+            size_value: if self.desired_side.is_some() {
                 params.target_side
             } else {
                 side
+            },
+            squeeze: self.desired_side.unwrap_or(side),
+            squeeze_range: if self.desired_side.is_some() {
+                self.readout.squeeze_range
+            } else {
+                // Loaded scenes may sit outside the usual bounds.
+                let low = (n.sqrt() * 1000.0).ceil() / 1000.0;
+                (low.min(side), (n.sqrt().ceil() + 3.0).max(side))
             },
             anneal: self.anneal.as_ref().map(|a| (a.progress() * 100.0) as u32),
         };
@@ -1647,6 +1724,8 @@ impl Game {
         self.view_side.set(self.physics.side());
         self.invalidate();
         self.set_status("Imported. Settle to validate.", false);
+        // The Squeeze slider shows the new side with the status, not a frame later.
+        self.refresh_readout();
     }
 
     /// Certify the settled packing where it stands: that's the score, and
