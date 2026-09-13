@@ -146,6 +146,18 @@ pub struct ShortShare {
     pub url: String,
 }
 
+/// Body of `POST /api/auth/register/start` and `POST /api/auth/login/start`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AuthUsername {
+    pub username: String,
+}
+
+/// The signed-in account: `GET /api/auth/me` and every successful sign-in.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AuthMe {
+    pub username: String,
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------

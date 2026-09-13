@@ -22,6 +22,10 @@ pub const MAX_LIMIT: u32 = 200;
 pub struct HandlerError(StatusCode, String);
 
 impl HandlerError {
+    pub(crate) fn new(status: StatusCode, msg: impl Into<String>) -> Self {
+        Self(status, msg.into())
+    }
+
     pub(super) fn not_found(msg: impl Into<String>) -> Self {
         Self(StatusCode::NOT_FOUND, msg.into())
     }
@@ -47,7 +51,7 @@ impl IntoResponse for HandlerError {
 type HandlerResult<T> = Result<Json<T>, HandlerError>;
 
 /// Run a blocking Diesel closure on the blocking thread pool.
-pub(super) async fn with_conn<T, F>(state: &AppState, f: F) -> Result<T, HandlerError>
+pub(crate) async fn with_conn<T, F>(state: &AppState, f: F) -> Result<T, HandlerError>
 where
     T: Send + 'static,
     F: FnOnce(&mut PgConnection) -> QueryResult<T> + Send + 'static,

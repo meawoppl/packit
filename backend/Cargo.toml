@@ -48,3 +48,11 @@ alloc-stdlib = "=0.2.2"
 shared = { path = "../shared" }
 tiny-skia = "0.12.0"
 sha2 = "0.10"
+webauthn-rs = { version = "0.5", features = ["danger-credential-internals"] }
+getrandom = "0.2"
+webauthn-rs-proto = "0.5"
+
+[dev-dependencies]
+openssl = "0.10"
+serde_cbor_2 = "0.13"
+webauthn-authenticator-rs = { version = "0.5", features = ["softpasskey"] }

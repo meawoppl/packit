@@ -1,10 +1,13 @@
+mod auth;
 mod config;
 mod db;
 mod handlers;
 mod models;
 mod schema;
+#[cfg(test)]
+mod test_support;
 
-use crate::config::Config;
+use crate::config::{Config, PublicOrigin};
 use crate::db::DbPool;
 use axum::http::StatusCode;
 use axum::{
@@ -13,6 +16,7 @@ use axum::{
 };
 use clap::Parser;
 use memory_serve::{load_assets, CacheControl, MemoryServe};
+use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use tower_http::cors::{Any, CorsLayer};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
@@ -27,12 +31,28 @@ struct Args {
     dev_mode: bool,
 }
 
-#[derive(Clone)]
 pub struct AppState {
     pub dev_mode: bool,
     pub db_pool: DbPool,
-    /// Origin for absolute link-preview URLs; see `Config::public_url`.
+    /// Origin for absolute link-preview URLs, from `PUBLIC_URL`.
     pub public_url: String,
+    pub auth: auth::Auth,
+}
+
+impl AppState {
+    pub fn new(
+        dev_mode: bool,
+        db_pool: DbPool,
+        public: PublicOrigin,
+        trusted_proxy: Option<IpAddr>,
+    ) -> anyhow::Result<Self> {
+        Ok(Self {
+            dev_mode,
+            db_pool,
+            public_url: public.origin.clone(),
+            auth: auth::Auth::new(public, trusted_proxy)?,
+        })
+    }
 }
 
 /// Build the full application router from shared state.
@@ -40,6 +60,8 @@ pub struct AppState {
 /// Kept as a pure function of `AppState` so tests can drive the entire app
 /// in-process via `tower::ServiceExt::oneshot` — no bound port, no network.
 pub fn build_app(state: Arc<AppState>) -> Router {
+    // Permissive CORS covers the public API only. `/api/auth` gets none, so
+    // other sites can't read its responses.
     let cors = CorsLayer::new()
         .allow_origin(Any)
         .allow_methods(Any)
@@ -56,7 +78,7 @@ pub fn build_app(state: Arc<AppState>) -> Router {
         .cache_control(CacheControl::Long)
         .into_router();
 
-    Router::new()
+    let public = Router::new()
         .route(
             "/api/shares",
             post(handlers::shares::create).layer(axum::extract::DefaultBodyLimit::max(16 * 1024)),
@@ -71,10 +93,12 @@ pub fn build_app(state: Arc<AppState>) -> Router {
         .route("/api/scores/:id", get(handlers::scores::detail))
         .route("/api/preview.png", get(handlers::preview::preview_png))
         .route("/play/:n", get(handlers::preview::play))
-        .with_state(state)
+        .with_state(state.clone())
         .route(shared::AppSocket::PATH, handlers::websocket::handler())
         .merge(frontend)
-        .layer(cors)
+        .layer(cors);
+
+    handlers::auth::router(state).merge(public)
 }
 
 #[tokio::main]
@@ -115,7 +139,7 @@ async fn main() -> anyhow::Result<()> {
     // Load .env file if present
     dotenvy::dotenv().ok();
 
-    let config = Config::from_env();
+    let config = Config::from_env(args.dev_mode)?;
 
     // Create database pool and run migrations
     let pool = db::create_pool()?;
@@ -137,21 +161,25 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
-    let app_state = Arc::new(AppState {
-        dev_mode: args.dev_mode,
-        db_pool: pool,
-        public_url: config.public_url.clone(),
-    });
+    let app_state = Arc::new(AppState::new(
+        args.dev_mode,
+        pool,
+        config.public.clone(),
+        config.trusted_proxy,
+    )?);
 
     let app = build_app(app_state);
 
-    // Bind and serve
+    // Bind and serve. The peer address feeds the auth rate limits.
     let listener = tokio::net::TcpListener::bind(config.bind_addr()).await?;
     tracing::info!("Listening on {}", listener.local_addr()?);
 
-    axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal())
-        .await?;
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .with_graceful_shutdown(shutdown_signal())
+    .await?;
 
     Ok(())
 }
@@ -183,26 +211,17 @@ async fn shutdown_signal() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::{state_for, test_db, unconnected_pool, TEST_URL};
     use axum::body::Body;
     use axum::http::{header, Request, StatusCode};
-    use diesel::pg::PgConnection;
-    use diesel::r2d2::{ConnectionManager, Pool};
     use tower::ServiceExt;
 
     /// State with a pool that is never actually connected. The health and asset
-    /// routes don't touch the database, so `build_unchecked` lets us exercise
-    /// the whole router without a running Postgres.
+    /// routes don't touch the database, so this exercises the whole router
+    /// without a running Postgres.
     fn test_state() -> Arc<AppState> {
-        let manager = ConnectionManager::<PgConnection>::new("postgres://invalid/db");
-        let db_pool = Pool::builder().build_unchecked(manager);
-        Arc::new(AppState {
-            dev_mode: true,
-            db_pool,
-            public_url: TEST_URL.to_string(),
-        })
+        state_for(unconnected_pool())
     }
-
-    const TEST_URL: &str = "https://packit.test";
 
     #[tokio::test]
     async fn health_returns_ok_json() {
@@ -254,22 +273,6 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
-    }
-
-    /// Pool for `TEST_DATABASE_URL`, migrated exactly once per test process so
-    /// parallel DB tests don't race to create the schema.
-    fn test_db() -> Option<DbPool> {
-        static POOL: std::sync::OnceLock<Option<DbPool>> = std::sync::OnceLock::new();
-        POOL.get_or_init(|| {
-            let url = std::env::var("TEST_DATABASE_URL").ok()?;
-            let pool = Pool::builder()
-                .max_size(4)
-                .build(ConnectionManager::<PgConnection>::new(url))
-                .unwrap();
-            db::run_migrations(&pool).unwrap();
-            Some(pool)
-        })
-        .clone()
     }
 
     async fn call<T: serde::de::DeserializeOwned>(
@@ -457,11 +460,7 @@ mod tests {
             eprintln!("TEST_DATABASE_URL not set; skipping");
             return;
         };
-        let app = build_app(Arc::new(AppState {
-            dev_mode: true,
-            db_pool,
-            public_url: TEST_URL.to_string(),
-        }));
+        let app = build_app(state_for(db_pool));
 
         let (status, loose): (_, shared::ScoreEntry) =
             call(&app, post_json("/api/scores", &two_squares("loose", 3.0))).await;
@@ -551,11 +550,7 @@ mod tests {
         }
         drop(conn);
 
-        let app = build_app(Arc::new(AppState {
-            dev_mode: true,
-            db_pool,
-            public_url: TEST_URL.to_string(),
-        }));
+        let app = build_app(state_for(db_pool));
         let mut ranks = Vec::new();
         for id in ids {
             let (status, detail): (_, shared::ScoreDetail) = call(
@@ -632,11 +627,7 @@ mod tests {
             eprintln!("TEST_DATABASE_URL not set; skipping");
             return;
         };
-        let app = build_app(Arc::new(AppState {
-            dev_mode: true,
-            db_pool,
-            public_url: TEST_URL.into(),
-        }));
+        let app = build_app(state_for(db_pool));
         // Both valid and unfinished snapshots are shareable. The full f64
         // value survives storage and redirect without passing through f32.
         let mut arr = two_squares("", 2.0 + 2e-10).arrangement;

@@ -43,6 +43,14 @@ at the bottom-left. Every crate uses `shared::Placement` and
 | GET | `/s/:token` | — | Redirect to the saved solution and its preview |
 | GET | `/api/preview.png` | `?n=&s=` | 1200×630 PNG of a share code |
 | GET | `/play/:n` | `?s=` | The app page with link-preview metadata |
+| POST | `/api/auth/register/start` | `{ username }` | Passkey creation options and a ceremony id |
+| POST | `/api/auth/register/finish` | `{ ceremony, credential }` | `{ username }`; sets the session cookie |
+| POST | `/api/auth/login/start` | `{ username }` | Passkey request options and a ceremony id |
+| POST | `/api/auth/login/finish` | `{ ceremony, credential }` | `{ username }`; sets the session cookie |
+| POST | `/api/auth/passkeys/start` | — | Options to add a passkey (needs a sign-in within 5 minutes) |
+| POST | `/api/auth/passkeys/finish` | `{ ceremony, credential }` | `{ username }` |
+| POST | `/api/auth/logout` | — | 204; deletes the session and clears the cookie |
+| GET | `/api/auth/me` | — | `{ username }`, or 401 |
 
 Submissions are validated server-side with `shared::geometry::validate`
 using `shared::VALIDATION_TOL`.
@@ -60,6 +68,39 @@ shared packing: the page carries Open Graph and Twitter tags whose absolute
 URLs use `PUBLIC_URL` (default `https://potatos.txcl.io`), never the request
 host. The preview image is only served for a code that fully decodes, and is
 cached as immutable.
+
+## Accounts
+
+Players can create an account with a passkey (WebAuthn, via `webauthn-rs`).
+Accounts don't gate anything yet: scores, shares and previews work
+anonymously.
+
+- `PUBLIC_URL` is the relying party. Its hostname is the RP ID and its exact
+  origin is the only one accepted. It must be a bare `https://` origin;
+  `http://localhost[:port]` is allowed only with `--dev-mode`, so try passkeys
+  locally with `PUBLIC_URL=http://localhost:3000`.
+- Usernames are trimmed and lowercased, then must be 3 to 24 of `a-z`, `0-9`,
+  `_` and `-`, starting with a letter or digit.
+- Ceremony state stays in server memory for 5 minutes, bound to a nonce cookie
+  in the browser that started it. Run a single backend instance; a restart
+  drops sign-ins in progress.
+- Sessions are 30-day `__Host-packit_session` cookies (HttpOnly, Secure,
+  SameSite=Lax). The database stores only a SHA-256 of the token, and every
+  sign-in issues a new one.
+- Every auth POST must send an `Origin` equal to `PUBLIC_URL`, and `/api/auth`
+  has no CORS.
+- Start and finish endpoints are rate limited per client IP, and login start
+  also per username.
+
+### Behind a reverse proxy
+
+Rate limits key on the TCP peer address. Behind Traefik, set `TRUSTED_PROXY`
+to Traefik's IP as the backend sees it, e.g. a fixed address for the Traefik
+container on the shared Docker network. Only requests from that exact address
+take the client IP from `X-Forwarded-For`, and then only its last entry, which
+the proxy adds for the client it saw; earlier entries are client-supplied and
+ignored. Leave it unset when clients connect directly, or every request would
+share the proxy's limit.
 
 ## Quick start
 
