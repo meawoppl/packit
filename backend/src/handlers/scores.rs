@@ -112,6 +112,7 @@ fn entry(score: &Score, rank: u32) -> ScoreEntry {
         side: score.side,
         submitted_at: score.submitted_at,
         rank,
+        account: score.user_id.is_some(),
         board: score.board_token.clone(),
         glue_recorded: score.glue_recorded,
     }
@@ -261,6 +262,23 @@ mod tests {
                 .map(|(cx, cy)| Placement { cx, cy, theta: 0.0 })
                 .collect(),
         }
+    }
+
+    #[test]
+    fn entries_say_whether_an_account_submitted_them() {
+        let score = |user_id| Score {
+            id: Uuid::new_v4(),
+            player: "ada".into(),
+            n: 1,
+            side: 1.0,
+            arrangement: serde_json::Value::Null,
+            submitted_at: chrono::DateTime::from_timestamp(0, 0).unwrap().naive_utc(),
+            user_id,
+            board_token: "0123456789abcdef01234567".into(),
+            glue_recorded: true,
+        };
+        assert!(entry(&score(Some(Uuid::new_v4())), 1).account);
+        assert!(!entry(&score(None), 1).account);
     }
 
     #[test]

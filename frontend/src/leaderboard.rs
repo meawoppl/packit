@@ -1,3 +1,6 @@
+#[cfg(all(test, target_arch = "wasm32"))]
+mod browser_tests;
+
 use crate::api;
 use crate::benchmark::Benchmark;
 use crate::Route;
@@ -8,9 +11,6 @@ use uuid::Uuid;
 use wasm_bindgen_futures::spawn_local;
 use yew::prelude::*;
 use yew_router::prelude::*;
-
-#[cfg(all(test, target_arch = "wasm32"))]
-mod browser_tests;
 
 /// Fetch once per `deps` change and hold `None` until loaded. A response that
 /// arrives after `deps` changed (or the component unmounted) is dropped.
@@ -51,6 +51,20 @@ fn fmt_side(side: f64) -> String {
 /// How far a side length is above the best known one, as a percentage.
 fn gap_pct(side: f64, known: f64) -> String {
     format!("{:+.3}%", (side / known - 1.0) * 100.0)
+}
+
+/// A score's name: an account's username, or, for a score from before
+/// accounts, the name it was typed with, muted and tagged so it isn't taken
+/// for an account.
+fn player_name(e: &ScoreEntry) -> Html {
+    if e.account {
+        return html! { <span class="player">{ &e.player }</span> };
+    }
+    html! {
+        <span class="player legacy" title="Submitted before accounts, under a name anyone could type">
+            { &e.player }<span class="badge legacy-badge">{ "legacy" }</span>
+        </span>
+    }
 }
 
 /// A link that opens exactly the board a score was submitted as. `/s/` is a
@@ -112,7 +126,7 @@ pub fn leaderboard() -> Html {
                                 { match top {
                                     Some(e) => html! {
                                         <>
-                                            <td>{ &e.player }</td>
+                                            <td>{ player_name(e) }</td>
                                             <td>{ fmt_side(e.side) }</td>
                                             <td>{ gap_pct(e.side, rec.side) }</td>
                                         </>
@@ -198,7 +212,7 @@ pub fn leaderboard_n(props: &LeaderboardNProps) -> Html {
                                 <tr>
                                     <td>{ e.rank }</td>
                                     <td>
-                                        <Link<Route> to={Route::Score { id: e.id }}>{ &e.player }</Link<Route>>
+                                        <Link<Route> to={Route::Score { id: e.id }}>{ player_name(e) }</Link<Route>>
                                     </td>
                                     <td>{ fmt_side(e.side) }</td>
                                     <td>{ known.as_ref().map(|k| gap_pct(e.side, k.side)).unwrap_or_default() }</td>
@@ -234,7 +248,7 @@ pub fn score_page(props: &ScorePageProps) -> Html {
         .and_then(|r| r.iter().find(|k| k.n == entry.n));
     html! {
         <div class="score-page">
-            <h1>{ format!("{} squares by {}", entry.n, entry.player) }</h1>
+            <h1>{ format!("{} squares by ", entry.n) }{ player_name(entry) }</h1>
             <p>{ format!("Side {} · rank #{}", fmt_side(entry.side), entry.rank) }</p>
             // Stored scores passed server-side validation.
             <Benchmark

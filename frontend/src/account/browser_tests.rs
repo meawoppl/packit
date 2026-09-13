@@ -25,6 +25,14 @@ pub(crate) struct Reply {
     pub status: u16,
     pub body: String,
     pub retry_after: Option<&'static str>,
+    /// Milliseconds before it answers, to deliver responses out of order.
+    pub delay: u64,
+}
+
+impl Reply {
+    pub(crate) fn after(self, delay: u64) -> Self {
+        Self { delay, ..self }
+    }
 }
 
 pub(crate) fn reply(status: u16, body: Value) -> Reply {
@@ -32,6 +40,7 @@ pub(crate) fn reply(status: u16, body: Value) -> Reply {
         status,
         body: body.to_string(),
         retry_after: None,
+        delay: 0,
     }
 }
 
@@ -41,6 +50,7 @@ pub(crate) fn empty(status: u16) -> Reply {
         status,
         body: String::new(),
         retry_after: None,
+        delay: 0,
     }
 }
 
@@ -85,6 +95,7 @@ impl Api {
                     captured.push((path, body));
                     script[sent.min(script.len() - 1)].clone()
                 };
+                sleep(reply.delay).await;
                 let options = web_sys::ResponseInit::new();
                 options.set_status(reply.status);
                 let body = (!reply.body.is_empty()).then_some(reply.body.as_str());
@@ -346,9 +357,29 @@ fn probe() -> Html {
     html! { <span class="probe">{ account.username.unwrap_or_default() }</span> }
 }
 
+thread_local! {
+    /// Answers to the asks [`Asker`] made, in order.
+    static ANSWERS: RefCell<Vec<bool>> = const { RefCell::new(Vec::new()) };
+}
+
+const ASK_REASON: &str = "A test needs an account.";
+
+/// A page that asks for a sign-in when its button is pressed.
+#[function_component(Asker)]
+fn asker() -> Html {
+    let account = use_context::<Account>().unwrap();
+    let onclick = Callback::from(move |_: MouseEvent| {
+        account.ask.emit(SignInAsk {
+            reason: ASK_REASON,
+            done: Callback::from(|signed_in| ANSWERS.with(|a| a.borrow_mut().push(signed_in))),
+        })
+    });
+    html! { <button class="asker" {onclick}>{ "Ask" }</button> }
+}
+
 #[function_component(Host)]
 fn host() -> Html {
-    html! { <AccountProvider><AccountMenu /><Probe /></AccountProvider> }
+    html! { <AccountProvider><AccountMenu /><Probe /><Asker /></AccountProvider> }
 }
 
 async fn mount() -> (yew::AppHandle<Host>, Element) {
@@ -362,6 +393,167 @@ async fn mount() -> (yew::AppHandle<Host>, Element) {
 
 fn json_of(body: &str) -> Value {
     serde_json::from_str(body).unwrap()
+}
+
+/// Submit the open sign-in form, as Enter in the username field does.
+fn submit_form(root: &Element) {
+    let init = web_sys::EventInit::new();
+    init.set_bubbles(true);
+    init.set_cancelable(true);
+    let submit = web_sys::Event::new_with_event_init_dict("submit", &init).unwrap();
+    root.query_selector(".account-dialog")
+        .unwrap()
+        .expect("the sign-in dialog is open")
+        .dispatch_event(&submit)
+        .unwrap();
+}
+
+/// Sign in through the account control, with the dialog closed.
+async fn sign_in_as(root: &Element, name: &str) {
+    click(root, ".account-open");
+    sleep(30).await;
+    type_username(root, name);
+    sleep(30).await;
+    click(root, ".account-sign-in");
+    wait_until("the sign-in", || {
+        text_of(root, ".account-name").as_deref() == Some(name)
+    })
+    .await;
+}
+
+#[wasm_bindgen_test]
+async fn a_slow_me_does_not_overwrite_a_later_sign_in() {
+    let _api = Api::install(&[
+        (
+            "/api/auth/me",
+            vec![reply(200, json!({ "username": "old" })).after(800)],
+        ),
+        ("/api/auth/login/start", vec![login_started()]),
+        (
+            "/api/auth/login/finish",
+            vec![reply(200, json!({ "username": "ada" }))],
+        ),
+    ]);
+    let _keys = Passkeys::install();
+    let (handle, root) = mount().await;
+    sign_in_as(&root, "ada").await;
+    // The startup /me answers now, for the session before this sign-in.
+    sleep(1000).await;
+    assert_eq!(text_of(&root, ".account-name").as_deref(), Some("ada"));
+    assert_eq!(text_of(&root, ".probe").as_deref(), Some("ada"));
+    handle.destroy();
+    root.remove();
+}
+
+#[wasm_bindgen_test]
+async fn a_slow_me_does_not_sign_back_in_after_a_sign_out() {
+    let api = Api::install(&[
+        (
+            "/api/auth/me",
+            vec![reply(200, json!({ "username": "carol" })).after(1500)],
+        ),
+        ("/api/auth/login/start", vec![login_started()]),
+        (
+            "/api/auth/login/finish",
+            vec![reply(200, json!({ "username": "ada" }))],
+        ),
+        ("/api/auth/logout", vec![empty(204)]),
+    ]);
+    let _keys = Passkeys::install();
+    let (handle, root) = mount().await;
+    sign_in_as(&root, "ada").await;
+    click(&root, ".account-sign-out");
+    wait_until("signed out", || find(&root, ".account-open").is_some()).await;
+    sleep(1800).await;
+    assert_eq!(api.sent("/api/auth/me").len(), 1, "the slow /me answered");
+    assert!(find(&root, ".account-name").is_none(), "still signed out");
+    assert_eq!(text_of(&root, ".probe").as_deref(), Some(""));
+    handle.destroy();
+    root.remove();
+}
+
+/// A sign-in still finishing when its dialog is cancelled is abandoned: it
+/// answers neither the cancelled ask nor a newer one.
+#[wasm_bindgen_test]
+async fn a_stale_sign_in_never_answers_a_newer_ask() {
+    ANSWERS.with(|a| a.borrow_mut().clear());
+    let api = Api::install(&[
+        ("/api/auth/me", vec![not_signed_in()]),
+        ("/api/auth/login/start", vec![login_started()]),
+        (
+            "/api/auth/login/finish",
+            vec![
+                reply(200, json!({ "username": "ada" })).after(800),
+                reply(200, json!({ "username": "ada" })),
+            ],
+        ),
+    ]);
+    let _keys = Passkeys::install();
+    let (handle, root) = mount().await;
+    click(&root, ".asker");
+    sleep(30).await;
+    type_username(&root, "ada");
+    sleep(30).await;
+    click(&root, ".account-sign-in");
+    wait_until("the first finish", || {
+        api.sent("/api/auth/login/finish").len() == 1
+    })
+    .await;
+    click(&root, ".account-cancel");
+    sleep(30).await;
+    click(&root, ".asker");
+    sleep(1100).await;
+    assert_eq!(ANSWERS.with(|a| a.borrow().clone()), [false]);
+    assert!(find(&root, ".account-name").is_none());
+    assert_eq!(
+        text_of(&root, ".account-reason").as_deref(),
+        Some(ASK_REASON)
+    );
+    // A sign-in for the newer ask answers it, once.
+    click(&root, ".account-sign-in");
+    wait_until("the sign-in", || {
+        text_of(&root, ".account-name").as_deref() == Some("ada")
+    })
+    .await;
+    assert_eq!(ANSWERS.with(|a| a.borrow().clone()), [false, true]);
+    handle.destroy();
+    root.remove();
+}
+
+#[wasm_bindgen_test]
+async fn enter_while_signing_in_starts_no_second_ceremony() {
+    let api = Api::install(&[
+        ("/api/auth/me", vec![not_signed_in()]),
+        ("/api/auth/login/start", vec![login_started()]),
+        (
+            "/api/auth/login/finish",
+            vec![reply(200, json!({ "username": "ada" })).after(600)],
+        ),
+    ]);
+    let keys = Passkeys::install();
+    let (handle, root) = mount().await;
+    click(&root, ".account-open");
+    sleep(30).await;
+    type_username(&root, "ada");
+    sleep(30).await;
+    submit_form(&root);
+    sleep(100).await;
+    assert!(
+        find(&root, ".account-sign-in")
+            .unwrap()
+            .has_attribute("disabled"),
+        "the ceremony is under way"
+    );
+    submit_form(&root);
+    submit_form(&root);
+    wait_until("the sign-in", || {
+        text_of(&root, ".account-name").as_deref() == Some("ada")
+    })
+    .await;
+    assert_eq!(api.sent("/api/auth/login/start").len(), 1);
+    assert_eq!(keys.calls.borrow().len(), 1);
+    handle.destroy();
+    root.remove();
 }
 
 #[wasm_bindgen_test]
@@ -381,6 +573,8 @@ async fn signing_in_and_out_through_the_account_control() {
     click(&root, ".account-open");
     sleep(30).await;
     assert!(find(&root, ".account-reason").is_none(), "no page asked");
+    let help = text_of(&root, ".account-help").unwrap();
+    assert!(help.contains("can't be recovered"), "{help}");
     type_username(&root, " Ada ");
     sleep(30).await;
     click(&root, ".account-sign-in");

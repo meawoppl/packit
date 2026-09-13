@@ -126,6 +126,9 @@ pub struct ScoreEntry {
     pub submitted_at: chrono::NaiveDateTime,
     /// 1-based position among all submissions for this `n` (smaller side wins).
     pub rank: u32,
+    /// Whether an account submitted it, so `player` is its username. Scores
+    /// from before accounts keep a name anyone could have typed.
+    pub account: bool,
     /// Token of the score's board state; [`ScoreEntry::board_link`] opens it.
     pub board: String,
     /// Whether the board holds the glue the score was submitted with. Scores
@@ -231,6 +234,7 @@ mod tests {
                 .unwrap()
                 .naive_utc(),
             rank: 1,
+            account: true,
             board: "0123456789abcdef01234567".to_string(),
             glue_recorded: true,
         }

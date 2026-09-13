@@ -55,12 +55,13 @@ pub enum Action {
 }
 
 pub enum Msg {
-    Me(Result<Option<String>, Failure>),
     Ask(SignInAsk),
     Act(Action),
-    SignedIn(Result<String, Failure>),
-    Added(Result<(), Failure>),
-    SignedOut(Result<(), Failure>),
+    // Responses, each with the number of the operation it answers.
+    Me(u32, Result<Option<String>, Failure>),
+    SignedIn(u32, Result<String, Failure>),
+    Added(u32, Result<(), Failure>),
+    SignedOut(u32, Result<(), Failure>),
 }
 
 #[derive(Properties, PartialEq)]
@@ -79,9 +80,27 @@ pub struct AccountProvider {
     notice: Option<String>,
     ask: Callback<SignInAsk>,
     act: Callback<Action>,
+    /// Numbers auth operations (the startup `/me`, sign-in, registration,
+    /// adding a passkey, sign-out). Only the latest one's response counts,
+    /// so a slow one can't undo what came after it.
+    op: u32,
 }
 
 impl AccountProvider {
+    /// Start an operation; any still in flight is superseded.
+    fn begin(&mut self) -> u32 {
+        self.op += 1;
+        self.busy = true;
+        self.op
+    }
+
+    /// Drop the operation in flight, so its response changes nothing: a
+    /// sign-in started for one ask never completes another.
+    fn abandon(&mut self) {
+        self.op += 1;
+        self.busy = false;
+    }
+
     fn answer(&mut self, signed_in: bool) {
         if let Some(done) = self.waiting.take() {
             done.emit(signed_in);
@@ -102,7 +121,8 @@ impl Component for AccountProvider {
     type Properties = AccountProviderProps;
 
     fn create(ctx: &Context<Self>) -> Self {
-        ctx.link().send_future(async { Msg::Me(api::me().await) });
+        ctx.link()
+            .send_future(async { Msg::Me(0, api::me().await) });
         Self {
             username: None,
             dialog: None,
@@ -112,16 +132,23 @@ impl Component for AccountProvider {
             notice: None,
             ask: ctx.link().callback(Msg::Ask),
             act: ctx.link().callback(Msg::Act),
+            op: 0,
         }
     }
 
     fn update(&mut self, ctx: &Context<Self>, msg: Self::Message) -> bool {
         match msg {
-            Msg::Me(Ok(Some(username))) => self.signed_in(username),
-            Msg::Me(_) => return false,
+            Msg::Me(op, _) | Msg::SignedIn(op, _) | Msg::Added(op, _) | Msg::SignedOut(op, _)
+                if op != self.op =>
+            {
+                return false;
+            }
+            Msg::Me(_, Ok(Some(username))) => self.signed_in(username),
+            Msg::Me(..) => return false,
             Msg::Ask(ask) => {
                 // A page asks when it has no session, or the server said it
                 // has none, so the account is signed out either way.
+                self.abandon();
                 self.username = None;
                 self.answer(false);
                 self.waiting = Some(ask.done);
@@ -133,49 +160,52 @@ impl Component for AccountProvider {
                 self.error = None;
             }
             Msg::Act(Action::Close) => {
+                self.abandon();
                 self.dialog = None;
                 self.error = None;
                 self.answer(false);
             }
+            // One ceremony at a time, however the form is submitted.
+            Msg::Act(_) if self.busy => return false,
             Msg::Act(Action::SignIn(name)) => {
-                self.busy = true;
+                let op = self.begin();
                 self.error = None;
                 ctx.link()
-                    .send_future(async move { Msg::SignedIn(api::sign_in(&name).await) });
+                    .send_future(async move { Msg::SignedIn(op, api::sign_in(&name).await) });
             }
             Msg::Act(Action::Register(name)) => {
-                self.busy = true;
+                let op = self.begin();
                 self.error = None;
                 ctx.link()
-                    .send_future(async move { Msg::SignedIn(api::register(&name).await) });
+                    .send_future(async move { Msg::SignedIn(op, api::register(&name).await) });
             }
             Msg::Act(Action::AddPasskey) => {
-                self.busy = true;
+                let op = self.begin();
                 self.notice = None;
                 ctx.link()
-                    .send_future(async { Msg::Added(api::add_passkey().await) });
+                    .send_future(async move { Msg::Added(op, api::add_passkey().await) });
             }
             Msg::Act(Action::SignOut) => {
-                self.busy = true;
+                let op = self.begin();
                 self.notice = None;
                 ctx.link()
-                    .send_future(async { Msg::SignedOut(api::sign_out().await) });
+                    .send_future(async move { Msg::SignedOut(op, api::sign_out().await) });
             }
-            Msg::SignedIn(result) => {
+            Msg::SignedIn(_, result) => {
                 self.busy = false;
                 match result {
                     Ok(username) => self.signed_in(username),
                     Err(e) => self.error = Some(e.to_string()),
                 }
             }
-            Msg::Added(result) => {
+            Msg::Added(_, result) => {
                 self.busy = false;
                 self.notice = Some(match result {
                     Ok(()) => "Passkey added. You can sign in with either.".into(),
                     Err(e) => e.to_string(),
                 });
             }
-            Msg::SignedOut(result) => {
+            Msg::SignedOut(_, result) => {
                 self.busy = false;
                 match result {
                     Ok(()) => self.username = None,
@@ -261,10 +291,11 @@ pub fn account_menu() -> Html {
         })
     };
     let onsubmit = {
-        let (act, typed) = (menu.act.clone(), typed.clone());
+        let (act, typed, busy) = (menu.act.clone(), typed.clone(), menu.busy);
         Callback::from(move |e: SubmitEvent| {
             e.prevent_default();
-            if !typed.is_empty() {
+            // Enter submits even while the buttons are disabled.
+            if !typed.is_empty() && !busy {
                 act.emit(Action::SignIn(typed.clone()));
             }
         })
@@ -300,7 +331,7 @@ pub fn account_menu() -> Html {
                         <p class="account-error" role="alert">{ error }</p>
                     }) }
                     <p class="account-help">
-                        { "Sign in with a passkey saved on this device or your phone. A new account needs a username of 3 to 24 letters, digits, - or _." }
+                        { "Sign in with a passkey saved on this device or your phone. A new account needs a username of 3 to 24 letters, digits, - or _. There is no account recovery: keep the passkey in a synced password manager or add a second one, because an account whose passkeys are all lost can't be recovered." }
                     </p>
                 </form>
             }) }
