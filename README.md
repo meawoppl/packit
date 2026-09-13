@@ -56,6 +56,14 @@ Submissions are validated server-side with `shared::geometry::validate`
 using `shared::VALIDATION_TOL`. A score's leaderboard name is its account's
 username.
 
+Submissions and shares carry their doubles as the bits of a board code. JSON
+still carries arrangements elsewhere (`scores.arrangement`, `/api/scores/:id`,
+import and export), and every crate that parses it enables serde_json's
+`float_roundtrip`, so each double comes back bit for bit (the default parser
+can land a ULP off). This doesn't repair scores stored with drift before it.
+jsonb keeps numbers as Postgres `numeric`, which has no negative zero, so a
+stored `-0.0` reads back as `0.0`, an equal value.
+
 ### Board states
 
 A board state is a stored scene: a packing and the glue between its squares
@@ -118,11 +126,17 @@ records and the leaderboards stay public and anonymous.
 - There is no account recovery. An account whose passkeys are all lost can't
   be recovered, so the sign-up help asks players to keep a synced passkey or
   add a second one.
-- The header's account state numbers each auth operation (the startup
-  `/api/auth/me`, sign-in, registration, adding a passkey, sign-out) and
-  applies only the latest one's response. Closing the dialog or a new sign-in
-  request abandons a ceremony in flight, so a late response can't undo a
-  newer sign-in or sign-out, or complete another request.
+- The browser applies a response's `Set-Cookie` whether or not the page
+  still wants it, so requests that set or clear the session cookie
+  (sign-in and registration finishes, sign-out) run one at a time. Each is
+  followed, under the same lock, by an `/api/auth/me` check, and the page
+  shows whichever account the server says the cookie holds. A ceremony
+  cancelled before its finish never sends it. One cancelled while its finish
+  is in flight is signed out again once it lands, so Cancel never leaves a
+  sign-in behind. Until that has settled, no other sign-in, registration or
+  sign-out starts (the dialog says "Finishing sign-in…"), and a late
+  response never answers a dismissed or newer request. The startup `/me`
+  counts only if nothing has happened since.
 - A board records its creator (`board_states.created_by`). Sharing or
   submitting a board that is already stored reuses it unchanged, so it never
   reveals or changes who created it, and boards from before accounts stay

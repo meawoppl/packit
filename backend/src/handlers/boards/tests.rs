@@ -524,15 +524,15 @@ fn the_backfill_writes_rust_board_codes_byte_for_byte() {
             }
             conn.batch_execute(UP_MIGRATIONS[BEFORE_BOARDS])?;
             for (id, original) in ids.into_iter().zip(&legacy) {
-                let (code, recorded): (String, bool) = scores::table
+                let (code, recorded, json): (String, bool, serde_json::Value) = scores::table
                     .inner_join(boards::table)
                     .filter(scores::id.eq(id))
-                    .select((boards::code, scores::glue_recorded))
+                    .select((boards::code, scores::glue_recorded, scores::arrangement))
                     .first(conn)?;
                 // The score holds what was saved, bit for bit, except that
-                // jsonb has no negative zero. It isn't read back through
-                // serde_json, whose default float parsing is best-effort
-                // and rejects Postgres's long decimals near f64::MAX.
+                // jsonb has no negative zero. Read back through serde_json
+                // (with `float_roundtrip`), it is exactly that, Postgres's
+                // long decimals near f64::MAX included.
                 let unsigned = |v: f64| if v == 0.0 { 0.0 } else { v };
                 let stored = Arrangement {
                     squares: original
@@ -542,6 +542,8 @@ fn the_backfill_writes_rust_board_codes_byte_for_byte() {
                         .collect(),
                     ..original.clone()
                 };
+                let read: Arrangement = serde_json::from_value(json).unwrap();
+                assert_eq!(bits(&read), bits(&stored), "seed {seed}");
                 assert_eq!(code, board::encode(&stored, &[]), "seed {seed}");
                 let decoded = board::decode(&code, stored.n).unwrap();
                 assert!(decoded.glues.is_empty());

@@ -149,6 +149,11 @@ main {
     color: var(--error);
 }
 
+.account-status {
+    color: var(--accent-2);
+    font-size: 0.85rem;
+}
+
 .account-help,
 .account-notice {
     color: var(--muted);

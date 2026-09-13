@@ -18,6 +18,10 @@
 //! ```
 //!
 //! `CHROME_BINARY` picks the browser when chromedriver can't find it.
+//!
+//! To race a sign-in's cookie against the page, the harness wraps the app
+//! in [`Hold`], which can delay one login finish's response. It exists only
+//! here; the app itself has no test hooks.
 
 use crate::auth::proxy::ProxyTrust;
 use crate::config::PublicOrigin;
@@ -25,7 +29,10 @@ use crate::db::DbPool;
 use crate::schema::{board_states, passkeys, scores, sessions, users};
 use crate::test_support::test_db;
 use crate::{build_app, AppState};
+use axum::extract::{Request, State};
 use axum::http::Method;
+use axum::middleware::{self, Next};
+use axum::response::Response;
 use chrono::{DateTime, Utc};
 use diesel::prelude::*;
 use fantoccini::elements::Element;
@@ -36,8 +43,10 @@ use shared::glue::{Feature, Glue};
 use shared::{board, Arrangement, Placement};
 use std::net::SocketAddr;
 use std::process::{Child, Command, Stdio};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+use tokio::sync::Notify;
 use url::Url;
 use uuid::Uuid;
 
@@ -136,22 +145,77 @@ async fn start_browser(chromedriver: &str) -> (Driver, Client) {
     }
 }
 
+/// Once armed, holds the response to the next login finish after the
+/// server has handled it: the session exists and its cookie is on its way,
+/// but the browser gets neither until `release` is notified.
+#[derive(Default)]
+struct Hold {
+    armed: AtomicBool,
+    /// Login finishes the server has received.
+    finishes: AtomicUsize,
+    held: Notify,
+    release: Notify,
+}
+
+async fn hold_finish(State(hold): State<Arc<Hold>>, req: Request, next: Next) -> Response {
+    let finish = req.uri().path() == "/api/auth/login/finish";
+    if finish {
+        hold.finishes.fetch_add(1, Ordering::SeqCst);
+    }
+    let response = next.run(req).await;
+    if finish && hold.armed.swap(false, Ordering::SeqCst) {
+        hold.held.notify_one();
+        hold.release.notified().await;
+    }
+    response
+}
+
 /// Serve the app on a free port, as `http://localhost:port`: a passkey
 /// origin browsers accept without TLS.
-async fn serve(pool: DbPool) -> String {
+async fn serve(pool: DbPool) -> (String, Arc<Hold>) {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let origin = format!("http://localhost:{}", listener.local_addr().unwrap().port());
     let public = PublicOrigin::parse(&origin, true).unwrap();
     let state = Arc::new(AppState::new(true, pool, public, ProxyTrust::default()).unwrap());
-    let app = build_app(state).into_make_service_with_connect_info::<SocketAddr>();
+    let hold = Arc::new(Hold::default());
+    let app = build_app(state)
+        .layer(middleware::from_fn_with_state(hold.clone(), hold_finish))
+        .into_make_service_with_connect_info::<SocketAddr>();
     tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-    origin
+    (origin, hold)
+}
+
+/// The app and Chrome with a virtual authenticator, whose id comes back
+/// too; `None` when this run skips browser tests.
+async fn open() -> Option<(Driver, Browser, String)> {
+    let required = std::env::var("PACKIT_E2E").is_ok_and(|v| v == "1");
+    let Ok(chromedriver) = std::env::var("CHROMEDRIVER") else {
+        assert!(!required, "PACKIT_E2E=1 needs CHROMEDRIVER");
+        eprintln!("CHROMEDRIVER not set; skipping");
+        return None;
+    };
+    let Some(pool) = test_db() else {
+        assert!(!required, "PACKIT_E2E=1 needs TEST_DATABASE_URL");
+        eprintln!("TEST_DATABASE_URL not set; skipping");
+        return None;
+    };
+    let (origin, hold) = serve(pool.clone()).await;
+    let (driver, client) = start_browser(&chromedriver).await;
+    let b = Browser {
+        client,
+        origin,
+        pool,
+        hold,
+    };
+    let key = b.add_authenticator().await;
+    Some((driver, b, key))
 }
 
 struct Browser {
     client: Client,
     origin: String,
     pool: DbPool,
+    hold: Arc<Hold>,
 }
 
 impl Browser {
@@ -262,12 +326,53 @@ impl Browser {
     }
 
     /// Type `username` into the open sign-in dialog and press `button`.
-    async fn sign_in_with(&self, username: &str, button: &str) {
+    async fn start_sign_in(&self, username: &str, button: &str) {
         let input = self.find("#account-username").await;
         input.clear().await.unwrap();
         input.send_keys(username).await.unwrap();
         self.click(button).await;
+    }
+
+    /// [`Self::start_sign_in`], then wait for the header to show `username`.
+    async fn sign_in_with(&self, username: &str, button: &str) {
+        self.start_sign_in(username, button).await;
         self.text(".account-name", |t| t == username).await;
+    }
+
+    async fn disabled(&self, css: &str) -> bool {
+        self.find(css)
+            .await
+            .attr("disabled")
+            .await
+            .unwrap()
+            .is_some()
+    }
+
+    fn sessions(&self, owner: Uuid) -> i64 {
+        sessions::table
+            .filter(sessions::user_id.eq(owner))
+            .count()
+            .get_result(&mut self.pool.get().unwrap())
+            .unwrap()
+    }
+
+    fn scores(&self, owner: Uuid) -> i64 {
+        scores::table
+            .filter(scores::user_id.eq(owner))
+            .count()
+            .get_result(&mut self.pool.get().unwrap())
+            .unwrap()
+    }
+
+    /// The username `/api/auth/me` reports for the browser's own cookie,
+    /// read from the page the browser shows for it.
+    async fn me(&self) -> Option<String> {
+        self.goto("/api/auth/me").await;
+        let body = self.text("body", |t| t.contains('{')).await;
+        let json = &body[body.find('{').unwrap()..=body.rfind('}').unwrap()];
+        serde_json::from_str::<Value>(json).unwrap()["username"]
+            .as_str()
+            .map(str::to_owned)
     }
 
     async fn sign_out(&self) {
@@ -341,27 +446,25 @@ fn glued_scene() -> (Arrangement, Vec<Glue>) {
     (arrangement, glues)
 }
 
+/// Two separated squares that settle and certify where they are.
+fn loose_scene() -> Arrangement {
+    let sq = |cx| Placement {
+        cx,
+        cy: 0.6,
+        theta: 0.0,
+    };
+    Arrangement {
+        n: 2,
+        side: unique_side(2.5),
+        squares: vec![sq(0.6), sq(1.9)],
+    }
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn passkeys_gate_sharing_and_submitting_in_a_real_browser() {
-    let required = std::env::var("PACKIT_E2E").is_ok_and(|v| v == "1");
-    let Ok(chromedriver) = std::env::var("CHROMEDRIVER") else {
-        assert!(!required, "PACKIT_E2E=1 needs CHROMEDRIVER");
-        eprintln!("CHROMEDRIVER not set; skipping");
+    let Some((_driver, b, first_key)) = open().await else {
         return;
     };
-    let Some(pool) = test_db() else {
-        assert!(!required, "PACKIT_E2E=1 needs TEST_DATABASE_URL");
-        eprintln!("TEST_DATABASE_URL not set; skipping");
-        return;
-    };
-    let origin = serve(pool.clone()).await;
-    let (_driver, client) = start_browser(&chromedriver).await;
-    let b = Browser {
-        client,
-        origin,
-        pool,
-    };
-    let first_key = b.add_authenticator().await;
     let username = format!("e2e-{}", &Uuid::new_v4().simple().to_string()[..12]);
 
     // A signed-out Share freezes the board and opens sign-in; creating an
@@ -392,22 +495,8 @@ async fn passkeys_gate_sharing_and_submitting_in_a_real_browser() {
     // holds the certified arrangement and its glue exactly. Signed out,
     // Submit freezes both; after signing in again the score is submitted
     // on exactly that board, the same row as the share.
-    let loose = Arrangement {
-        n: 2,
-        side: unique_side(2.5),
-        squares: vec![
-            Placement {
-                cx: 0.5,
-                cy: 0.6,
-                theta: 0.0,
-            },
-            Placement {
-                cx: 1.9,
-                cy: 0.6,
-                theta: 0.0,
-            },
-        ],
-    };
+    let mut loose = loose_scene();
+    loose.squares[0].cx = 0.5;
     // The midpoint of square 0's left edge held on the left wall.
     let wall = vec![Glue {
         a: Feature::Wall(0),
@@ -546,5 +635,84 @@ async fn passkeys_gate_sharing_and_submitting_in_a_real_browser() {
     b.sign_in_with(&username, ".account-sign-in").await;
     assert!(keys()[1].1.is_some(), "the second passkey signed in");
     b.remove_authenticator(second_key).await;
+    b.client.close().await.unwrap();
+}
+
+/// A sign-in cancelled while its finish is on the wire still sets its
+/// cookie when the response lands, whatever the page wants. Nothing else
+/// that changes the session may start until it has; then the page signs
+/// that session out again. The server, the page and a new score all end
+/// up agreeing on the account signed in afterwards.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_cancelled_sign_in_never_leaves_its_session_behind() {
+    let Some((_driver, b, _key)) = open().await else {
+        return;
+    };
+    let tag = &Uuid::new_v4().simple().to_string()[..10];
+    let (first, second) = (format!("e2e-a-{tag}"), format!("e2e-b-{tag}"));
+    b.goto("/").await;
+    for name in [&first, &second] {
+        b.click(".account-open").await;
+        b.sign_in_with(name, ".account-create").await;
+        b.sign_out().await;
+    }
+    let (a, bee) = (b.user_id(&first), b.user_id(&second));
+
+    // A's finish reaches the server, which starts A's session, but the
+    // response carrying A's cookie is held. Cancel doesn't end the wait.
+    b.hold.armed.store(true, Ordering::SeqCst);
+    let finishes = b.hold.finishes.load(Ordering::SeqCst);
+    b.click(".account-open").await;
+    b.start_sign_in(&first, ".account-sign-in").await;
+    tokio::time::timeout(STEP, b.hold.held.notified())
+        .await
+        .expect("A's finish reached the server");
+    assert_eq!(b.sessions(a), 1, "the server started A's session");
+    b.text(".account-status", |t| t == "Finishing sign-in…")
+        .await;
+    b.click(".account-cancel").await;
+
+    // B can't start while A's finish is unresolved: the button stays
+    // disabled and Enter does nothing, so no other finish goes out.
+    b.click(".account-open").await;
+    let input = b.find("#account-username").await;
+    input.clear().await.unwrap();
+    input.send_keys(&second).await.unwrap();
+    assert!(b.disabled(".account-sign-in").await);
+    input.send_keys("\u{E007}").await.unwrap();
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    assert_eq!(
+        b.hold.finishes.load(Ordering::SeqCst),
+        finishes + 1,
+        "no finish for B while A's is held"
+    );
+    assert_eq!(b.sessions(bee), 0);
+
+    // A's response lands, cookie and all. The page signs that session out
+    // again and checks with the server before anything else can start.
+    b.hold.release.notify_one();
+    let started = Instant::now();
+    while b.sessions(a) > 0 || b.disabled(".account-sign-in").await {
+        assert!(started.elapsed() < STEP, "A's session is never signed out");
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert!(b.client.find(Locator::Css(".account-name")).await.is_err());
+    b.click(".account-sign-in").await;
+    b.text(".account-name", |t| t == second).await;
+    assert_eq!(b.hold.finishes.load(Ordering::SeqCst), finishes + 2);
+
+    // The server, the page and a new score agree on B.
+    assert_eq!(b.me().await.as_deref(), Some(second.as_str()));
+    let loose = loose_scene();
+    b.goto(&format!("/play/2?s={}", board::encode(&loose, &[])))
+        .await;
+    let shown = b.text(".account-name", |t| !t.is_empty()).await;
+    assert_eq!(shown, second, "the page shows the cookie's account");
+    b.press("Settle").await;
+    b.text(".pg-status", |t| t.starts_with("Ready")).await;
+    b.press("Submit packing").await;
+    b.text(".pg-status", |t| t.starts_with("Saved!")).await;
+    assert_eq!((b.scores(bee), b.scores(a)), (1, 0), "credited to B");
+    assert_eq!((b.sessions(bee), b.sessions(a)), (1, 0));
     b.client.close().await.unwrap();
 }

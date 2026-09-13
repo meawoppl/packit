@@ -426,7 +426,10 @@ async fn a_slow_me_does_not_overwrite_a_later_sign_in() {
     let _api = Api::install(&[
         (
             "/api/auth/me",
-            vec![reply(200, json!({ "username": "old" })).after(800)],
+            vec![
+                reply(200, json!({ "username": "old" })).after(800),
+                reply(200, json!({ "username": "ada" })),
+            ],
         ),
         ("/api/auth/login/start", vec![login_started()]),
         (
@@ -450,7 +453,11 @@ async fn a_slow_me_does_not_sign_back_in_after_a_sign_out() {
     let api = Api::install(&[
         (
             "/api/auth/me",
-            vec![reply(200, json!({ "username": "carol" })).after(1500)],
+            vec![
+                reply(200, json!({ "username": "carol" })).after(1500),
+                reply(200, json!({ "username": "ada" })),
+                not_signed_in(),
+            ],
         ),
         ("/api/auth/login/start", vec![login_started()]),
         (
@@ -465,20 +472,29 @@ async fn a_slow_me_does_not_sign_back_in_after_a_sign_out() {
     click(&root, ".account-sign-out");
     wait_until("signed out", || find(&root, ".account-open").is_some()).await;
     sleep(1800).await;
-    assert_eq!(api.sent("/api/auth/me").len(), 1, "the slow /me answered");
+    // At startup, then a check after the sign-in and after the sign-out.
+    assert_eq!(api.sent("/api/auth/me").len(), 3, "the slow /me answered");
     assert!(find(&root, ".account-name").is_none(), "still signed out");
     assert_eq!(text_of(&root, ".probe").as_deref(), Some(""));
     handle.destroy();
     root.remove();
 }
 
-/// A sign-in still finishing when its dialog is cancelled is abandoned: it
-/// answers neither the cancelled ask nor a newer one.
+/// A sign-in still finishing when its dialog is cancelled answers neither
+/// the cancelled ask nor a newer one. Nothing else starts until it lands,
+/// and then its session is signed out again.
 #[wasm_bindgen_test]
 async fn a_stale_sign_in_never_answers_a_newer_ask() {
     ANSWERS.with(|a| a.borrow_mut().clear());
     let api = Api::install(&[
-        ("/api/auth/me", vec![not_signed_in()]),
+        (
+            "/api/auth/me",
+            vec![
+                not_signed_in(),
+                not_signed_in(),
+                reply(200, json!({ "username": "ada" })),
+            ],
+        ),
         ("/api/auth/login/start", vec![login_started()]),
         (
             "/api/auth/login/finish",
@@ -487,6 +503,7 @@ async fn a_stale_sign_in_never_answers_a_newer_ask() {
                 reply(200, json!({ "username": "ada" })),
             ],
         ),
+        ("/api/auth/logout", vec![empty(204)]),
     ]);
     let _keys = Passkeys::install();
     let (handle, root) = mount().await;
@@ -502,9 +519,29 @@ async fn a_stale_sign_in_never_answers_a_newer_ask() {
     click(&root, ".account-cancel");
     sleep(30).await;
     click(&root, ".asker");
+    sleep(30).await;
+    assert_eq!(
+        text_of(&root, ".account-status").as_deref(),
+        Some("Finishing sign-in…")
+    );
+    submit_form(&root);
+    assert!(find(&root, ".account-sign-in")
+        .unwrap()
+        .has_attribute("disabled"));
     sleep(1100).await;
+    assert_eq!(
+        api.sent("/api/auth/login/start").len(),
+        1,
+        "nothing started"
+    );
+    assert_eq!(
+        api.sent("/api/auth/logout").len(),
+        1,
+        "the cancelled sign-in's session was signed out"
+    );
     assert_eq!(ANSWERS.with(|a| a.borrow().clone()), [false]);
     assert!(find(&root, ".account-name").is_none());
+    assert!(find(&root, ".account-status").is_none());
     assert_eq!(
         text_of(&root, ".account-reason").as_deref(),
         Some(ASK_REASON)
@@ -520,10 +557,48 @@ async fn a_stale_sign_in_never_answers_a_newer_ask() {
     root.remove();
 }
 
+/// A ceremony cancelled before its finish never sends it, so the session
+/// is never touched.
+#[wasm_bindgen_test]
+async fn a_sign_in_cancelled_before_its_finish_never_sends_it() {
+    let api = Api::install(&[
+        ("/api/auth/me", vec![not_signed_in()]),
+        ("/api/auth/login/start", vec![login_started().after(600)]),
+        (
+            "/api/auth/login/finish",
+            vec![reply(200, json!({ "username": "ada" }))],
+        ),
+    ]);
+    let keys = Passkeys::install();
+    let (handle, root) = mount().await;
+    click(&root, ".account-open");
+    sleep(30).await;
+    type_username(&root, "ada");
+    sleep(30).await;
+    click(&root, ".account-sign-in");
+    sleep(100).await;
+    click(&root, ".account-cancel");
+    sleep(900).await;
+    assert_eq!(keys.calls.borrow().len(), 1, "the passkey step ran");
+    assert!(api.sent("/api/auth/login/finish").is_empty());
+    assert!(find(&root, ".account-name").is_none());
+    // Nothing is left holding the lock.
+    click(&root, ".account-open");
+    sleep(30).await;
+    assert!(!find(&root, ".account-sign-in")
+        .unwrap()
+        .has_attribute("disabled"));
+    handle.destroy();
+    root.remove();
+}
+
 #[wasm_bindgen_test]
 async fn enter_while_signing_in_starts_no_second_ceremony() {
     let api = Api::install(&[
-        ("/api/auth/me", vec![not_signed_in()]),
+        (
+            "/api/auth/me",
+            vec![not_signed_in(), reply(200, json!({ "username": "ada" }))],
+        ),
         ("/api/auth/login/start", vec![login_started()]),
         (
             "/api/auth/login/finish",
@@ -559,7 +634,14 @@ async fn enter_while_signing_in_starts_no_second_ceremony() {
 #[wasm_bindgen_test]
 async fn signing_in_and_out_through_the_account_control() {
     let api = Api::install(&[
-        ("/api/auth/me", vec![not_signed_in()]),
+        (
+            "/api/auth/me",
+            vec![
+                not_signed_in(),
+                reply(200, json!({ "username": "ada" })),
+                not_signed_in(),
+            ],
+        ),
         ("/api/auth/login/start", vec![login_started()]),
         (
             "/api/auth/login/finish",
@@ -615,7 +697,10 @@ async fn signing_in_and_out_through_the_account_control() {
 #[wasm_bindgen_test]
 async fn creating_an_account_converts_the_creation_options() {
     let api = Api::install(&[
-        ("/api/auth/me", vec![not_signed_in()]),
+        (
+            "/api/auth/me",
+            vec![not_signed_in(), reply(200, json!({ "username": "bob" }))],
+        ),
         ("/api/auth/register/start", vec![creation_started("new-1")]),
         (
             "/api/auth/register/finish",
