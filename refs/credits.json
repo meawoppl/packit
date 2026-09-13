@@ -1,0 +1,1990 @@
+[
+  {
+    "n": 1,
+    "side": 1.0,
+    "proven_optimal": true,
+    "packing_by": null,
+    "proof_by": "trivial",
+    "sources": [
+      "https://kingbird.myphotos.cc/packing/squares_in_squares.html"
+    ],
+    "note": "Source says 'Trivial.'"
+  },
+  {
+    "n": 2,
+    "side": 2.0,
+    "proven_optimal": true,
+    "packing_by": null,
+    "proof_by": [
+      {
+        "name": "Frits Göbel",
+        "role": "proved",
+        "date": "early 1979"
+      }
+    ],
+    "other_proofs": [
+      {
+        "name": "Hiroshi Nagamochi",
+        "role": "general theorem s(k^2-1)=s(k^2-2)=k (Theorem 2(i))",
+        "date": "2005"
+      }
+    ],
+    "sources": [
+      "https://kingbird.myphotos.cc/packing/squares_in_squares.html",
+      "https://www.combinatorics.org/ojs/index.php/eljc/article/view/DS7/html_1",
+      "refs/markdown/nagamochi-2005.md",
+      "refs/markdown/bentz-13-46-2010.md"
+    ],
+    "note": "Grid packing, no finder named. KB credits the proof to Göbel (FW says 1979; DS7 Table 2 says Göbel). Nagamochi 2005 later covers n=2=2^2-2 in general."
+  },
+  {
+    "n": 3,
+    "side": 2.0,
+    "proven_optimal": true,
+    "packing_by": null,
+    "proof_by": [
+      {
+        "name": "Frits Göbel",
+        "role": "proved",
+        "date": "early 1979"
+      }
+    ],
+    "other_proofs": [
+      {
+        "name": "Hiroshi Nagamochi",
+        "role": "general theorem s(k^2-1)=s(k^2-2)=k (Theorem 2(i))",
+        "date": "2005"
+      }
+    ],
+    "sources": [
+      "https://kingbird.myphotos.cc/packing/squares_in_squares.html",
+      "https://www.combinatorics.org/ojs/index.php/eljc/article/view/DS7/html_1",
+      "refs/markdown/nagamochi-2005.md",
+      "refs/markdown/bentz-13-46-2010.md"
+    ],
+    "note": "Grid packing, no finder named. KB credits the proof to Göbel; Nagamochi 2005 covers n=3=2^2-1 in general."
+  },
+  {
+    "n": 4,
+    "side": 2.0,
+    "proven_optimal": true,
+    "packing_by": null,
+    "proof_by": "trivial",
+    "sources": [
+      "https://kingbird.myphotos.cc/packing/squares_in_squares.html"
+    ],
+    "note": "Perfect square; source says 'Trivial.'"
+  },
+  {
+    "n": 5,
+    "side": 2.7071067811865475,
+    "proven_optimal": true,
+    "packing_by": [
+      {
+        "name": "Frits Göbel",
+        "role": "found",
+        "date": "1979"
+      }
+    ],
+    "proof_by": [
+      {
+        "name": "Frits Göbel",
+        "role": "proved",
+        "date": "early 1979"
+      }
+    ],
+    "sources": [
+      "https://kingbird.myphotos.cc/packing/squares_in_squares.html",
+      "https://www.combinatorics.org/ojs/index.php/eljc/article/view/DS7/html_1",
+      "refs/markdown/bentz-13-46-2010.md",
+      "refs/markdown/bentz-22-33-2016.md"
+    ],
+    "note": "KB names only the prover. DS7 credits the packing to Göbel: Table 1 lists 'Figure 1, Göbel', and the text credits his diagonal-strip family, which gives s(5)=2+1/sqrt2. Bentz 2010/2016 cite Göbel for s(5)."
+  },
+  {
+    "n": 6,
+    "side": 3.0,
+    "proven_optimal": true,
+    "packing_by": null,
+    "proof_by": [
+      {
+        "name": "Michael Kearney",
+        "role": "proved",
+        "date": "June 2001"
+      },
+      {
+        "name": "Peter Shiu",
+        "role": "proved",
+        "date": "June 2001"
+      }
+    ],
+    "sources": [
+      "https://kingbird.myphotos.cc/packing/squares_in_squares.html",
+      "https://web.archive.org/web/20210113095431/https://erich-friedman.github.io/packing/squinsqu/",
+      "https://www.combinatorics.org/ojs/index.php/eljc/article/view/DS7/html_1",
+      "refs/markdown/stromquist-2003.md",
+      "refs/markdown/bentz-13-46-2010.md"
+    ],
+    "note": "Grid packing, no finder named. Date disagreement: KB says June 2001, FW (2021 archive) says April 2002, and DS7 says the proof was published in 2002 (Elect. J. Comb. 9 #R14). Stromquist 2003 calls it the first published proof. DS7 also mentions unpublished proofs claimed by Walter Stromquist and Trevor Green; those are not credited here."
+  },
+  {
+    "n": 7,
+    "side": 3.0,
+    "proven_optimal": true,
+    "packing_by": null,
+    "proof_by": [
+      {
+        "name": "Erich Friedman",
+        "role": "proved",
+        "date": "1999"
+      }
+    ],
+    "other_proofs": [
+      {
+        "name": "Said El Moumni",
+        "role": "proved (per DS7: 'evidently proved s(7)=s(8)=3'; Studia Sci. Math. Hungar. 35)",
+        "date": "1999"
+      },
+      {
+        "name": "Hiroshi Nagamochi",
+        "role": "general theorem s(k^2-1)=s(k^2-2)=k (Theorem 2(i))",
+        "date": "2005"
+      }
+    ],
+    "sources": [
+      "https://kingbird.myphotos.cc/packing/squares_in_squares.html",
+      "https://web.archive.org/web/20210113095431/https://erich-friedman.github.io/packing/squinsqu/",
+      "https://www.combinatorics.org/ojs/index.php/eljc/article/view/DS7/html_1",
+      "refs/markdown/nagamochi-2005.md",
+      "refs/markdown/bentz-13-46-2010.md"
+    ],
+    "note": "Grid packing, no finder named. KB and FW credit Friedman (DS7 Table 2, Figure 29). DS7 also reports El Moumni's 1999 paper, and an unpublished claim, relayed by Göbel via Schrijver, that Bajmóczy proved s(7)=s(8)=3 (not credited). Bentz 2010 says single values of s(m^2-1) and s(m^2-2) were shown earlier by Göbel, El Moumni and Friedman."
+  },
+  {
+    "n": 8,
+    "side": 3.0,
+    "proven_optimal": true,
+    "packing_by": null,
+    "proof_by": [
+      {
+        "name": "Erich Friedman",
+        "role": "proved",
+        "date": "1999"
+      }
+    ],
+    "other_proofs": [
+      {
+        "name": "Said El Moumni",
+        "role": "proved (per DS7: 'evidently proved s(7)=s(8)=3'; Studia Sci. Math. Hungar. 35)",
+        "date": "1999"
+      },
+      {
+        "name": "Hiroshi Nagamochi",
+        "role": "general theorem s(k^2-1)=s(k^2-2)=k (Theorem 2(i))",
+        "date": "2005"
+      }
+    ],
+    "sources": [
+      "https://kingbird.myphotos.cc/packing/squares_in_squares.html",
+      "https://web.archive.org/web/20210113095431/https://erich-friedman.github.io/packing/squinsqu/",
+      "https://www.combinatorics.org/ojs/index.php/eljc/article/view/DS7/html_1",
+      "refs/markdown/nagamochi-2005.md",
+      "refs/markdown/bentz-13-46-2010.md"
+    ],
+    "note": "Grid packing, no finder named. KB and FW credit Friedman (DS7 Table 2, Figure 25). DS7 also reports El Moumni's 1999 paper, and an unpublished claim, relayed by Göbel via Schrijver, that Bajmóczy proved s(7)=s(8)=3 (not credited). Bentz 2010 says single values of s(m^2-1) and s(m^2-2) were shown earlier by Göbel, El Moumni and Friedman."
+  },
+  {
+    "n": 9,
+    "side": 3.0,
+    "proven_optimal": true,
+    "packing_by": null,
+    "proof_by": "trivial",
+    "sources": [
+      "https://kingbird.myphotos.cc/packing/squares_in_squares.html"
+    ],
+    "note": "Perfect square; source says 'Trivial.'"
+  },
+  {
+    "n": 10,
+    "side": 3.7071067811865475,
+    "proven_optimal": true,
+    "packing_by": [
+      {
+        "name": "Frits Göbel",
+        "role": "found",
+        "date": "early 1979"
+      }
+    ],
+    "proof_by": [
+      {
+        "name": "Walter Stromquist",
+        "role": "proved",
+        "date": "2003"
+      }
+    ],
+    "sources": [
+      "https://kingbird.myphotos.cc/packing/squares_in_squares.html",
+      "https://www.combinatorics.org/ojs/index.php/eljc/article/view/DS7/html_1",
+      "refs/markdown/stromquist-2003.md",
+      "refs/markdown/bentz-13-46-2010.md",
+      "refs/markdown/bentz-22-33-2016.md"
+    ],
+    "note": "The FW 2021 archive shows only 'Proved by Walter Stromquist in 2003' with no finder. KB and DS7 Table 1 credit the packing to Göbel."
+  },
+  {
+    "n": 11,
+    "side": 3.87708359002281,
+    "proven_optimal": false,
+    "packing_by": [
+      {
+        "name": "Walter Trump",
+        "role": "found",
+        "date": "1979"
+      }
+    ],
+    "proof_by": null,
+    "sources": [
+      "https://kingbird.myphotos.cc/packing/squares_in_squares.html",
+      "https://web.archive.org/web/20210113095431/https://erich-friedman.github.io/packing/squinsqu/",
+      "https://www.combinatorics.org/ojs/index.php/eljc/article/view/DS7/html_1",
+      "refs/markdown/stromquist-2003.md"
+    ],
+    "note": "Not proven optimal; Stromquist 2003 gives the lower bound 2+4/sqrt5. DS7 notes the discovery 'has been incorrectly attributed to Gustafson and Thule'. Stromquist 2003 also says the packing is 'due to Walter Trump'."
+  },
+  {
+    "n": 12,
+    "side": 4.0,
+    "proven_optimal": false,
+    "packing_by": null,
+    "proof_by": null,
+    "sources": [
+      "https://kingbird.myphotos.cc/packing/squares_in_squares.html"
+    ],
+    "note": "Not pictured. KB: 'For the n ≤ 324 not pictured, the trivial packing (with no tilted squares) is the best known packing.' No finder is named, and there's no optimality proof."
+  },
+  {
+    "n": 13,
+    "side": 4.0,
+    "proven_optimal": true,
+    "packing_by": null,
+    "proof_by": [
+      {
+        "name": "Wolfram Bentz",
+        "role": "proved",
+        "date": "August 2009"
+      }
+    ],
+    "sources": [
+      "https://kingbird.myphotos.cc/packing/squares_in_squares.html",
+      "refs/markdown/bentz-13-46-2010.md"
+    ],
+    "note": "Grid packing, no finder named. KB dates the proof August 2009; the paper appeared in EJC 17 (2010) #R126."
+  },
+  {
+    "n": 14,
+    "side": 4.0,
+    "proven_optimal": true,
+    "packing_by": null,
+    "proof_by": [
+      {
+        "name": "Erich Friedman",
+        "role": "proved",
+        "date": "1999"
+      }
+    ],
+    "other_proofs": [
+      {
+        "name": "Hiroshi Nagamochi",
+        "role": "general theorem s(k^2-1)=s(k^2-2)=k (Theorem 2(i))",
+        "date": "2005"
+      }
+    ],
+    "sources": [
+      "https://kingbird.myphotos.cc/packing/squares_in_squares.html",
+      "https://web.archive.org/web/20210113095431/https://erich-friedman.github.io/packing/squinsqu/",
+      "https://www.combinatorics.org/ojs/index.php/eljc/article/view/DS7/html_1",
+      "refs/markdown/stromquist-2003.md",
+      "refs/markdown/nagamochi-2005.md"
+    ],
+    "note": "Grid packing, no finder named. DS7 Table 2 credits Friedman (Figure 31). DS7 says Stromquist 'claimed to know how to prove' it (unpublished)."
+  },
+  {
+    "n": 15,
+    "side": 4.0,
+    "proven_optimal": true,
+    "packing_by": null,
+    "proof_by": [
+      {
+        "name": "Erich Friedman",
+        "role": "proved",
+        "date": "1999"
+      }
+    ],
+    "other_proofs": [
+      {
+        "name": "Said El Moumni",
+        "role": "proved (per DS7: 'evidently proved ... s(15)=4')",
+        "date": "1999"
+      },
+      {
+        "name": "Hiroshi Nagamochi",
+        "role": "general theorem s(k^2-1)=s(k^2-2)=k (Theorem 2(i))",
+        "date": "2005"
+      }
+    ],
+    "sources": [
+      "https://kingbird.myphotos.cc/packing/squares_in_squares.html",
+      "https://web.archive.org/web/20210113095431/https://erich-friedman.github.io/packing/squinsqu/",
+      "https://www.combinatorics.org/ojs/index.php/eljc/article/view/DS7/html_1",
+      "refs/markdown/stromquist-2003.md",
+      "refs/markdown/nagamochi-2005.md"
+    ],
+    "note": "Grid packing, no finder named. DS7 Table 2 credits Friedman (Figure 26)."
+  },
+  {
+    "n": 16,
+    "side": 4.0,
+    "proven_optimal": true,
+    "packing_by": null,
+    "proof_by": "trivial",
+    "sources": [
+      "https://kingbird.myphotos.cc/packing/squares_in_squares.html",
+      "refs/markdown/nagamochi-2005.md"
+    ],
+    "note": "Perfect square, not pictured; s(k^2)=k (Nagamochi 2005 intro: 'easily observe')."
+  },
+  {
+    "n": 17,
+    "side": 4.67553009360455,
+    "proven_optimal": false,
+    "packing_by": [
+      {
+        "name": "John Bidwell",
+        "role": "found",
+        "date": "1998"
+      }
+    ],
+    "prior_credits": [
+      {
+        "name": "Pertti Hämäläinen",
+        "role": "based on packing found by",
+        "date": "1980"
+      }
+    ],
+    "proof_by": null,
+    "sources": [
+      "https://kingbird.myphotos.cc/packing/squares_in_squares.html",
+      "https://web.archive.org/web/20210113095431/https://erich-friedman.github.io/packing/squinsqu/",
+      "https://www.combinatorics.org/ojs/index.php/eljc/article/view/DS7/html_1"
+    ],
+    "note": "Year disagreement: KB says 1998, FW says 1997; DS7 cites 'J. Bidwell, 1998, private communication'. DS7: 'In 1980, Pertti Hämäläinen improved Göbel's packing of 17' and Bidwell then improved it."
+  },
+  {
+    "n": 18,
+    "side": 4.82287565553229,
+    "proven_optimal": false,
+    "packing_by": [
+      {
+        "name": "Pertti Hämäläinen",
+        "role": "found",
+        "date": "1980"
+      }
+    ],
+    "prior_credits": [
+      {
+        "name": "Mats Gustafsson",
+        "role": "pictured alternative (minimal rotated squares) found by",
+        "date": "1981"
+      }
+    ],
+    "proof_by": null,
+    "sources": [
+      "https://kingbird.myphotos.cc/packing/squares_in_squares.html",
+      "https://web.archive.org/web/20210113095431/https://erich-friedman.github.io/packing/squinsqu/",
+      "https://www.combinatorics.org/ojs/index.php/eljc/article/view/DS7/html_1"
+    ],
+    "note": "Year disagreement: KB and DS7 say 1980, FW says 1979. DS7 spells the name 'Gustafson'. KB's picture is Gustafsson's alternative, but the record is credited to Hämäläinen."
+  },
+  {
+    "n": 19,
+    "side": 4.88561808316412,
+    "proven_optimal": false,
+    "packing_by": [
+      {
+        "name": "Robert Wainwright",
+        "role": "found first",
+        "date": "late 1979"
+      }
+    ],
+    "prior_credits": [
+      {
+        "name": "Charles F. Cottingham",
+        "role": "based on packing found by",
+        "date": "early 1979"
+      }
+    ],
+    "proof_by": null,
+    "sources": [
+      "https://kingbird.myphotos.cc/packing/squares_in_squares.html",
+      "https://web.archive.org/web/20210113095431/https://erich-friedman.github.io/packing/squinsqu/",
+      "https://www.combinatorics.org/ojs/index.php/eljc/article/view/DS7/html_1"
+    ],
+    "note": null
+  },
+  {
+    "n": 20,
+    "side": 5.0,
+    "proven_optimal": false,
+    "packing_by": null,
+    "proof_by": null,
+    "sources": [
+      "https://kingbird.myphotos.cc/packing/squares_in_squares.html"
+    ],
+    "note": "Not pictured. KB: 'For the n ≤ 324 not pictured, the trivial packing (with no tilted squares) is the best known packing.' No finder is named, and there's no optimality proof."
+  },
+  {
+    "n": 21,
+    "side": 5.0,
+    "proven_optimal": false,
+    "packing_by": null,
+    "proof_by": null,
+    "sources": [
+      "https://kingbird.myphotos.cc/packing/squares_in_squares.html"
+    ],
+    "note": "Not pictured. KB: 'For the n ≤ 324 not pictured, the trivial packing (with no tilted squares) is the best known packing.' No finder is named, and there's no optimality proof."
+  },
+  {
+    "n": 22,
+    "side": 5.0,
+    "proven_optimal": true,
+    "packing_by": null,
+    "proof_by": [
+      {
+        "name": "Wolfram Bentz",
+        "role": "proved",
+        "date": "October 2018"
+      }
+    ],
+    "sources": [
+      "https://kingbird.myphotos.cc/packing/squares_in_squares.html",
+      "refs/markdown/bentz-22-33-2016.md"
+    ],
+    "note": "Grid packing, no finder named. Date disagreement: KB says October 2018, but the refs paper is arXiv:1606.03746 (2016 preprint). I didn't check which arXiv revision matches the KB date."
+  },
+  {
+    "n": 23,
+    "side": 5.0,
+    "proven_optimal": true,
+    "packing_by": null,
+    "proof_by": [
+      {
+        "name": "Hiroshi Nagamochi",
+        "role": "proved",
+        "date": "2005"
+      }
+    ],
+    "sources": [
+      "https://kingbird.myphotos.cc/packing/squares_in_squares.html",
+      "https://www.combinatorics.org/ojs/index.php/eljc/article/view/DS7/html_1",
+      "refs/markdown/nagamochi-2005.md"
+    ],
+    "note": "Grid packing, no finder named. Nagamochi Theorem 2(i), n=5^2-2."
+  },
+  {
+    "n": 24,
+    "side": 5.0,
+    "proven_optimal": true,
+    "packing_by": null,
+    "proof_by": [
+      {
+        "name": "Erich Friedman",
+        "role": "proved",
+        "date": "1999"
+      }
+    ],
+    "other_proofs": [
+      {
+        "name": "Hiroshi Nagamochi",
+        "role": "general theorem s(k^2-1)=s(k^2-2)=k (Theorem 2(i))",
+        "date": "2005"
+      }
+    ],
+    "sources": [
+      "https://kingbird.myphotos.cc/packing/squares_in_squares.html",
+      "https://web.archive.org/web/20210113095431/https://erich-friedman.github.io/packing/squinsqu/",
+      "https://www.combinatorics.org/ojs/index.php/eljc/article/view/DS7/html_1",
+      "refs/markdown/stromquist-2003.md",
+      "refs/markdown/nagamochi-2005.md"
+    ],
+    "note": "Grid packing, no finder named. DS7 Table 2 credits Friedman (Figure 27). DS7 says Stromquist claimed an unpublished proof."
+  },
+  {
+    "n": 25,
+    "side": 5.0,
+    "proven_optimal": true,
+    "packing_by": null,
+    "proof_by": "trivial",
+    "sources": [
+      "https://kingbird.myphotos.cc/packing/squares_in_squares.html",
+      "refs/markdown/nagamochi-2005.md"
+    ],
+    "note": "Perfect square, not pictured."
+  },
+  {
+    "n": 26,
+    "side": 5.62132034355964,
+    "proven_optimal": false,
+    "packing_by": [
+      {
+        "name": "Erich Friedman",
+        "role": "found",
+        "date": "1997"
+      }
+    ],
+    "prior_credits": [
+      {
+        "name": "Evert Stenlund",
+        "role": "unextends the s(37) found by",
+        "date": "early 1980"
+      }
+    ],
+    "proof_by": null,
+    "sources": [
+      "https://kingbird.myphotos.cc/packing/squares_in_squares.html",
+      "https://web.archive.org/web/20210113095431/https://erich-friedman.github.io/packing/squinsqu/",
+      "https://www.combinatorics.org/ojs/index.php/eljc/article/view/DS7/html_1"
+    ],
+    "note": null
+  },
+  {
+    "n": 27,
+    "side": 5.70710678118654,
+    "proven_optimal": false,
+    "packing_by": [
+      {
+        "name": "Frits Göbel",
+        "role": "found",
+        "date": "early 1979"
+      }
+    ],
+    "proof_by": null,
+    "sources": [
+      "https://kingbird.myphotos.cc/packing/squares_in_squares.html",
+      "https://web.archive.org/web/20210113095431/https://erich-friedman.github.io/packing/squinsqu/",
+      "https://www.combinatorics.org/ojs/index.php/eljc/article/view/DS7/html_1"
+    ],
+    "note": null
+  },
+  {
+    "n": 28,
+    "side": 5.82444461667405,
+    "proven_optimal": false,
+    "packing_by": [
+      {
+        "name": "David Ellsworth",
+        "role": "found",
+        "date": "December 2025"
+      }
+    ],
+    "proof_by": null,
+    "sources": [
+      "https://kingbird.myphotos.cc/packing/squares_in_squares.html"
+    ],
+    "note": "Found with Ellsworth's modified version of Thomas Schadt's simulated-annealing program. It replaces Göbel's 3+2sqrt2 record (FW, DS7)."
+  },
+  {
+    "n": 29,
+    "side": 5.93383346267692,
+    "proven_optimal": false,
+    "packing_by": [
+      {
+        "name": "Thomas Schadt",
+        "role": "found",
+        "date": "December 2025"
+      },
+      {
+        "name": "David Ellsworth",
+        "role": "optimized",
+        "date": "December 2025"
+      }
+    ],
+    "prior_credits": [
+      {
+        "name": "Thierry Gensane",
+        "role": "similar to packing found by",
+        "date": "April 2004"
+      },
+      {
+        "name": "Philippe Ryckelynck",
+        "role": "similar to packing found by",
+        "date": "April 2004"
+      }
+    ],
+    "proof_by": null,
+    "sources": [
+      "https://kingbird.myphotos.cc/packing/squares_in_squares.html",
+      "https://web.archive.org/web/20210113095431/https://erich-friedman.github.io/packing/squinsqu/",
+      "https://www.combinatorics.org/ojs/index.php/eljc/article/view/DS7/html_1"
+    ],
+    "note": "Superseded record: FW and DS7 credit Gensane and Ryckelynck (DS7 has s=5.9344). The current value 5.93383346 is Schadt's."
+  },
+  {
+    "n": 30,
+    "side": 6.0,
+    "proven_optimal": false,
+    "packing_by": null,
+    "proof_by": null,
+    "sources": [
+      "https://kingbird.myphotos.cc/packing/squares_in_squares.html"
+    ],
+    "note": "Not pictured. KB: 'For the n ≤ 324 not pictured, the trivial packing (with no tilted squares) is the best known packing.' No finder is named, and there's no optimality proof."
+  },
+  {
+    "n": 31,
+    "side": 6.0,
+    "proven_optimal": false,
+    "packing_by": null,
+    "proof_by": null,
+    "sources": [
+      "https://kingbird.myphotos.cc/packing/squares_in_squares.html"
+    ],
+    "note": "Not pictured. KB: 'For the n ≤ 324 not pictured, the trivial packing (with no tilted squares) is the best known packing.' No finder is named, and there's no optimality proof."
+  },
+  {
+    "n": 32,
+    "side": 6.0,
+    "proven_optimal": false,
+    "packing_by": null,
+    "proof_by": null,
+    "sources": [
+      "https://kingbird.myphotos.cc/packing/squares_in_squares.html"
+    ],
+    "note": "Not pictured. KB: 'For the n ≤ 324 not pictured, the trivial packing (with no tilted squares) is the best known packing.' No finder is named, and there's no optimality proof."
+  },
+  {
+    "n": 33,
+    "side": 6.0,
+    "proven_optimal": true,
+    "packing_by": null,
+    "proof_by": [
+      {
+        "name": "Wolfram Bentz",
+        "role": "proved",
+        "date": "October 2018"
+      }
+    ],
+    "sources": [
+      "https://kingbird.myphotos.cc/packing/squares_in_squares.html",
+      "refs/markdown/bentz-22-33-2016.md"
+    ],
+    "note": "Grid packing, no finder named. Same date issue as n=22: KB says October 2018, arXiv:1606.03746 is from 2016."
+  },
+  {
+    "n": 34,
+    "side": 6.0,
+    "proven_optimal": true,
+    "packing_by": null,
+    "proof_by": [
+      {
+        "name": "Hiroshi Nagamochi",
+        "role": "proved",
+        "date": "2005"
+      }
+    ],
+    "sources": [
+      "https://kingbird.myphotos.cc/packing/squares_in_squares.html",
+      "https://www.combinatorics.org/ojs/index.php/eljc/article/view/DS7/html_1",
+      "refs/markdown/nagamochi-2005.md"
+    ],
+    "note": "Grid packing, no finder named. n=6^2-2."
+  },
+  {
+    "n": 35,
+    "side": 6.0,
+    "proven_optimal": true,
+    "packing_by": null,
+    "proof_by": [
+      {
+        "name": "Erich Friedman",
+        "role": "proved",
+        "date": "1999"
+      }
+    ],
+    "other_proofs": [
+      {
+        "name": "Hiroshi Nagamochi",
+        "role": "general theorem s(k^2-1)=s(k^2-2)=k (Theorem 2(i))",
+        "date": "2005"
+      }
+    ],
+    "sources": [
+      "https://kingbird.myphotos.cc/packing/squares_in_squares.html",
+      "https://web.archive.org/web/20210113095431/https://erich-friedman.github.io/packing/squinsqu/",
+      "https://www.combinatorics.org/ojs/index.php/eljc/article/view/DS7/html_1",
+      "refs/markdown/stromquist-2003.md",
+      "refs/markdown/nagamochi-2005.md"
+    ],
+    "note": "Grid packing, no finder named. DS7 Table 2 credits Friedman (Figure 28)."
+  },
+  {
+    "n": 36,
+    "side": 6.0,
+    "proven_optimal": true,
+    "packing_by": null,
+    "proof_by": "trivial",
+    "sources": [
+      "https://kingbird.myphotos.cc/packing/squares_in_squares.html",
+      "refs/markdown/nagamochi-2005.md"
+    ],
+    "note": "Perfect square, not pictured."
+  },
+  {
+    "n": 37,
+    "side": 6.59861960924436,
+    "proven_optimal": false,
+    "packing_by": [
+      {
+        "name": "David W. Cantrell",
+        "role": "found",
+        "date": "September 2002"
+      }
+    ],
+    "prior_credits": [
+      {
+        "name": "Evert Stenlund",
+        "role": "improves upon the s(37) found by",
+        "date": "early 1980"
+      }
+    ],
+    "proof_by": null,
+    "sources": [
+      "https://kingbird.myphotos.cc/packing/squares_in_squares.html",
+      "https://web.archive.org/web/20210113095431/https://erich-friedman.github.io/packing/squinsqu/",
+      "https://www.combinatorics.org/ojs/index.php/eljc/article/view/DS7/html_1"
+    ],
+    "note": "Disagreement on the predecessor: KB says Cantrell improved Stenlund's 1980 packing, while DS7 says 'In 1997, I [Friedman] improved the packing for 37 ... In 2002, David Cantrell improved this slightly'."
+  },
+  {
+    "n": 38,
+    "side": 6.70710678118654,
+    "proven_optimal": false,
+    "packing_by": [
+      {
+        "name": "Frits Göbel",
+        "role": "found",
+        "date": "early 1979"
+      }
+    ],
+    "proof_by": null,
+    "sources": [
+      "https://kingbird.myphotos.cc/packing/squares_in_squares.html",
+      "https://web.archive.org/web/20210113095431/https://erich-friedman.github.io/packing/squinsqu/",
+      "https://www.combinatorics.org/ojs/index.php/eljc/article/view/DS7/html_1"
+    ],
+    "note": null
+  },
+  {
+    "n": 39,
+    "side": 6.81072208306864,
+    "proven_optimal": false,
+    "packing_by": [
+      {
+        "name": "Thomas Schadt",
+        "role": "found",
+        "date": "January 2026"
+      },
+      {
+        "name": "David Ellsworth",
+        "role": "refound and refined",
+        "date": "January 2026"
+      },
+      {
+        "name": "David Ellsworth",
+        "role": "optimized",
+        "date": "January 2026"
+      }
+    ],
+    "proof_by": null,
+    "sources": [
+      "https://kingbird.myphotos.cc/packing/squares_in_squares.html",
+      "https://web.archive.org/web/20210113095431/https://erich-friedman.github.io/packing/squinsqu/",
+      "https://www.combinatorics.org/ojs/index.php/eljc/article/view/DS7/html_1"
+    ],
+    "note": "Superseded record: FW and DS7 credit Cantrell (August 2002, s=6.8189)."
+  },
+  {
+    "n": 40,
+    "side": 6.82842712474619,
+    "proven_optimal": false,
+    "packing_by": [
+      {
+        "name": "Frits Göbel",
+        "role": "found",
+        "date": "early 1979"
+      }
+    ],
+    "proof_by": null,
+    "sources": [
+      "https://kingbird.myphotos.cc/packing/squares_in_squares.html",
+      "https://web.archive.org/web/20210113095431/https://erich-friedman.github.io/packing/squinsqu/",
+      "https://www.combinatorics.org/ojs/index.php/eljc/article/view/DS7/html_1"
+    ],
+    "note": "Rigid."
+  },
+  {
+    "n": 41,
+    "side": 6.9266930944688,
+    "proven_optimal": false,
+    "packing_by": [
+      {
+        "name": "Thomas Schadt",
+        "role": "found",
+        "date": "December 2025"
+      },
+      {
+        "name": "David Ellsworth",
+        "role": "refound and refined",
+        "date": "December 2025-January 2026"
+      },
+      {
+        "name": "David Ellsworth",
+        "role": "optimized",
+        "date": "January 2026"
+      }
+    ],
+    "proof_by": null,
+    "sources": [
+      "https://kingbird.myphotos.cc/packing/squares_in_squares.html",
+      "https://web.archive.org/web/20210113095431/https://erich-friedman.github.io/packing/squinsqu/",
+      "https://www.combinatorics.org/ojs/index.php/eljc/article/view/DS7/html_1"
+    ],
+    "note": "Superseded records: FW credits DeVincentis (April 2014, 6.937+), and DS7 credits Cantrell (2005, 6.9473), who improved Cottingham's 1979 packing."
+  },
+  {
+    "n": 42,
+    "side": 7.0,
+    "proven_optimal": false,
+    "packing_by": null,
+    "proof_by": null,
+    "sources": [
+      "https://kingbird.myphotos.cc/packing/squares_in_squares.html"
+    ],
+    "note": "Not pictured. KB: 'For the n ≤ 324 not pictured, the trivial packing (with no tilted squares) is the best known packing.' No finder is named, and there's no optimality proof."
+  },
+  {
+    "n": 43,
+    "side": 7.0,
+    "proven_optimal": false,
+    "packing_by": null,
+    "proof_by": null,
+    "sources": [
+      "https://kingbird.myphotos.cc/packing/squares_in_squares.html"
+    ],
+    "note": "Not pictured. KB: 'For the n ≤ 324 not pictured, the trivial packing (with no tilted squares) is the best known packing.' No finder is named, and there's no optimality proof."
+  },
+  {
+    "n": 44,
+    "side": 7.0,
+    "proven_optimal": false,
+    "packing_by": null,
+    "proof_by": null,
+    "sources": [
+      "https://kingbird.myphotos.cc/packing/squares_in_squares.html"
+    ],
+    "note": "Not pictured. KB: 'For the n ≤ 324 not pictured, the trivial packing (with no tilted squares) is the best known packing.' No finder is named, and there's no optimality proof."
+  },
+  {
+    "n": 45,
+    "side": 7.0,
+    "proven_optimal": false,
+    "packing_by": null,
+    "proof_by": null,
+    "sources": [
+      "https://kingbird.myphotos.cc/packing/squares_in_squares.html"
+    ],
+    "note": "Not pictured. KB: 'For the n ≤ 324 not pictured, the trivial packing (with no tilted squares) is the best known packing.' No finder is named, and there's no optimality proof."
+  },
+  {
+    "n": 46,
+    "side": 7.0,
+    "proven_optimal": true,
+    "packing_by": null,
+    "proof_by": [
+      {
+        "name": "Wolfram Bentz",
+        "role": "proved",
+        "date": "August 2009"
+      }
+    ],
+    "sources": [
+      "https://kingbird.myphotos.cc/packing/squares_in_squares.html",
+      "refs/markdown/bentz-13-46-2010.md"
+    ],
+    "note": "Grid packing, no finder named. KB says August 2009; the paper appeared in EJC 2010."
+  },
+  {
+    "n": 47,
+    "side": 7.0,
+    "proven_optimal": true,
+    "packing_by": null,
+    "proof_by": [
+      {
+        "name": "Hiroshi Nagamochi",
+        "role": "proved",
+        "date": "2005"
+      }
+    ],
+    "sources": [
+      "https://kingbird.myphotos.cc/packing/squares_in_squares.html",
+      "https://www.combinatorics.org/ojs/index.php/eljc/article/view/DS7/html_1",
+      "refs/markdown/nagamochi-2005.md"
+    ],
+    "note": "Grid packing, no finder named. Nagamochi Theorem 2(i), n=7^2-2."
+  },
+  {
+    "n": 48,
+    "side": 7.0,
+    "proven_optimal": true,
+    "packing_by": null,
+    "proof_by": [
+      {
+        "name": "Hiroshi Nagamochi",
+        "role": "proved",
+        "date": "2005"
+      }
+    ],
+    "sources": [
+      "https://kingbird.myphotos.cc/packing/squares_in_squares.html",
+      "https://www.combinatorics.org/ojs/index.php/eljc/article/view/DS7/html_1",
+      "refs/markdown/nagamochi-2005.md"
+    ],
+    "note": "Grid packing, no finder named. Nagamochi Theorem 2(i), n=7^2-1."
+  },
+  {
+    "n": 49,
+    "side": 7.0,
+    "proven_optimal": true,
+    "packing_by": null,
+    "proof_by": "trivial",
+    "sources": [
+      "https://kingbird.myphotos.cc/packing/squares_in_squares.html",
+      "refs/markdown/nagamochi-2005.md"
+    ],
+    "note": "Perfect square, not pictured."
+  },
+  {
+    "n": 50,
+    "side": 7.571428571428571,
+    "proven_optimal": false,
+    "packing_by": [
+      {
+        "name": "Thomas Schadt",
+        "role": "found",
+        "date": "December 2025"
+      },
+      {
+        "name": "David Ellsworth",
+        "role": "optimized"
+      }
+    ],
+    "proof_by": null,
+    "sources": [
+      "https://kingbird.myphotos.cc/packing/squares_in_squares.html",
+      "https://web.archive.org/web/20210113095431/https://erich-friedman.github.io/packing/squinsqu/",
+      "https://www.combinatorics.org/ojs/index.php/eljc/article/view/DS7/html_1"
+    ],
+    "note": "KB gives no date for Ellsworth's optimization. Superseded record: FW credits Cantrell (September 2002, 7.598+); DS7 Table 1 gives 7.5987 with no author."
+  },
+  {
+    "n": 51,
+    "side": 7.70079923541701,
+    "proven_optimal": false,
+    "packing_by": [
+      {
+        "name": "Thomas Schadt",
+        "role": "found",
+        "date": "January 2026"
+      },
+      {
+        "name": "David Ellsworth",
+        "role": "refound",
+        "date": "January 2026"
+      },
+      {
+        "name": "David Ellsworth",
+        "role": "optimized",
+        "date": "February 2026"
+      }
+    ],
+    "proof_by": null,
+    "sources": [
+      "https://kingbird.myphotos.cc/packing/squares_in_squares.html",
+      "https://web.archive.org/web/20210113095431/https://erich-friedman.github.io/packing/squinsqu/",
+      "https://www.combinatorics.org/ojs/index.php/eljc/article/view/DS7/html_1"
+    ],
+    "note": "Superseded record: FW and DS7 credit Károly Hajba (July 2009, 7.7044)."
+  },
+  {
+    "n": 52,
+    "side": 7.70710678118654,
+    "proven_optimal": false,
+    "packing_by": [
+      {
+        "name": "Frits Göbel",
+        "role": "found",
+        "date": "early 1979"
+      }
+    ],
+    "proof_by": null,
+    "sources": [
+      "https://kingbird.myphotos.cc/packing/squares_in_squares.html",
+      "https://web.archive.org/web/20210113095431/https://erich-friedman.github.io/packing/squinsqu/",
+      "https://www.combinatorics.org/ojs/index.php/eljc/article/view/DS7/html_1"
+    ],
+    "note": null
+  },
+  {
+    "n": 53,
+    "side": 7.82287565553229,
+    "proven_optimal": false,
+    "packing_by": [
+      {
+        "name": "David W. Cantrell",
+        "role": "found",
+        "date": "September 2002"
+      },
+      {
+        "name": "David W. Cantrell",
+        "role": "improved",
+        "date": "December 2024"
+      },
+      {
+        "name": "David Ellsworth",
+        "role": "improved",
+        "date": "February 2026"
+      },
+      {
+        "name": "David Ellsworth",
+        "role": "optimized",
+        "date": "February 2026"
+      }
+    ],
+    "proof_by": null,
+    "sources": [
+      "https://kingbird.myphotos.cc/packing/squares_in_squares.html",
+      "https://web.archive.org/web/20210113095431/https://erich-friedman.github.io/packing/squinsqu/",
+      "https://www.combinatorics.org/ojs/index.php/eljc/article/view/DS7/html_1"
+    ],
+    "note": "FW prints s = '5 + 2√2 = 7.823+'. 5+2sqrt2 is 7.828, so the expression disagrees with FW's own decimal. KB's (13+sqrt7)/2 = 7.82288 is consistent. DS7 has Cantrell, 7.8231."
+  },
+  {
+    "n": 54,
+    "side": 7.84666719284348,
+    "proven_optimal": false,
+    "packing_by": [
+      {
+        "name": "David W. Cantrell",
+        "role": "found",
+        "date": "October 2005"
+      },
+      {
+        "name": "Joe DeVincentis",
+        "role": "improved",
+        "date": "April 2014"
+      }
+    ],
+    "proof_by": null,
+    "sources": [
+      "https://kingbird.myphotos.cc/packing/squares_in_squares.html",
+      "https://web.archive.org/web/20210113095431/https://erich-friedman.github.io/packing/squinsqu/",
+      "https://www.combinatorics.org/ojs/index.php/eljc/article/view/DS7/html_1"
+    ],
+    "note": "FW names only DeVincentis (April 2014); DS7 (2009) credits Cantrell's 2005 packing."
+  },
+  {
+    "n": 55,
+    "side": 7.94577100750391,
+    "proven_optimal": false,
+    "packing_by": [
+      {
+        "name": "Thomas Schadt",
+        "role": "found",
+        "date": "January 2026"
+      },
+      {
+        "name": "David Ellsworth",
+        "role": "refound",
+        "date": "February 2026"
+      },
+      {
+        "name": "David Ellsworth",
+        "role": "improved",
+        "date": "February 2026"
+      },
+      {
+        "name": "David Ellsworth",
+        "role": "optimized",
+        "date": "February 2026"
+      }
+    ],
+    "proof_by": null,
+    "sources": [
+      "https://kingbird.myphotos.cc/packing/squares_in_squares.html",
+      "https://web.archive.org/web/20210113095431/https://erich-friedman.github.io/packing/squinsqu/",
+      "https://www.combinatorics.org/ojs/index.php/eljc/article/view/DS7/html_1"
+    ],
+    "note": "Schadt started from a state found by his program that reimplements the Gensane & Ryckelynck algorithm. Superseded records: FW credits DeVincentis (April 2014, 7.954+), DS7 credits Cantrell (7.9871)."
+  },
+  {
+    "n": 56,
+    "side": 8.0,
+    "proven_optimal": false,
+    "packing_by": null,
+    "proof_by": null,
+    "sources": [
+      "https://kingbird.myphotos.cc/packing/squares_in_squares.html"
+    ],
+    "note": "Not pictured. KB: 'For the n ≤ 324 not pictured, the trivial packing (with no tilted squares) is the best known packing.' No finder is named, and there's no optimality proof."
+  },
+  {
+    "n": 57,
+    "side": 8.0,
+    "proven_optimal": false,
+    "packing_by": null,
+    "proof_by": null,
+    "sources": [
+      "https://kingbird.myphotos.cc/packing/squares_in_squares.html"
+    ],
+    "note": "Not pictured. KB: 'For the n ≤ 324 not pictured, the trivial packing (with no tilted squares) is the best known packing.' No finder is named, and there's no optimality proof."
+  },
+  {
+    "n": 58,
+    "side": 8.0,
+    "proven_optimal": false,
+    "packing_by": null,
+    "proof_by": null,
+    "sources": [
+      "https://kingbird.myphotos.cc/packing/squares_in_squares.html"
+    ],
+    "note": "Not pictured. KB: 'For the n ≤ 324 not pictured, the trivial packing (with no tilted squares) is the best known packing.' No finder is named, and there's no optimality proof."
+  },
+  {
+    "n": 59,
+    "side": 8.0,
+    "proven_optimal": false,
+    "packing_by": null,
+    "proof_by": null,
+    "sources": [
+      "https://kingbird.myphotos.cc/packing/squares_in_squares.html"
+    ],
+    "note": "Not pictured. KB: 'For the n ≤ 324 not pictured, the trivial packing (with no tilted squares) is the best known packing.' No finder is named, and there's no optimality proof."
+  },
+  {
+    "n": 60,
+    "side": 8.0,
+    "proven_optimal": false,
+    "packing_by": null,
+    "proof_by": null,
+    "sources": [
+      "https://kingbird.myphotos.cc/packing/squares_in_squares.html"
+    ],
+    "note": "Not pictured. KB: 'For the n ≤ 324 not pictured, the trivial packing (with no tilted squares) is the best known packing.' No finder is named, and there's no optimality proof."
+  },
+  {
+    "n": 61,
+    "side": 8.0,
+    "proven_optimal": false,
+    "packing_by": null,
+    "proof_by": null,
+    "sources": [
+      "https://kingbird.myphotos.cc/packing/squares_in_squares.html"
+    ],
+    "note": "Not pictured. KB: 'For the n ≤ 324 not pictured, the trivial packing (with no tilted squares) is the best known packing.' No finder is named, and there's no optimality proof."
+  },
+  {
+    "n": 62,
+    "side": 8.0,
+    "proven_optimal": true,
+    "packing_by": null,
+    "proof_by": [
+      {
+        "name": "Hiroshi Nagamochi",
+        "role": "proved",
+        "date": "2005"
+      }
+    ],
+    "sources": [
+      "https://kingbird.myphotos.cc/packing/squares_in_squares.html",
+      "https://www.combinatorics.org/ojs/index.php/eljc/article/view/DS7/html_1",
+      "refs/markdown/nagamochi-2005.md"
+    ],
+    "note": "Grid packing, no finder named. Nagamochi Theorem 2(i), n=8^2-2."
+  },
+  {
+    "n": 63,
+    "side": 8.0,
+    "proven_optimal": true,
+    "packing_by": null,
+    "proof_by": [
+      {
+        "name": "Hiroshi Nagamochi",
+        "role": "proved",
+        "date": "2005"
+      }
+    ],
+    "sources": [
+      "https://kingbird.myphotos.cc/packing/squares_in_squares.html",
+      "https://www.combinatorics.org/ojs/index.php/eljc/article/view/DS7/html_1",
+      "refs/markdown/nagamochi-2005.md"
+    ],
+    "note": "Grid packing, no finder named. Nagamochi Theorem 2(i), n=8^2-1."
+  },
+  {
+    "n": 64,
+    "side": 8.0,
+    "proven_optimal": true,
+    "packing_by": null,
+    "proof_by": "trivial",
+    "sources": [
+      "https://kingbird.myphotos.cc/packing/squares_in_squares.html",
+      "refs/markdown/nagamochi-2005.md"
+    ],
+    "note": "Perfect square, not pictured."
+  },
+  {
+    "n": 65,
+    "side": 8.53553390593273,
+    "proven_optimal": false,
+    "packing_by": [
+      {
+        "name": "Frits Göbel",
+        "role": "found",
+        "date": "early 1979"
+      }
+    ],
+    "proof_by": null,
+    "sources": [
+      "https://kingbird.myphotos.cc/packing/squares_in_squares.html",
+      "https://web.archive.org/web/20210113095431/https://erich-friedman.github.io/packing/squinsqu/",
+      "https://www.combinatorics.org/ojs/index.php/eljc/article/view/DS7/html_1"
+    ],
+    "note": null
+  },
+  {
+    "n": 66,
+    "side": 8.65685424949238,
+    "proven_optimal": false,
+    "packing_by": [
+      {
+        "name": "Evert Stenlund",
+        "role": "found",
+        "date": "early 1980"
+      }
+    ],
+    "proof_by": null,
+    "sources": [
+      "https://kingbird.myphotos.cc/packing/squares_in_squares.html",
+      "https://web.archive.org/web/20210113095431/https://erich-friedman.github.io/packing/squinsqu/",
+      "https://www.combinatorics.org/ojs/index.php/eljc/article/view/DS7/html_1"
+    ],
+    "note": null
+  },
+  {
+    "n": 67,
+    "side": 8.70710678118654,
+    "proven_optimal": false,
+    "disputed": true,
+    "packing_by": [
+      {
+        "name": "Evert Stenlund",
+        "role": "found (per the current Squares in Squares page)",
+        "date": "early 1980"
+      },
+      {
+        "name": "Frits Göbel",
+        "role": "found (per Friedman's original page and survey DS7)",
+        "date": "1979"
+      }
+    ],
+    "prior_credits": [
+      {
+        "name": "Frits Göbel",
+        "role": "extends the s(52) found by",
+        "date": "early 1979"
+      }
+    ],
+    "proof_by": null,
+    "sources": [
+      "https://kingbird.myphotos.cc/packing/squares_in_squares.html",
+      "https://web.archive.org/web/20210113095431/https://erich-friedman.github.io/packing/squinsqu/",
+      "https://www.combinatorics.org/ojs/index.php/eljc/article/view/DS7/html_1"
+    ],
+    "note": "DISAGREEMENT: KB credits Stenlund, extending Göbel's s(52). FW says 'Found by Frits Göbel in 1979', and DS7 Table 1 credits Göbel (Figure 1, his diagonal-strip family)."
+  },
+  {
+    "n": 68,
+    "side": 8.79929702767095,
+    "proven_optimal": false,
+    "packing_by": [
+      {
+        "name": "Sigvart Brendberg",
+        "role": "found",
+        "date": "June 2023"
+      },
+      {
+        "name": "Thomas Schadt",
+        "role": "improved",
+        "date": "December 2025"
+      },
+      {
+        "name": "David Ellsworth",
+        "role": "optimized",
+        "date": "December 2025"
+      },
+      {
+        "name": "Joost de Winter",
+        "role": "improved (working with unspecified AI)",
+        "date": "August 2026"
+      },
+      {
+        "name": "Allen Chang",
+        "role": "improved and optimized (working with GPT-6 Astra)",
+        "date": "September 2026"
+      },
+      {
+        "name": "TheMagicAnimals",
+        "role": "helped Allen Chang (handle, as quoted by source)",
+        "date": "September 2026"
+      }
+    ],
+    "proof_by": null,
+    "sources": [
+      "https://kingbird.myphotos.cc/packing/squares_in_squares.html",
+      "https://web.archive.org/web/20210113095431/https://erich-friedman.github.io/packing/squinsqu/",
+      "https://www.combinatorics.org/ojs/index.php/eljc/article/view/DS7/html_1"
+    ],
+    "note": "KB: 'Not yet verified to be a full analytic optimization.' Superseded record: FW and DS7 credit Cantrell (September 2002, 15/2+sqrt7/2)."
+  },
+  {
+    "n": 69,
+    "side": 8.82719465572973,
+    "proven_optimal": false,
+    "packing_by": [
+      {
+        "name": "Maurizio Morandi",
+        "role": "found",
+        "date": "June 2010"
+      },
+      {
+        "name": "David W. Cantrell",
+        "role": "improved",
+        "date": "August 2023"
+      },
+      {
+        "name": "hmbelvedere",
+        "role": "improved (undisclosed iterative method, 'probably with AI'; handle)",
+        "date": "July 2026"
+      },
+      {
+        "name": "David Ellsworth",
+        "role": "refound",
+        "date": "September 2026"
+      },
+      {
+        "name": "David Ellsworth",
+        "role": "optimized",
+        "date": "September 2026"
+      }
+    ],
+    "proof_by": null,
+    "sources": [
+      "https://kingbird.myphotos.cc/packing/squares_in_squares.html",
+      "https://web.archive.org/web/20210113095431/https://erich-friedman.github.io/packing/squinsqu/",
+      "https://www.combinatorics.org/ojs/index.php/eljc/article/view/DS7/html_1"
+    ],
+    "note": "FW credits Morandi (June 2010, 8.828+). DS7 (2009) credits Cantrell (2002, 8.8562), who improved Friedman's 1997 packing."
+  },
+  {
+    "n": 70,
+    "side": 8.881666757009,
+    "proven_optimal": false,
+    "packing_by": [
+      {
+        "name": "Joe DeVincentis",
+        "role": "found",
+        "date": "April 2014"
+      }
+    ],
+    "proof_by": null,
+    "sources": [
+      "https://kingbird.myphotos.cc/packing/squares_in_squares.html",
+      "https://web.archive.org/web/20210113095431/https://erich-friedman.github.io/packing/squinsqu/",
+      "https://www.combinatorics.org/ojs/index.php/eljc/article/view/DS7/html_1"
+    ],
+    "note": "Superseded by this: DS7 (2009) credits Cantrell (8.9121)."
+  },
+  {
+    "n": 71,
+    "side": 8.94407155757031,
+    "proven_optimal": false,
+    "packing_by": [
+      {
+        "name": "Thomas Schadt",
+        "role": "found",
+        "date": "December 2025"
+      },
+      {
+        "name": "David Ellsworth",
+        "role": "optimized",
+        "date": "January 2026"
+      }
+    ],
+    "prior_credits": [
+      {
+        "name": "David W. Cantrell",
+        "role": "improves upon the s(71) found by",
+        "date": "October 2005"
+      }
+    ],
+    "proof_by": null,
+    "sources": [
+      "https://kingbird.myphotos.cc/packing/squares_in_squares.html",
+      "https://web.archive.org/web/20210113095431/https://erich-friedman.github.io/packing/squinsqu/",
+      "https://www.combinatorics.org/ojs/index.php/eljc/article/view/DS7/html_1"
+    ],
+    "note": "Disagreement on the predecessor: KB says Schadt improved Cantrell's October 2005 s(71) (DS7: 8.9633). FW's record before that was DeVincentis (April 2014, 8.960+), which is smaller than Cantrell's."
+  },
+  {
+    "n": 72,
+    "side": 9.0,
+    "proven_optimal": false,
+    "packing_by": null,
+    "proof_by": null,
+    "sources": [
+      "https://kingbird.myphotos.cc/packing/squares_in_squares.html"
+    ],
+    "note": "Not pictured. KB: 'For the n ≤ 324 not pictured, the trivial packing (with no tilted squares) is the best known packing.' No finder is named, and there's no optimality proof."
+  },
+  {
+    "n": 73,
+    "side": 9.0,
+    "proven_optimal": false,
+    "packing_by": null,
+    "proof_by": null,
+    "sources": [
+      "https://kingbird.myphotos.cc/packing/squares_in_squares.html"
+    ],
+    "note": "Not pictured. KB: 'For the n ≤ 324 not pictured, the trivial packing (with no tilted squares) is the best known packing.' No finder is named, and there's no optimality proof."
+  },
+  {
+    "n": 74,
+    "side": 9.0,
+    "proven_optimal": false,
+    "packing_by": null,
+    "proof_by": null,
+    "sources": [
+      "https://kingbird.myphotos.cc/packing/squares_in_squares.html"
+    ],
+    "note": "Not pictured. KB: 'For the n ≤ 324 not pictured, the trivial packing (with no tilted squares) is the best known packing.' No finder is named, and there's no optimality proof."
+  },
+  {
+    "n": 75,
+    "side": 9.0,
+    "proven_optimal": false,
+    "packing_by": null,
+    "proof_by": null,
+    "sources": [
+      "https://kingbird.myphotos.cc/packing/squares_in_squares.html"
+    ],
+    "note": "Not pictured. KB: 'For the n ≤ 324 not pictured, the trivial packing (with no tilted squares) is the best known packing.' No finder is named, and there's no optimality proof."
+  },
+  {
+    "n": 76,
+    "side": 9.0,
+    "proven_optimal": false,
+    "packing_by": null,
+    "proof_by": null,
+    "sources": [
+      "https://kingbird.myphotos.cc/packing/squares_in_squares.html"
+    ],
+    "note": "Not pictured. KB: 'For the n ≤ 324 not pictured, the trivial packing (with no tilted squares) is the best known packing.' No finder is named, and there's no optimality proof."
+  },
+  {
+    "n": 77,
+    "side": 9.0,
+    "proven_optimal": false,
+    "packing_by": null,
+    "proof_by": null,
+    "sources": [
+      "https://kingbird.myphotos.cc/packing/squares_in_squares.html"
+    ],
+    "note": "Not pictured. KB: 'For the n ≤ 324 not pictured, the trivial packing (with no tilted squares) is the best known packing.' No finder is named, and there's no optimality proof."
+  },
+  {
+    "n": 78,
+    "side": 9.0,
+    "proven_optimal": false,
+    "packing_by": null,
+    "proof_by": null,
+    "sources": [
+      "https://kingbird.myphotos.cc/packing/squares_in_squares.html"
+    ],
+    "note": "Not pictured. KB: 'For the n ≤ 324 not pictured, the trivial packing (with no tilted squares) is the best known packing.' No finder is named, and there's no optimality proof."
+  },
+  {
+    "n": 79,
+    "side": 9.0,
+    "proven_optimal": true,
+    "packing_by": null,
+    "proof_by": [
+      {
+        "name": "Hiroshi Nagamochi",
+        "role": "proved",
+        "date": "2005"
+      }
+    ],
+    "sources": [
+      "https://kingbird.myphotos.cc/packing/squares_in_squares.html",
+      "https://www.combinatorics.org/ojs/index.php/eljc/article/view/DS7/html_1",
+      "refs/markdown/nagamochi-2005.md"
+    ],
+    "note": "Grid packing, no finder named. Nagamochi Theorem 2(i), n=9^2-2."
+  },
+  {
+    "n": 80,
+    "side": 9.0,
+    "proven_optimal": true,
+    "packing_by": null,
+    "proof_by": [
+      {
+        "name": "Hiroshi Nagamochi",
+        "role": "proved",
+        "date": "2005"
+      }
+    ],
+    "sources": [
+      "https://kingbird.myphotos.cc/packing/squares_in_squares.html",
+      "https://www.combinatorics.org/ojs/index.php/eljc/article/view/DS7/html_1",
+      "refs/markdown/nagamochi-2005.md"
+    ],
+    "note": "Grid packing, no finder named. Nagamochi Theorem 2(i), n=9^2-1."
+  },
+  {
+    "n": 81,
+    "side": 9.0,
+    "proven_optimal": true,
+    "packing_by": null,
+    "proof_by": "trivial",
+    "sources": [
+      "https://kingbird.myphotos.cc/packing/squares_in_squares.html",
+      "refs/markdown/nagamochi-2005.md"
+    ],
+    "note": "Perfect square, not pictured."
+  },
+  {
+    "n": 82,
+    "side": 9.53553390593273,
+    "proven_optimal": false,
+    "packing_by": [
+      {
+        "name": "Frits Göbel",
+        "role": "found",
+        "date": "early 1979"
+      }
+    ],
+    "proof_by": null,
+    "sources": [
+      "https://kingbird.myphotos.cc/packing/squares_in_squares.html",
+      "https://web.archive.org/web/20210113095431/https://erich-friedman.github.io/packing/squinsqu/",
+      "https://www.combinatorics.org/ojs/index.php/eljc/article/view/DS7/html_1"
+    ],
+    "note": "Adds two 'L's to Göbel's s(65). DS7 Table 1 names no author (non-primitive), but the text credits it to Göbel's s(65) plus an L."
+  },
+  {
+    "n": 83,
+    "side": 9.63475764863108,
+    "proven_optimal": false,
+    "packing_by": [
+      {
+        "name": "Károly Hajba",
+        "role": "found",
+        "date": "September 2024"
+      },
+      {
+        "name": "David W. Cantrell",
+        "role": "improved",
+        "date": "November 2024"
+      },
+      {
+        "name": "Allen Chang",
+        "role": "improved (with GPT-5.6 Sol and GPT-6 Astra); polynomial root solution",
+        "date": "September 2026"
+      },
+      {
+        "name": "David Ellsworth",
+        "role": "optimized",
+        "date": "September 2026"
+      }
+    ],
+    "prior_credits": [
+      {
+        "name": "Evert Stenlund",
+        "role": "improved upon the s(83) found by",
+        "date": "early 1980"
+      },
+      {
+        "name": "John Bidwell",
+        "role": "Cantrell's improvement extends the s(17) found by",
+        "date": "1998"
+      }
+    ],
+    "proof_by": null,
+    "sources": [
+      "https://kingbird.myphotos.cc/packing/squares_in_squares.html",
+      "https://web.archive.org/web/20210113095431/https://erich-friedman.github.io/packing/squinsqu/",
+      "https://www.combinatorics.org/ojs/index.php/eljc/article/view/DS7/html_1"
+    ],
+    "note": "Superseded record: FW credits Stenlund (1980, 4+4sqrt2); DS7 Table 1 names no author."
+  },
+  {
+    "n": 84,
+    "side": 9.70710678118654,
+    "proven_optimal": false,
+    "disputed": true,
+    "packing_by": [
+      {
+        "name": "Evert Stenlund",
+        "role": "found (per the current Squares in Squares page)",
+        "date": "early 1980"
+      },
+      {
+        "name": "Frits Göbel",
+        "role": "found (per Friedman's original page and survey DS7)",
+        "date": "1979"
+      }
+    ],
+    "prior_credits": [
+      {
+        "name": "Frits Göbel",
+        "role": "extends the s(52) found by",
+        "date": "early 1979"
+      }
+    ],
+    "proof_by": null,
+    "sources": [
+      "https://kingbird.myphotos.cc/packing/squares_in_squares.html",
+      "https://web.archive.org/web/20210113095431/https://erich-friedman.github.io/packing/squinsqu/",
+      "https://www.combinatorics.org/ojs/index.php/eljc/article/view/DS7/html_1"
+    ],
+    "note": "DISAGREEMENT (as for n=67): KB credits Stenlund, but FW says 'Found by Frits Göbel in 1979' and DS7 Table 1 credits Göbel (Figure 1)."
+  },
+  {
+    "n": 85,
+    "side": 9.74264068711928,
+    "proven_optimal": false,
+    "packing_by": [
+      {
+        "name": "Erich Friedman",
+        "role": "found",
+        "date": "1997"
+      }
+    ],
+    "proof_by": null,
+    "sources": [
+      "https://kingbird.myphotos.cc/packing/squares_in_squares.html",
+      "https://web.archive.org/web/20210113095431/https://erich-friedman.github.io/packing/squinsqu/",
+      "https://www.combinatorics.org/ojs/index.php/eljc/article/view/DS7/html_1"
+    ],
+    "note": null
+  },
+  {
+    "n": 86,
+    "side": 9.82287565553229,
+    "proven_optimal": false,
+    "packing_by": [
+      {
+        "name": "Erich Friedman",
+        "role": "found",
+        "date": "1997"
+      }
+    ],
+    "prior_credits": [
+      {
+        "name": "Mats Gustafsson",
+        "role": "extends the alternative s(18) packing found by",
+        "date": "1981"
+      }
+    ],
+    "proof_by": null,
+    "sources": [
+      "https://kingbird.myphotos.cc/packing/squares_in_squares.html",
+      "https://web.archive.org/web/20210113095431/https://erich-friedman.github.io/packing/squinsqu/",
+      "https://www.combinatorics.org/ojs/index.php/eljc/article/view/DS7/html_1"
+    ],
+    "note": null
+  },
+  {
+    "n": 87,
+    "side": 9.83881526994826,
+    "proven_optimal": false,
+    "packing_by": [
+      {
+        "name": "David Ellsworth",
+        "role": "found",
+        "date": "December 2024"
+      },
+      {
+        "name": "David W. Cantrell",
+        "role": "improved",
+        "date": "January 2025"
+      },
+      {
+        "name": "David Ellsworth",
+        "role": "improved",
+        "date": "February 2026"
+      },
+      {
+        "name": "David Ellsworth",
+        "role": "optimized",
+        "date": "February 2026"
+      },
+      {
+        "name": "Allen Chang",
+        "role": "improved and optimized (working with GPT-6 Astra)",
+        "date": "September 2026"
+      },
+      {
+        "name": "TheMagicAnimals",
+        "role": "helped Allen Chang (handle, as quoted by source)",
+        "date": "September 2026"
+      }
+    ],
+    "prior_credits": [
+      {
+        "name": "Károly Hajba",
+        "role": "based on the s(107) found by",
+        "date": "November 2024"
+      },
+      {
+        "name": "Joe DeVincentis",
+        "role": "based on the s(54) found by",
+        "date": "April 2014"
+      }
+    ],
+    "proof_by": null,
+    "sources": [
+      "https://kingbird.myphotos.cc/packing/squares_in_squares.html",
+      "https://web.archive.org/web/20210113095431/https://erich-friedman.github.io/packing/squinsqu/",
+      "https://www.combinatorics.org/ojs/index.php/eljc/article/view/DS7/html_1"
+    ],
+    "note": "KB: 'Not yet verified to be a full analytic optimization.' Superseded record: FW and DS7 credit Cantrell (August 2002, 9.8520)."
+  },
+  {
+    "n": 88,
+    "side": 9.88815305375857,
+    "proven_optimal": false,
+    "packing_by": [
+      {
+        "name": "David Ellsworth",
+        "role": "found",
+        "date": "November 2024"
+      },
+      {
+        "name": "David W. Cantrell",
+        "role": "improved (independently)",
+        "date": "January 2025"
+      },
+      {
+        "name": "David Ellsworth",
+        "role": "improved (independently)",
+        "date": "January 2025"
+      }
+    ],
+    "prior_credits": [
+      {
+        "name": "David W. Cantrell",
+        "role": "adapts and extends the s(37) improvement found by",
+        "date": "September 2002"
+      },
+      {
+        "name": "Erich Friedman",
+        "role": "improves upon the s(88) found by",
+        "date": "1997"
+      },
+      {
+        "name": "Charles F. Cottingham",
+        "role": "Friedman's s(88) extended the s(41) found by",
+        "date": "1979"
+      }
+    ],
+    "proof_by": null,
+    "sources": [
+      "https://kingbird.myphotos.cc/packing/squares_in_squares.html",
+      "https://web.archive.org/web/20210113095431/https://erich-friedman.github.io/packing/squinsqu/",
+      "https://www.combinatorics.org/ojs/index.php/eljc/article/view/DS7/html_1"
+    ],
+    "note": "Disagreement on the predecessor: KB says Ellsworth improved Friedman's 1997 s(88), but FW and DS7 credit the prior record to Cantrell (August 2002, 9.9018). KB: 'Improvement by Thomas Schadt pending', so the value may change."
+  },
+  {
+    "n": 89,
+    "side": 9.94974746830583,
+    "proven_optimal": false,
+    "packing_by": [
+      {
+        "name": "Evert Stenlund",
+        "role": "found",
+        "date": "early 1980"
+      }
+    ],
+    "prior_credits": [
+      {
+        "name": "Frits Göbel",
+        "role": "continues a pattern found by",
+        "date": "early 1979"
+      }
+    ],
+    "proof_by": null,
+    "sources": [
+      "https://kingbird.myphotos.cc/packing/squares_in_squares.html",
+      "https://web.archive.org/web/20210113095431/https://erich-friedman.github.io/packing/squinsqu/",
+      "https://www.combinatorics.org/ojs/index.php/eljc/article/view/DS7/html_1"
+    ],
+    "note": "FW and DS7 Table 1 credit Stenlund. DS7's text lists 89 among the best-known packings from Göbel's formula, so it's consistent with Stenlund continuing Göbel's pattern."
+  },
+  {
+    "n": 90,
+    "side": 10.0,
+    "proven_optimal": false,
+    "packing_by": null,
+    "proof_by": null,
+    "sources": [
+      "https://kingbird.myphotos.cc/packing/squares_in_squares.html"
+    ],
+    "note": "Not pictured. KB: 'For the n ≤ 324 not pictured, the trivial packing (with no tilted squares) is the best known packing.' No finder is named, and there's no optimality proof."
+  },
+  {
+    "n": 91,
+    "side": 10.0,
+    "proven_optimal": false,
+    "packing_by": null,
+    "proof_by": null,
+    "sources": [
+      "https://kingbird.myphotos.cc/packing/squares_in_squares.html"
+    ],
+    "note": "Not pictured. KB: 'For the n ≤ 324 not pictured, the trivial packing (with no tilted squares) is the best known packing.' No finder is named, and there's no optimality proof."
+  },
+  {
+    "n": 92,
+    "side": 10.0,
+    "proven_optimal": false,
+    "packing_by": null,
+    "proof_by": null,
+    "sources": [
+      "https://kingbird.myphotos.cc/packing/squares_in_squares.html"
+    ],
+    "note": "Not pictured. KB: 'For the n ≤ 324 not pictured, the trivial packing (with no tilted squares) is the best known packing.' No finder is named, and there's no optimality proof."
+  },
+  {
+    "n": 93,
+    "side": 10.0,
+    "proven_optimal": false,
+    "packing_by": null,
+    "proof_by": null,
+    "sources": [
+      "https://kingbird.myphotos.cc/packing/squares_in_squares.html"
+    ],
+    "note": "Not pictured. KB: 'For the n ≤ 324 not pictured, the trivial packing (with no tilted squares) is the best known packing.' No finder is named, and there's no optimality proof."
+  },
+  {
+    "n": 94,
+    "side": 10.0,
+    "proven_optimal": false,
+    "packing_by": null,
+    "proof_by": null,
+    "sources": [
+      "https://kingbird.myphotos.cc/packing/squares_in_squares.html"
+    ],
+    "note": "Not pictured. KB: 'For the n ≤ 324 not pictured, the trivial packing (with no tilted squares) is the best known packing.' No finder is named, and there's no optimality proof."
+  },
+  {
+    "n": 95,
+    "side": 10.0,
+    "proven_optimal": false,
+    "packing_by": null,
+    "proof_by": null,
+    "sources": [
+      "https://kingbird.myphotos.cc/packing/squares_in_squares.html"
+    ],
+    "note": "Not pictured. KB: 'For the n ≤ 324 not pictured, the trivial packing (with no tilted squares) is the best known packing.' No finder is named, and there's no optimality proof."
+  },
+  {
+    "n": 96,
+    "side": 10.0,
+    "proven_optimal": false,
+    "packing_by": null,
+    "proof_by": null,
+    "sources": [
+      "https://kingbird.myphotos.cc/packing/squares_in_squares.html"
+    ],
+    "note": "Not pictured. KB: 'For the n ≤ 324 not pictured, the trivial packing (with no tilted squares) is the best known packing.' No finder is named, and there's no optimality proof."
+  },
+  {
+    "n": 97,
+    "side": 10.0,
+    "proven_optimal": false,
+    "packing_by": null,
+    "proof_by": null,
+    "sources": [
+      "https://kingbird.myphotos.cc/packing/squares_in_squares.html"
+    ],
+    "note": "Not pictured. KB: 'For the n ≤ 324 not pictured, the trivial packing (with no tilted squares) is the best known packing.' No finder is named, and there's no optimality proof."
+  },
+  {
+    "n": 98,
+    "side": 10.0,
+    "proven_optimal": true,
+    "packing_by": null,
+    "proof_by": [
+      {
+        "name": "Hiroshi Nagamochi",
+        "role": "proved",
+        "date": "2005"
+      }
+    ],
+    "sources": [
+      "https://kingbird.myphotos.cc/packing/squares_in_squares.html",
+      "refs/markdown/nagamochi-2005.md"
+    ],
+    "note": "Grid packing, no finder named. Nagamochi Theorem 2(i), n=10^2-2."
+  },
+  {
+    "n": 99,
+    "side": 10.0,
+    "proven_optimal": true,
+    "packing_by": null,
+    "proof_by": [
+      {
+        "name": "Hiroshi Nagamochi",
+        "role": "proved",
+        "date": "2005"
+      }
+    ],
+    "sources": [
+      "https://kingbird.myphotos.cc/packing/squares_in_squares.html",
+      "refs/markdown/nagamochi-2005.md"
+    ],
+    "note": "Grid packing, no finder named. Nagamochi Theorem 2(i), n=10^2-1."
+  },
+  {
+    "n": 100,
+    "side": 10.0,
+    "proven_optimal": true,
+    "packing_by": null,
+    "proof_by": "trivial",
+    "sources": [
+      "https://kingbird.myphotos.cc/packing/squares_in_squares.html",
+      "refs/markdown/nagamochi-2005.md"
+    ],
+    "note": "Perfect square, not pictured."
+  }
+]
