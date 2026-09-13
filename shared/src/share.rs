@@ -2,22 +2,48 @@
 //! `/play/:n`. Little-endian layout: version `u8`, `n` as `u16`, `side` as
 //! `f64`, then `cx`, `cy`, `theta` as `f64` for each square. Full `f64`
 //! precision keeps a validated packing exactly as it was measured.
+//!
+//! A glue trailer follows only when there is at least one glue, so glue-free
+//! codes keep the layout above: tag `u8` (`b'G'`), trailer version `u8`, glue
+//! count `u16` (at least 1), then each glue's two features. A feature is kind
+//! `u8` (0 edge, 1 corner, 2 midpoint, 3 wall), square `u16` (0 for a wall),
+//! and its edge, corner, or wall index `u8`.
 
+use crate::glue::{self, Feature, Glue, MAX_GLUES};
 use crate::{Arrangement, Placement, MAX_N};
 
 const VERSION: u8 = 1;
 const HEADER_BYTES: usize = 1 + 2 + 8;
 const SQUARE_BYTES: usize = 3 * 8;
+const GLUE_TAG: u8 = b'G';
+const GLUE_VERSION: u8 = 1;
+const TRAILER_BYTES: usize = 1 + 1 + 2;
+const FEATURE_BYTES: usize = 1 + 2 + 1;
 /// Coordinate bound for loaded arrangements.
 const MAX_COORD: f64 = 1000.0;
 
-/// Hex length of a share code for `n` squares.
-fn hex_len(n: u32) -> usize {
-    2 * (HEADER_BYTES + SQUARE_BYTES * n as usize)
+/// A shared scene: the packing and the glue between its features.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Snapshot {
+    pub arrangement: Arrangement,
+    pub glues: Vec<Glue>,
 }
 
-pub fn encode(a: &Arrangement) -> String {
-    let mut bytes = Vec::with_capacity(hex_len(a.n) / 2);
+/// Longest valid share code, for request size limits.
+pub const MAX_LEN: usize = hex_len(MAX_N, MAX_GLUES);
+
+/// Hex length of a share code for `n` squares and `glues` glues.
+const fn hex_len(n: u32, glues: usize) -> usize {
+    let trailer = if glues == 0 {
+        0
+    } else {
+        TRAILER_BYTES + 2 * FEATURE_BYTES * glues
+    };
+    2 * (HEADER_BYTES + SQUARE_BYTES * n as usize + trailer)
+}
+
+pub fn encode(a: &Arrangement, glues: &[Glue]) -> String {
+    let mut bytes = Vec::with_capacity(hex_len(a.n, glues.len()) / 2);
     bytes.push(VERSION);
     bytes.extend_from_slice(&(a.n as u16).to_le_bytes());
     bytes.extend_from_slice(&a.side.to_le_bytes());
@@ -26,22 +52,26 @@ pub fn encode(a: &Arrangement) -> String {
             bytes.extend_from_slice(&v.to_le_bytes());
         }
     }
+    if !glues.is_empty() {
+        bytes.extend_from_slice(&[GLUE_TAG, GLUE_VERSION]);
+        bytes.extend_from_slice(&(glues.len() as u16).to_le_bytes());
+        for f in glues.iter().flat_map(|g| [g.a, g.b]) {
+            let (kind, square, index) = match f {
+                Feature::Edge { square, edge } => (0, square, edge),
+                Feature::Corner { square, corner } => (1, square, corner),
+                Feature::Midpoint { square, edge } => (2, square, edge),
+                Feature::Wall(w) => (3, 0, w),
+            };
+            bytes.push(kind);
+            bytes.extend_from_slice(&(square as u16).to_le_bytes());
+            bytes.push(index);
+        }
+    }
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-/// Decode a share code for the `n` in the page path. The length is checked
-/// before anything is allocated, and the result passes the same limits as a
-/// JSON import.
-pub fn decode(hex: &str, n: u32) -> Result<Arrangement, String> {
-    if !(1..=MAX_N).contains(&n) {
-        return Err(format!("n must be between 1 and {MAX_N}"));
-    }
-    if hex.len() != hex_len(n) {
-        return Err(format!("This share link is not for {n} squares"));
-    }
-    let bytes = hex
-        .as_bytes()
-        .as_chunks::<2>()
+fn from_hex(hex: &[u8]) -> Result<Vec<u8>, String> {
+    hex.as_chunks::<2>()
         .0
         .iter()
         .map(|pair| {
@@ -53,7 +83,51 @@ pub fn decode(hex: &str, n: u32) -> Result<Arrangement, String> {
                 .and_then(|s| u8::from_str_radix(s, 16).ok())
                 .ok_or_else(|| "This share link is not valid hex".to_string())
         })
-        .collect::<Result<Vec<u8>, _>>()?;
+        .collect()
+}
+
+fn feature(b: &[u8]) -> Result<Feature, String> {
+    let square = u16::from_le_bytes([b[1], b[2]]) as usize;
+    Ok(match (b[0], b[3]) {
+        (0, edge) => Feature::Edge { square, edge },
+        (1, corner) => Feature::Corner { square, corner },
+        (2, edge) => Feature::Midpoint { square, edge },
+        (3, w) if square == 0 => Feature::Wall(w),
+        _ => return Err("This share link has an unknown glue feature".into()),
+    })
+}
+
+/// Decode a share code for the `n` in the page path. The length is checked
+/// before anything is allocated, and the result passes the same limits as a
+/// JSON import and as the play engine's glue.
+pub fn decode(hex: &str, n: u32) -> Result<Snapshot, String> {
+    if !(1..=MAX_N).contains(&n) {
+        return Err(format!("n must be between 1 and {MAX_N}"));
+    }
+    let hex = hex.as_bytes();
+    let base = hex_len(n, 0);
+    // The trailer's own header gives the glue count, so the full length is
+    // known before the rest of the code is decoded.
+    let count = if hex.len() == base {
+        0
+    } else {
+        let Some(trailer) = hex.get(base..base + 2 * TRAILER_BYTES) else {
+            return Err(format!("This share link is not for {n} squares"));
+        };
+        let trailer = from_hex(trailer)?;
+        if trailer[..2] != [GLUE_TAG, GLUE_VERSION] {
+            return Err("This share link has unsupported glue data".into());
+        }
+        let count = u16::from_le_bytes([trailer[2], trailer[3]]) as usize;
+        if !(1..=MAX_GLUES).contains(&count) {
+            return Err("This share link has an invalid glue count".into());
+        }
+        if hex.len() != hex_len(n, count) {
+            return Err("This share link's glue data has the wrong length".into());
+        }
+        count
+    };
+    let bytes = from_hex(hex)?;
     let f64_at = |i: usize| f64::from_le_bytes(bytes[i..i + 8].try_into().unwrap());
     if bytes[0] != VERSION {
         return Err(format!("Unsupported share link version {}", bytes[0]));
@@ -77,7 +151,18 @@ pub fn decode(hex: &str, n: u32) -> Result<Arrangement, String> {
         squares,
     };
     check_arrangement(&arrangement, n)?;
-    Ok(arrangement)
+    let features = base / 2 + TRAILER_BYTES;
+    let glues = (0..count)
+        .map(|i| {
+            let at = features + i * 2 * FEATURE_BYTES;
+            Ok(Glue {
+                a: feature(&bytes[at..at + FEATURE_BYTES])?,
+                b: feature(&bytes[at + FEATURE_BYTES..at + 2 * FEATURE_BYTES])?,
+            })
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    glue::check(&glues, n as usize)?;
+    Ok(Snapshot { arrangement, glues })
 }
 
 /// Limits every loaded arrangement must meet (JSON import and share links):
@@ -119,53 +204,204 @@ mod tests {
         }
     }
 
+    /// Every pairing of feature kinds, walls included.
+    fn glues() -> Vec<Glue> {
+        let kinds = |square: usize, k: u8| {
+            [
+                Feature::Edge { square, edge: k },
+                Feature::Corner { square, corner: k },
+                Feature::Midpoint { square, edge: k },
+                Feature::Wall(k),
+            ]
+        };
+        let mut glues = Vec::new();
+        for (i, a) in kinds(1, 1).into_iter().enumerate() {
+            for (j, b) in kinds(4, 3).into_iter().enumerate() {
+                if i != 3 || j != 3 {
+                    glues.push(Glue { a, b });
+                }
+            }
+        }
+        glues
+    }
+
+    /// `hex` with the byte at `at` replaced.
+    fn with_byte(hex: &str, at: usize, byte: u8) -> String {
+        let mut hex = hex.to_string();
+        hex.replace_range(2 * at..2 * at + 2, &format!("{byte:02x}"));
+        hex
+    }
+
     #[test]
     fn round_trips_bit_exact() {
         let a = five();
-        let hex = encode(&a);
-        assert_eq!(hex.len(), hex_len(5));
+        let hex = encode(&a, &[]);
+        assert_eq!(hex.len(), hex_len(5, 0));
         assert!(hex
             .bytes()
             .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase()));
         let back = decode(&hex, 5).unwrap();
-        assert_eq!(back, a);
-        assert_eq!(back.side.to_bits(), a.side.to_bits());
+        assert_eq!(back.arrangement, a);
+        assert!(back.glues.is_empty());
+        assert_eq!(back.arrangement.side.to_bits(), a.side.to_bits());
+    }
+
+    #[test]
+    fn round_trips_every_feature_kind() {
+        let glues = glues();
+        assert_eq!(glues.len(), 15);
+        let hex = encode(&five(), &glues);
+        assert_eq!(hex.len(), hex_len(5, 15));
+        assert!(hex.starts_with(&encode(&five(), &[])));
+        assert_eq!(
+            decode(&hex, 5).unwrap(),
+            Snapshot {
+                arrangement: five(),
+                glues
+            }
+        );
+    }
+
+    #[test]
+    fn glue_free_codes_keep_the_original_layout() {
+        // A code written before glue existed: one unit square at (1, 1) in a
+        // box of side 2.
+        let old = concat!(
+            "01",
+            "0100",
+            "0000000000000040",
+            "000000000000f03f",
+            "000000000000f03f",
+            "0000000000000000"
+        );
+        let snapshot = decode(old, 1).unwrap();
+        assert!(snapshot.glues.is_empty());
+        assert_eq!(snapshot.arrangement.side, 2.0);
+        assert_eq!(
+            snapshot.arrangement.squares,
+            [Placement {
+                cx: 1.0,
+                cy: 1.0,
+                theta: 0.0
+            }]
+        );
+        assert_eq!(encode(&snapshot.arrangement, &[]), old);
+    }
+
+    #[test]
+    fn rejects_malformed_glue_trailers() {
+        let base = encode(&five(), &[]);
+        let one = &glues()[..1];
+        let hex = encode(&five(), one);
+        let trailer = base.len() / 2;
+        let first = trailer + TRAILER_BYTES;
+        assert!(decode(&hex, 5).is_ok());
+        let mut self_glue = with_byte(&hex, first + 1, 1);
+        self_glue = with_byte(&self_glue, first + FEATURE_BYTES + 1, 1);
+        let duplicate = encode(&five(), &[one[0], one[0]]);
+        let reversed = encode(
+            &five(),
+            &[
+                one[0],
+                Glue {
+                    a: one[0].b,
+                    b: one[0].a,
+                },
+            ],
+        );
+        for (bad, why) in [
+            (format!("{base}4701"), "truncated trailer header"),
+            (format!("{base}47010000"), "zero glue count"),
+            (hex[..hex.len() - 2].to_string(), "truncated glue"),
+            (format!("{hex}00"), "trailing byte"),
+            (format!("{hex}0000000000000000"), "an extra glue's bytes"),
+            (with_byte(&hex, trailer, b'H'), "unknown tag"),
+            (with_byte(&hex, trailer + 1, 2), "unknown trailer version"),
+            (
+                with_byte(&hex, trailer + 2, 2),
+                "count larger than the data",
+            ),
+            (with_byte(&hex, first, 4), "unknown kind"),
+            (with_byte(&hex, first + 1, 5), "square beyond n"),
+            (
+                with_byte(&hex, first + 2, 1),
+                "square beyond n in the high byte",
+            ),
+            (with_byte(&hex, first + 3, 4), "edge index out of range"),
+            (self_glue, "self glue"),
+            (duplicate, "duplicate"),
+            (reversed, "reversed duplicate"),
+            (hex.replacen("47", "4g", 1), "bad hex"),
+        ] {
+            assert!(decode(&bad, 5).is_err(), "{why}: {bad}");
+        }
+        let wall = encode(
+            &five(),
+            &[Glue {
+                a: Feature::Wall(0),
+                b: Feature::Edge { square: 0, edge: 0 },
+            }],
+        );
+        assert!(
+            decode(&with_byte(&wall, first + 1, 1), 5).is_err(),
+            "wall with a square"
+        );
+    }
+
+    #[test]
+    fn rejects_oversized_glue_counts_before_decoding() {
+        let base = encode(&five(), &[]);
+        let too_many = (MAX_GLUES as u16 + 1).to_le_bytes();
+        // The count is rejected from the trailer header alone, even though
+        // the rest of the code is far too short to hold that many glues.
+        let over = format!("{base}4701{:02x}{:02x}", too_many[0], too_many[1]);
+        assert_eq!(
+            decode(&over, 5),
+            Err("This share link has an invalid glue count".into())
+        );
+        assert!(decode(&format!("{base}4701ffff"), 5).is_err());
+        let max = (MAX_GLUES as u16).to_le_bytes();
+        assert_eq!(
+            decode(&format!("{base}4701{:02x}{:02x}", max[0], max[1]), 5),
+            Err("This share link's glue data has the wrong length".into())
+        );
     }
 
     #[test]
     fn rejects_wrong_length_n_and_version() {
-        let hex = encode(&five());
+        let hex = encode(&five(), &[]);
         assert!(decode(&hex, 4).is_err(), "path n must match");
         assert!(decode(&hex[..hex.len() - 2], 5).is_err());
         assert!(decode(&format!("{hex}00"), 5).is_err());
         assert!(decode(&format!("02{}", &hex[2..]), 5).is_err());
         // Right length for n=4 but encoded n=5 in the header.
-        let mut short = hex[..hex_len(4)].to_string();
+        let mut short = hex[..hex_len(4, 0)].to_string();
         short.replace_range(0..2, "01");
         assert!(decode(&short, 4).is_err());
     }
 
     #[test]
     fn rejects_bad_hex_and_out_of_range_values() {
-        let hex = encode(&five());
+        let hex = encode(&five(), &[]);
         assert!(decode(&hex.replacen('0', "g", 1), 5).is_err());
         // Same length, but "+1" in place of the version byte "01".
         assert!(decode(&format!("+1{}", &hex[2..]), 5).is_err());
         assert!(decode(&hex.replacen('0', "é", 1), 5).is_err());
+        assert!(decode(&format!("{hex}é0000000"), 5).is_err());
         assert!(decode("", 1).is_err());
         assert!(
             decode(&"00".repeat(1_000_000), 5).is_err(),
             "oversized input"
         );
-        assert!(decode(&encode(&five()), 0).is_err());
+        assert!(decode(&encode(&five(), &[]), 0).is_err());
         let mut far = five();
         far.squares[0].cx = 1e9;
-        assert!(decode(&encode(&far), 5).is_err());
+        assert!(decode(&encode(&far, &[]), 5).is_err());
         let mut nan = five();
         nan.squares[4].theta = f64::NAN;
-        assert!(decode(&encode(&nan), 5).is_err());
+        assert!(decode(&encode(&nan, &[]), 5).is_err());
         let mut tiny = five();
         tiny.side = 0.5;
-        assert!(decode(&encode(&tiny), 5).is_err());
+        assert!(decode(&encode(&tiny, &[]), 5).is_err());
     }
 }

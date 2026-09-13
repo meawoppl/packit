@@ -59,7 +59,9 @@ pub fn build_app(state: Arc<AppState>) -> Router {
     Router::new()
         .route(
             "/api/shares",
-            post(handlers::shares::create).layer(axum::extract::DefaultBodyLimit::max(16 * 1024)),
+            post(handlers::shares::create).layer(axum::extract::DefaultBodyLimit::max(
+                shared::share::MAX_LEN + 1024,
+            )),
         )
         .route("/s/:token", get(handlers::shares::resolve))
         .route("/api/health", get(handlers::health::health))
@@ -330,7 +332,7 @@ mod tests {
 
     #[tokio::test]
     async fn shared_play_page_describes_the_packing() {
-        let code = shared::share::encode(&two_squares("", 2.0).arrangement);
+        let code = shared::share::encode(&two_squares("", 2.0).arrangement, &[]);
         let req = Request::get(format!("/play/2?s={code}"))
             .header(header::HOST, "evil.example")
             .header("x-forwarded-host", "evil.example")
@@ -392,7 +394,7 @@ mod tests {
         b.squares[1].theta = 0.3;
         let mut pngs = Vec::new();
         for arrangement in [&a, &b] {
-            let code = shared::share::encode(arrangement);
+            let code = shared::share::encode(arrangement, &[]);
             let (status, headers, png) = fetch_uri(&format!("/api/preview.png?n=2&s={code}")).await;
             assert_eq!(status, StatusCode::OK);
             assert_eq!(headers[header::CONTENT_TYPE], "image/png");
@@ -414,7 +416,7 @@ mod tests {
 
     #[tokio::test]
     async fn preview_png_rejects_invalid_codes() {
-        let code = shared::share::encode(&two_squares("", 2.0).arrangement);
+        let code = shared::share::encode(&two_squares("", 2.0).arrangement, &[]);
         for uri in [
             "/api/preview.png".to_string(),
             "/api/preview.png?n=2".to_string(),
@@ -602,11 +604,11 @@ mod tests {
             },
             shared::CreateShare {
                 n: 3,
-                code: shared::share::encode(&two_squares("", 2.0).arrangement),
+                code: shared::share::encode(&two_squares("", 2.0).arrangement, &[]),
             },
             shared::CreateShare {
                 n: 2,
-                code: shared::share::encode(&arr),
+                code: shared::share::encode(&arr, &[]),
             },
         ] {
             let (status, _): (_, shared::ApiError) =
@@ -615,7 +617,7 @@ mod tests {
         }
         let oversized = shared::CreateShare {
             n: 2,
-            code: "0".repeat(20_000),
+            code: "0".repeat(shared::share::MAX_LEN + 2048),
         };
         let response = build_app(test_state())
             .oneshot(post_json("/api/shares", &oversized))
@@ -641,7 +643,7 @@ mod tests {
         // value survives storage and redirect without passing through f32.
         let mut arr = two_squares("", 2.0 + 2e-10).arrangement;
         arr.squares[1].cx = 1.2;
-        let code = shared::share::encode(&arr);
+        let code = shared::share::encode(&arr, &[]);
         let body = shared::CreateShare {
             n: arr.n,
             code: code.clone(),
@@ -671,7 +673,9 @@ mod tests {
         let location = response.headers()[header::LOCATION].to_str().unwrap();
         assert_eq!(location, format!("{TEST_URL}/play/2?s={code}"));
         assert_eq!(
-            shared::share::decode(location.split("?s=").nth(1).unwrap(), 2).unwrap(),
+            shared::share::decode(location.split("?s=").nth(1).unwrap(), 2)
+                .unwrap()
+                .arrangement,
             arr
         );
         let page = app
@@ -705,7 +709,7 @@ mod tests {
                 "/api/shares",
                 &shared::CreateShare {
                     n: 2,
-                    code: shared::share::encode(&arr),
+                    code: shared::share::encode(&arr, &[]),
                 },
             ),
         )
@@ -717,5 +721,75 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn short_links_keep_glue_through_the_redirect() {
+        use shared::glue::{Feature, Glue};
+        let Some(db_pool) = test_db() else {
+            eprintln!("TEST_DATABASE_URL not set; skipping");
+            return;
+        };
+        let app = build_app(Arc::new(AppState {
+            dev_mode: true,
+            db_pool,
+            public_url: TEST_URL.into(),
+        }));
+        let arr = two_squares("", 2.0).arrangement;
+        let glues = vec![
+            Glue {
+                a: Feature::Edge { square: 0, edge: 0 },
+                b: Feature::Edge { square: 1, edge: 2 },
+            },
+            Glue {
+                a: Feature::Corner {
+                    square: 1,
+                    corner: 3,
+                },
+                b: Feature::Wall(2),
+            },
+            Glue {
+                a: Feature::Wall(1),
+                b: Feature::Midpoint { square: 0, edge: 3 },
+            },
+        ];
+        let code = shared::share::encode(&arr, &glues);
+        let share = |code: String| {
+            let app = app.clone();
+            async move {
+                let (status, link): (_, shared::ShortShare) = call(
+                    &app,
+                    post_json("/api/shares", &shared::CreateShare { n: 2, code }),
+                )
+                .await;
+                assert_eq!(status, StatusCode::OK);
+                link
+            }
+        };
+        let glued = share(code.clone()).await;
+        assert_eq!(glued, share(code.to_uppercase()).await);
+        assert_ne!(
+            glued,
+            share(shared::share::encode(&arr, &[])).await,
+            "glue is part of the snapshot"
+        );
+        let response = app
+            .clone()
+            .oneshot(
+                Request::get(glued.url.strip_prefix(TEST_URL).unwrap())
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::FOUND);
+        let location = response.headers()[header::LOCATION].to_str().unwrap();
+        assert_eq!(location, format!("{TEST_URL}/play/2?s={code}"));
+        let snapshot = shared::share::decode(location.split("?s=").nth(1).unwrap(), 2).unwrap();
+        assert_eq!(snapshot.arrangement, arr);
+        assert_eq!(snapshot.glues, glues);
+        let (status, _, png) = fetch_uri(&format!("/api/preview.png?n=2&s={code}")).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(png.starts_with(b"\x89PNG\r\n\x1a\n"));
     }
 }
