@@ -7,6 +7,7 @@ mod files;
 mod glue;
 mod tap;
 
+use crate::account::{Account, SignInAsk};
 use crate::anneal::{Anneal, Command, Schedule};
 use crate::benchmark::Benchmark;
 use crate::{api, Route};
@@ -22,8 +23,20 @@ use wasm_bindgen::JsCast;
 use web_sys::{
     Event, HtmlCanvasElement, HtmlInputElement, KeyboardEvent, PointerEvent, WheelEvent,
 };
+use yew::context::ContextHandle;
 use yew::prelude::*;
 use yew_router::prelude::*;
+
+const SHARE_NOTE: &str =
+    "Sign in to share. This snapshot is kept as it is now and shared once you sign in.";
+const SUBMIT_NOTE: &str =
+    "Sign in to submit. This packing is kept as it is now and submitted once you sign in.";
+const SUBMIT_UNCERTIFIED_NOTE: &str =
+    "Sign in to submit, then press Submit packing to settle and submit.";
+const EXPIRED_SHARE_NOTE: &str = "You're signed out. Sign in again to share this snapshot.";
+const EXPIRED_SUBMIT_NOTE: &str = "You're signed out. Sign in again to submit this packing.";
+const UNSHARED_NOTE: &str = "Not signed in, so nothing was shared.";
+const UNSUBMITTED_NOTE: &str = "Not signed in, so nothing was submitted.";
 
 #[cfg(all(test, target_arch = "wasm32"))]
 thread_local! {
@@ -116,20 +129,33 @@ pub enum Msg {
     /// Load the solver's smaller packing of the certified scene.
     Tighten,
     Refine,
-    Player(String),
     Submit,
-    Submitted(Result<ScoreEntry, String>),
+    /// A submission's result, with the packing it sent.
+    Submitted(Arrangement, Result<ScoreEntry, api::Failure>),
     Export,
     Share,
     /// Clipboard result for a share link; `Err` if it could not be copied.
     Shared(Result<(), ()>),
-    ShareCreated(Result<shared::ShortShare, api::RetryError>),
+    /// A short link's result, with the snapshot it was for.
+    ShareCreated(
+        shared::CreateShare,
+        Result<shared::ShortShare, api::RetryError>,
+    ),
     CopyShare,
+    Account(Account),
+    /// The answer to the sign-in ask with this number: whether it signed in.
+    SignedIn(u32, bool),
     ImportPick,
     ImportFile(Event),
     Imported(Result<String, String>),
     /// Remove every glue link.
     ClearGlue,
+}
+
+/// A Share or Submit pressed without a session, frozen as it was then.
+enum Pending {
+    Share(shared::CreateShare),
+    Submit(Arrangement),
 }
 
 /// The scheduled runs that share one slot: shaking anneal or gentle squeeze.
@@ -191,7 +217,15 @@ pub struct Game {
     status_error: bool,
     auto_measured: bool,
     settled_frames: u32,
-    player: String,
+    account: Account,
+    _account: ContextHandle<Account>,
+    /// Sent once, and only if the sign-in it asked for succeeds. It goes
+    /// with the screen when it unmounts.
+    pending: Option<Pending>,
+    /// Numbers sign-in asks, so an answer to a replaced one is ignored.
+    ask_id: u32,
+    /// Why a sign-in is needed, or what became of the request that needed it.
+    sign_in_note: Option<&'static str>,
     submitting: bool,
     sharing: bool,
     short_share: Option<String>,
@@ -286,6 +320,10 @@ impl Component for Game {
         });
         ctx.link()
             .send_future(async { Msg::Records(api::known_records().await) });
+        let (account, account_handle) = ctx
+            .link()
+            .context::<Account>(ctx.link().callback(Msg::Account))
+            .expect("the play screen is inside an AccountProvider");
         let mut game = Self {
             physics,
             canvas: NodeRef::default(),
@@ -314,7 +352,11 @@ impl Component for Game {
             status_error: false,
             auto_measured: false,
             settled_frames: 0,
-            player: String::new(),
+            account,
+            _account: account_handle,
+            pending: None,
+            ask_id: 0,
+            sign_in_note: None,
             submitting: false,
             sharing: false,
             short_share: None,
@@ -414,13 +456,14 @@ impl Component for Game {
                 | Msg::PointerUp
                 | Msg::Key(_)
                 | Msg::ClearGlue
-                | Msg::Player(_)
-                | Msg::Submitted(_)
+                | Msg::Submitted(..)
                 | Msg::Export
                 | Msg::Share
                 | Msg::Shared(_)
-                | Msg::ShareCreated(_)
+                | Msg::ShareCreated(..)
                 | Msg::CopyShare
+                | Msg::Account(_)
+                | Msg::SignedIn(..)
                 | Msg::ImportPick
         ) {
             self.drop_glue_tool();
@@ -717,18 +760,20 @@ impl Component for Game {
                 self.refine(ctx);
                 true
             }
-            Msg::Player(name) => {
-                self.player = name;
-                false
-            }
             Msg::Submit => {
-                let player = self.player.trim().to_string();
-                if player.is_empty() {
-                    self.set_status("Choose a leaderboard name first.", true);
+                if self.account.username.is_none() {
+                    // Only a certified packing can be frozen; without one,
+                    // Submit is pressed again after signing in.
+                    match self.certified.clone() {
+                        Some(arrangement) => {
+                            self.ask_sign_in(ctx, Some(Pending::Submit(arrangement)), SUBMIT_NOTE)
+                        }
+                        None => self.ask_sign_in(ctx, None, SUBMIT_UNCERTIFIED_NOTE),
+                    }
                     return true;
                 }
                 match self.certified.clone() {
-                    Some(arrangement) => self.send_submit(ctx, player, arrangement),
+                    Some(arrangement) => self.send_submit(ctx, arrangement),
                     None => {
                         self.submit_after_measure = true;
                         // A Settle in progress measures (and so submits) once
@@ -740,14 +785,19 @@ impl Component for Game {
                 }
                 true
             }
-            Msg::Submitted(result) => {
+            Msg::Submitted(arrangement, result) => {
                 self.submitting = false;
                 match result {
                     Ok(entry) => self.set_status(
                         &format!("Saved! Rank #{} for {n} squares.", entry.rank),
                         false,
                     ),
-                    Err(e) => self.set_status(&e, true),
+                    Err(api::Failure::SignedOut(_)) => self.ask_sign_in(
+                        ctx,
+                        Some(Pending::Submit(arrangement)),
+                        EXPIRED_SUBMIT_NOTE,
+                    ),
+                    Err(e) => self.set_status(&e.to_string(), true),
                 }
                 true
             }
@@ -770,22 +820,19 @@ impl Component for Game {
                 }
                 // Freeze the requested snapshot, including the solver's f64
                 // precision and the glue. Later edits never change what this
-                // link contains.
+                // link contains, even if it waits for a sign-in.
                 let body = shared::CreateShare {
                     n: ctx.props().n,
                     code: self.share_code(),
                 };
-                self.sharing = true;
-                self.short_share = None;
-                self.share_error = None;
-                self.share_status = "Creating a short link…".into();
-                let unmounted = self.unmounted.clone();
-                ctx.link().send_future(async move {
-                    Msg::ShareCreated(api::create_share(body, move || unmounted.get()).await)
-                });
+                if self.account.username.is_none() {
+                    self.ask_sign_in(ctx, Some(Pending::Share(body)), SHARE_NOTE);
+                } else {
+                    self.start_share(ctx, body);
+                }
                 true
             }
-            Msg::ShareCreated(result) => {
+            Msg::ShareCreated(body, result) => {
                 match result {
                     Ok(link) => {
                         self.short_share = Some(link.url);
@@ -794,6 +841,11 @@ impl Component for Game {
                         self.copy_share(ctx);
                     }
                     Err(api::RetryError::Cancelled) => return false,
+                    Err(api::RetryError::SignedOut) => {
+                        self.sharing = false;
+                        self.share_status.clear();
+                        self.ask_sign_in(ctx, Some(Pending::Share(body)), EXPIRED_SHARE_NOTE);
+                    }
                     Err(api::RetryError::Failed) => {
                         self.sharing = false;
                         self.share_status.clear();
@@ -809,6 +861,30 @@ impl Component for Game {
                     self.sharing = true;
                     self.copy_share(ctx);
                 }
+                true
+            }
+            Msg::Account(account) => {
+                self.account = account;
+                false
+            }
+            Msg::SignedIn(id, signed_in) => {
+                if id != self.ask_id {
+                    return false;
+                }
+                let pending = self.pending.take();
+                self.sign_in_note = match (signed_in, pending) {
+                    (true, Some(Pending::Share(body))) => {
+                        self.start_share(ctx, body);
+                        None
+                    }
+                    (true, Some(Pending::Submit(arrangement))) => {
+                        self.send_submit(ctx, arrangement);
+                        None
+                    }
+                    (true, None) | (false, None) => None,
+                    (false, Some(Pending::Share(_))) => Some(UNSHARED_NOTE),
+                    (false, Some(Pending::Submit(_))) => Some(UNSUBMITTED_NOTE),
+                };
                 true
             }
             Msg::Shared(copied) => {
@@ -955,6 +1031,7 @@ impl Component for Game {
                             </div>
                             <p class="pg-share-status pg-help" role="status" aria-live="polite">{ &self.share_status }</p>
                             { self.share_error.map(|error| html! { <p class="pg-share-error" role="alert">{ error }</p> }) }
+                            { self.sign_in_note.map(|note| html! { <p class="pg-sign-in" role="alert">{ note }</p> }) }
                             { if let Some(url) = &self.short_share {
                                 html! {
                                     <div class="pg-share-result">
@@ -967,10 +1044,6 @@ impl Component for Game {
                             } else { Html::default() } }
                             <p class="pg-help">{ &self.bound }</p>
                             <p class={status_class} role="status" aria-live="polite">{ &self.status }</p>
-                            <label class="pg-help" for="pg-player">{ "Leaderboard name" }</label>
-                            <input id="pg-player" class="pg-field" type="text" maxlength="32" placeholder="Your name"
-                                autocomplete="nickname" value={self.player.clone()}
-                                oninput={link.callback(|e: InputEvent| Msg::Player(input_value(&e)))} />
                             <button class="pg-primary pg-wide" disabled={self.submitting} onclick={link.callback(|_| Msg::Submit)}>
                                 { "Submit packing" }
                             </button>
@@ -1639,8 +1712,7 @@ impl Game {
         }
         self.set_status(&status, false);
         if submit {
-            let player = self.player.trim().to_string();
-            self.send_submit(ctx, player, certified.clone());
+            self.send_submit(ctx, certified.clone());
         }
         self.certified = Some(certified);
     }
@@ -1687,16 +1759,46 @@ impl Game {
         self.begin_measure(ctx)
     }
 
-    fn send_submit(&mut self, ctx: &Context<Self>, player: String, arrangement: Arrangement) {
+    /// Submit `arrangement` for the signed-in account, which names it.
+    fn send_submit(&mut self, ctx: &Context<Self>, arrangement: Arrangement) {
         self.submitting = true;
+        self.sign_in_note = None;
         ctx.link().send_future(async move {
-            Msg::Submitted(
-                api::submit_score(SubmitScore {
-                    player,
-                    arrangement,
-                })
-                .await,
-            )
+            let result = api::submit_score(SubmitScore {
+                arrangement: arrangement.clone(),
+            })
+            .await;
+            Msg::Submitted(arrangement, result)
+        });
+    }
+
+    /// Create a short link for the frozen `body`, retrying as the policy
+    /// allows. Every attempt sends the same code.
+    fn start_share(&mut self, ctx: &Context<Self>, body: shared::CreateShare) {
+        self.sharing = true;
+        self.short_share = None;
+        self.share_error = None;
+        self.sign_in_note = None;
+        self.share_status = "Creating a short link…".into();
+        let unmounted = self.unmounted.clone();
+        ctx.link().send_future(async move {
+            let result = api::create_share(body.clone(), move || unmounted.get()).await;
+            Msg::ShareCreated(body, result)
+        });
+    }
+
+    /// Hold `pending` and ask the account for a sign-in. The request goes
+    /// out only when this ask is answered yes; a newer ask replaces it.
+    fn ask_sign_in(&mut self, ctx: &Context<Self>, pending: Option<Pending>, note: &'static str) {
+        self.ask_id += 1;
+        let id = self.ask_id;
+        self.pending = pending;
+        self.sign_in_note = Some(note);
+        self.account.ask.emit(SignInAsk {
+            reason: note,
+            done: ctx
+                .link()
+                .callback(move |signed_in| Msg::SignedIn(id, signed_in)),
         });
     }
 }

@@ -1,6 +1,7 @@
 //! Durable, immutable short links for snapshots, including unfinished packings.
 
 use super::scores::{with_conn, HandlerError};
+use crate::auth::session;
 use crate::{schema::solution_shares as shares, AppState};
 use axum::{
     extract::{Path, State},
@@ -12,16 +13,22 @@ use diesel::prelude::*;
 use sha2::{Digest, Sha256};
 use shared::{share, CreateShare, ShortShare};
 use std::sync::Arc;
+use tower_cookies::Cookies;
 use uuid::Uuid;
 
+pub const SIGN_IN_TO_SHARE: &str = "Sign in to create a short link";
+
+/// Save a snapshot for the signed-in account and return its short link.
 pub async fn create(
     State(state): State<Arc<AppState>>,
+    cookies: Cookies,
     Json(body): Json<CreateShare>,
 ) -> Result<Json<ShortShare>, HandlerError> {
     // Decode validates n, exact length, finite values, coordinate bounds and
-    // glue before allocating. Overlap is allowed here; this never submits a
-    // score.
+    // glue before allocating, and before the session costs a query. Overlap
+    // is allowed here; this never submits a score.
     let snapshot = share::decode(&body.code, body.n).map_err(HandlerError::bad_request)?;
+    let user = session::require_user(&state, &cookies, SIGN_IN_TO_SHARE).await?;
     let code = share::encode(&snapshot.arrangement, &snapshot.glues);
     let hash = Sha256::digest(code.as_bytes()).to_vec();
     let n = snapshot.arrangement.n;
@@ -29,6 +36,8 @@ pub async fn create(
         // An insert handles both concurrent duplicate requests and token
         // collisions. A token collision retries; a digest match must also
         // match the full payload so it can never resolve to the wrong scene.
+        // A duplicate returns the existing link untouched: its creator, or
+        // lack of one, stays, and the response is the same for everyone.
         for _ in 0..4 {
             // Skip the UUID version/variant bytes: keep 96 random bits.
             let random = Uuid::new_v4();
@@ -43,6 +52,7 @@ pub async fn create(
                     shares::payload_hash.eq(&hash),
                     shares::n.eq(n as i32),
                     shares::code.eq(&code),
+                    shares::created_by.eq(user.id),
                 ))
                 .on_conflict_do_nothing()
                 .returning(shares::token)

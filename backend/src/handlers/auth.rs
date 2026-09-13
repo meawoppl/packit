@@ -2,7 +2,8 @@
 //!
 //! Every POST here must carry the site's exact `Origin`, start and finish
 //! endpoints are rate limited per client, there is no CORS, and no response
-//! is cached. None of this gates the rest of the API.
+//! is cached. The signed-in writes outside `/api/auth` reuse
+//! [`require_origin`].
 
 use super::scores::{with_conn, HandlerError};
 use crate::auth::ceremony::{Ceremony, CeremonyId, InsertError};
@@ -92,7 +93,11 @@ async fn no_store(mut response: Response) -> Response {
 /// Refuse anything but GET and HEAD unless it carries exactly one `Origin`
 /// equal to the configured origin. Browsers send `Origin` on every POST, so
 /// a missing one means the request didn't come from our page.
-async fn require_origin(State(state): State<Arc<AppState>>, req: Request, next: Next) -> Response {
+pub(crate) async fn require_origin(
+    State(state): State<Arc<AppState>>,
+    req: Request,
+    next: Next,
+) -> Response {
     if req.method() != Method::GET && req.method() != Method::HEAD {
         let mut origins = req.headers().get_all(header::ORIGIN).iter();
         let expected = state.auth.origin.origin.as_bytes();

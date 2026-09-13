@@ -1,5 +1,6 @@
 //! Passkey (WebAuthn) accounts: relying-party setup, server-side ceremony
-//! state, sessions and rate limits. Nothing outside `/api/auth` is gated.
+//! state, sessions and rate limits. Outside `/api/auth`, submitting a score
+//! and creating a short link need a session.
 
 pub mod ceremony;
 pub mod proxy;

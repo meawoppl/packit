@@ -1,9 +1,12 @@
+mod account;
 mod anneal;
 mod api;
 mod benchmark;
 mod game;
 mod leaderboard;
+mod webauthn;
 
+use account::{AccountMenu, AccountProvider};
 use leaderboard::{Leaderboard, LeaderboardN, ScorePage};
 use shared::MAX_N;
 use uuid::Uuid;
@@ -45,13 +48,16 @@ fn switch(route: Route) -> Html {
 pub fn app() -> Html {
     html! {
         <BrowserRouter>
-            <nav class="topbar">
-                <Link<Route> to={Route::Home} classes="brand">{ "packit" }</Link<Route>>
-                <Link<Route> to={Route::Leaderboard}>{ "Leaderboard" }</Link<Route>>
-            </nav>
-            <main>
-                <Switch<Route> render={switch} />
-            </main>
+            <AccountProvider>
+                <nav class="topbar">
+                    <Link<Route> to={Route::Home} classes="brand">{ "packit" }</Link<Route>>
+                    <Link<Route> to={Route::Leaderboard}>{ "Leaderboard" }</Link<Route>>
+                    <AccountMenu />
+                </nav>
+                <main>
+                    <Switch<Route> render={switch} />
+                </main>
+            </AccountProvider>
         </BrowserRouter>
     }
 }
