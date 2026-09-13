@@ -54,6 +54,64 @@ pub fn sign_up(pool: &DbPool) -> Player {
     }
 }
 
+/// Finite doubles that stress JSON round trips: the edges (zeros,
+/// subnormals, the smallest normal, ±MAX), a value that once came back a
+/// ULP off, and `count` from fresh random bit patterns, a quarter of them
+/// subnormal.
+pub fn awkward_floats(count: usize) -> Vec<f64> {
+    let mut floats = vec![
+        0.0,
+        -0.0,
+        5e-324,
+        -5e-324,
+        f64::MIN_POSITIVE,
+        -f64::MIN_POSITIVE,
+        f64::MAX,
+        f64::MIN,
+        2.5115089416503906,
+        0.1,
+        1.0 / 3.0,
+    ];
+    floats.extend(
+        (0..count)
+            .map(|i| {
+                let bits = u64::from_le_bytes(crate::auth::random_bytes());
+                // Clearing the exponent leaves a subnormal.
+                f64::from_bits(if i % 4 == 0 {
+                    bits & 0x800f_ffff_ffff_ffff
+                } else {
+                    bits
+                })
+            })
+            .filter(|f| f.is_finite()),
+    );
+    floats
+}
+
+/// Every double in an arrangement, as bits, so `-0.0` and `0.0` differ.
+pub fn float_bits(a: &shared::Arrangement) -> Vec<u64> {
+    let squares = a
+        .squares
+        .iter()
+        .flat_map(|p| [p.cx.to_bits(), p.cy.to_bits(), p.theta.to_bits()]);
+    std::iter::once(a.side.to_bits()).chain(squares).collect()
+}
+
+/// An arrangement made of `floats`: the side, then each square's three.
+pub fn arrangement_of(floats: &[f64]) -> shared::Arrangement {
+    let squares: Vec<shared::Placement> = floats[1..]
+        .as_chunks::<3>()
+        .0
+        .iter()
+        .map(|&[cx, cy, theta]| shared::Placement { cx, cy, theta })
+        .collect();
+    shared::Arrangement {
+        n: squares.len() as u32,
+        side: floats[0],
+        squares,
+    }
+}
+
 /// A pool that never connects, for routes that don't touch the database.
 pub fn unconnected_pool() -> DbPool {
     Pool::builder().build_unchecked(ConnectionManager::<PgConnection>::new(

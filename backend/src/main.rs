@@ -557,6 +557,57 @@ mod tests {
         assert_eq!(status, StatusCode::NOT_FOUND);
     }
 
+    /// Awkward doubles survive `scores.arrangement` bit for bit, read back
+    /// directly and through the score's page. jsonb stores numbers as
+    /// `numeric`, which has no negative zero, so `-0.0` is left out: it
+    /// comes back as `0.0`, an equal value.
+    #[tokio::test]
+    async fn stored_arrangements_keep_every_bit() {
+        use crate::schema::scores;
+        use crate::test_support::{arrangement_of, awkward_floats, float_bits};
+        use diesel::prelude::*;
+
+        let Some(db_pool) = test_db() else {
+            eprintln!("TEST_DATABASE_URL not set; skipping");
+            return;
+        };
+        let floats: Vec<f64> = awkward_floats(300)
+            .into_iter()
+            .filter(|f| f.to_bits() != (-0.0_f64).to_bits())
+            .collect();
+        let arrangement = arrangement_of(&floats);
+        let id = uuid::Uuid::new_v4();
+        let mut conn = db_pool.get().unwrap();
+        diesel::insert_into(scores::table)
+            .values((
+                scores::id.eq(id),
+                scores::player.eq("floats"),
+                scores::n.eq(99),
+                scores::side.eq(99.0),
+                scores::arrangement.eq(serde_json::to_value(&arrangement).unwrap()),
+            ))
+            .execute(&mut conn)
+            .unwrap();
+        let stored: serde_json::Value = scores::table
+            .find(id)
+            .select(scores::arrangement)
+            .first(&mut conn)
+            .unwrap();
+        drop(conn);
+        let stored: shared::Arrangement = serde_json::from_value(stored).unwrap();
+        assert_eq!(float_bits(&stored), float_bits(&arrangement));
+
+        let (status, detail): (_, shared::ScoreDetail) = call(
+            &build_app(state_for(db_pool)),
+            Request::get(format!("/api/scores/{id}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(float_bits(&detail.arrangement), float_bits(&arrangement));
+    }
+
     /// Scores with identical side and timestamp still get distinct ranks, and
     /// `detail` agrees with the order `list` returns them in.
     #[tokio::test]

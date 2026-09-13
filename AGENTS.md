@@ -50,6 +50,7 @@ Note: memory-serve 2.x requires axum 0.8+. For axum 0.7, use memory-serve 0.6.0 
 
 ## packit Conventions
 
+- Every crate that parses f64s from JSON (backend, frontend, shared, solver) enables serde_json's `float_roundtrip`, so shortest-repr floats round-trip bit for bit; the default parser can be a ULP off. Add it with `cargo add serde_json@<locked version> -p <crate> --features float_roundtrip` (a bare `1` requirement gets "unrecognized feature") and check each crate on its own, e.g. `cargo tree -p frontend --target wasm32-unknown-unknown -e features -i serde_json`: workspace feature unification can hide a crate that lacks it. jsonb has no negative zero, so a stored `-0.0` reads back as `0.0`.
 - Squares are **unit** squares: `shared::Placement { cx, cy, theta }` = center + rotation in radians. Container is `[0, side]^2`, origin bottom-left. Never introduce a second square type; `physics` and `solver` depend on `shared`.
 - Server-side validation is `shared::geometry::validate(&arr, shared::VALIDATION_TOL)`. The play engine may allow small stiff overlaps for bounce, but submissions must pass validation.
 - `refs/best_known.json` is compiled into the backend (`include_str!`) and served at `/api/records`. A unit test checks it parses, is sorted by `n`, and respects the `sqrt(n)` area bound.

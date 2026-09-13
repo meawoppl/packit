@@ -56,6 +56,12 @@ Submissions are validated server-side with `shared::geometry::validate`
 using `shared::VALIDATION_TOL`. A score's leaderboard name is its account's
 username.
 
+Arrangements travel and are stored as JSON, and every crate that parses them
+enables serde_json's `float_roundtrip`, so each double comes back bit for bit
+(the default parser can land a ULP off). This doesn't repair scores stored
+with drift before it. jsonb keeps numbers as Postgres `numeric`, which has no
+negative zero, so a stored `-0.0` reads back as `0.0`, an equal value.
+
 The **Share** button saves an immutable snapshot in Postgres and copies a short
 `/s/<token>` URL, suitable for posting on social media. Identical snapshots reuse
 the same URL, whoever shares them, and the link keeps the account that first

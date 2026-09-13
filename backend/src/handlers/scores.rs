@@ -246,6 +246,30 @@ mod tests {
         }
     }
 
+    /// serde_json's default float parser can land a ULP off the double the
+    /// shortest-repr text came from; `float_roundtrip` makes it exact.
+    #[test]
+    fn json_floats_round_trip_bit_exactly() {
+        use crate::test_support::{arrangement_of, awkward_floats, float_bits};
+        let exact: f64 = serde_json::from_str("2.5115089416503906").unwrap();
+        assert_eq!(exact.to_bits(), 2.5115089416503906_f64.to_bits());
+        for floats in awkward_floats(4000).chunks(7) {
+            let arrangement = arrangement_of(floats);
+            let bits = float_bits(&arrangement);
+            let text = serde_json::to_string(&arrangement).unwrap();
+            let back: Arrangement = serde_json::from_str(&text).unwrap();
+            assert_eq!(float_bits(&back), bits, "{text}");
+            // As the handler reads jsonb: through a `Value`.
+            let value: serde_json::Value = serde_json::from_str(&text).unwrap();
+            let back: Arrangement = serde_json::from_value(value).unwrap();
+            assert_eq!(float_bits(&back), bits, "{text}");
+            let body = SubmitScore { arrangement };
+            let text = serde_json::to_string(&body).unwrap();
+            let back: SubmitScore = serde_json::from_str(&text).unwrap();
+            assert_eq!(float_bits(&back.arrangement), bits, "{text}");
+        }
+    }
+
     #[test]
     fn entries_say_whether_an_account_submitted_them() {
         let score = |user_id| Score {
