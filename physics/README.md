@@ -85,13 +85,14 @@ The legacy tension slider remains a separate bottom-left-anchored control.
 disables attraction/compression, and increases damping. Contacts and glue stay
 active. The box stays fixed while penetration improves by more than 10%
 (or 1e-6, whichever is larger) per observation window. If progress stalls for
-half a second, the centered box opens at 0.08 side units per second until clear. `settle_status()` reports `Running` until
-geometric depth is at most `SETTLE_DEPTH` (1e-5), glue error is at most
-`SETTLE_GLUE_ERROR` (1e-3), and motion is at most 0.002 per square, continuously
-for half a second. It then pauses with `Settled`. After 12 simulated seconds,
-remaining violations produce `Blocked`; persistent motion produces `TimedOut`.
-Both stop and pause without loading a solver pose. `cancel_settle()` and direct
-controls stop the run; saved force settings return with band tension zero.
+half a second, the centered box opens at 0.08 side units per second until
+clear. `settle_status()` reports `Running` until geometric depth is at most
+`SETTLE_DEPTH` (1e-5), glue error is at most `SETTLE_GLUE_ERROR` (1e-3), and
+motion is at most 0.002 per square, continuously for half a second. It then
+pauses with `Settled`. After 12 simulated seconds, remaining violations produce
+`Blocked`; persistent motion produces `TimedOut`. Both stop and pause without
+loading a solver pose. `cancel_settle()` and direct controls stop the run;
+saved force settings return with band tension zero.
 Do not call `set_paused` or `set_params` after starting a run unless cancelling
 it is intended. The controller advances inside `step()`; the UI must not also
 drive a competing relaxation controller.

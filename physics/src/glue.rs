@@ -1,38 +1,6 @@
 //! Explicit feature contacts. Tangential motion is free while segments overlap.
 use crate::{Body, Physics};
-pub const MAX_GLUES: usize = 4096;
-/// Edge/midpoint indices are local +u, +v, -u, -v. Corner bit 0 selects
-/// +u (otherwise -u), bit 1 selects +v (otherwise -v), not cyclic order.
-/// Walls are left, bottom, right, top. Square indices follow body order.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Feature {
-    Edge { square: usize, edge: u8 },
-    Corner { square: usize, corner: u8 },
-    Midpoint { square: usize, edge: u8 },
-    Wall(u8),
-}
-impl Feature {
-    pub fn square(self) -> Option<usize> {
-        match self {
-            Self::Edge { square, .. }
-            | Self::Corner { square, .. }
-            | Self::Midpoint { square, .. } => Some(square),
-            Self::Wall(_) => None,
-        }
-    }
-    fn valid(self, n: usize) -> bool {
-        match self {
-            Self::Edge { square, edge } | Self::Midpoint { square, edge } => square < n && edge < 4,
-            Self::Corner { square, corner } => square < n && corner < 4,
-            Self::Wall(w) => w < 4,
-        }
-    }
-}
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Glue {
-    pub a: Feature,
-    pub b: Feature,
-}
+pub use shared::glue::{Feature, Glue, MAX_GLUES};
 impl Physics {
     /// Replace all constraints atomically. This changes input, never body poses.
     pub fn set_glues(&self, glues: &[Glue]) -> Result<(), String> {
@@ -40,23 +8,7 @@ impl Physics {
         if s.disposed {
             return Err("Simulation disposed".into());
         }
-        if glues.len() > MAX_GLUES {
-            return Err("Too many glue constraints".into());
-        }
-        for (i, g) in glues.iter().enumerate() {
-            if !g.a.valid(s.bodies.len())
-                || !g.b.valid(s.bodies.len())
-                || g.a.square() == g.b.square()
-            {
-                return Err("Glue requires valid features on different objects".into());
-            }
-            if glues[..i]
-                .iter()
-                .any(|h| h == g || (h.a == g.b && h.b == g.a))
-            {
-                return Err("Duplicate glue constraint".into());
-            }
-        }
+        shared::glue::check(glues, s.bodies.len())?;
         s.cancel_settle();
         s.glues = glues.to_vec();
         Ok(())

@@ -18,12 +18,13 @@ pub async fn create(
     State(state): State<Arc<AppState>>,
     Json(body): Json<CreateShare>,
 ) -> Result<Json<ShortShare>, HandlerError> {
-    // Decode validates n, exact length, finite values and coordinate bounds
-    // before allocating. Overlap is allowed here; this never submits a score.
-    let arrangement = share::decode(&body.code, body.n).map_err(HandlerError::bad_request)?;
-    let code = share::encode(&arrangement);
+    // Decode validates n, exact length, finite values, coordinate bounds and
+    // glue before allocating. Overlap is allowed here; this never submits a
+    // score.
+    let snapshot = share::decode(&body.code, body.n).map_err(HandlerError::bad_request)?;
+    let code = share::encode(&snapshot.arrangement, &snapshot.glues);
     let hash = Sha256::digest(code.as_bytes()).to_vec();
-    let n = arrangement.n;
+    let n = snapshot.arrangement.n;
     let token = with_conn(&state, move |conn| {
         // An insert handles both concurrent duplicate requests and token
         // collisions. A token collision retries; a digest match must also

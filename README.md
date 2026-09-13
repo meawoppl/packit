@@ -49,7 +49,8 @@ using `shared::VALIDATION_TOL`.
 
 The **Share** button saves an immutable snapshot in Postgres and copies a short
 `/s/<token>` URL, suitable for posting on social media. Identical snapshots reuse
-the same URL. Unfinished packings can be shared without submitting a score. If
+the same URL. Unfinished packings can be shared without submitting a score, and
+the snapshot keeps any glue between squares and walls. If
 a browser blocks automatic clipboard access, use **Copy link** or select the
 shown URL. Automatic settle still updates the address bar with the self-contained
 `/play/:n?s=<hex>` form; short links redirect to that form. The `solution_shares`
