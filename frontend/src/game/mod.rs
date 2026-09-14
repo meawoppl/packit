@@ -1069,6 +1069,18 @@ impl Component for Game {
             Msg::Submitted(board, result) => {
                 self.submitting = false;
                 match result {
+                    Ok(entry)
+                        if shared::board::decode(&board.code, board.n)
+                            .is_ok_and(|b| entry.side < b.arrangement.side) =>
+                    {
+                        self.set_status(
+                            &format!(
+                                "Saved! Rank #{}. Your previous best was better and was kept.",
+                                entry.rank
+                            ),
+                            false,
+                        )
+                    }
                     Ok(entry) => self.set_status(
                         &format!(
                             "Saved! Rank #{} for {n} {}.",

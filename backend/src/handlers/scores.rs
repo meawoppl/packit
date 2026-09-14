@@ -8,6 +8,7 @@ use axum::http::{header, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::Json;
 use diesel::prelude::*;
+use sha2::{Digest, Sha256};
 use shared::board::{self, BoardState};
 use shared::geometry;
 use shared::{
@@ -158,7 +159,9 @@ pub async fn submit(
 }
 
 /// Store `board`, or find it already stored, and a score on it for `user`,
-/// in one transaction: both or neither.
+/// in one transaction: both or neither. Keep one personal best per account
+/// and (container, shape, n); ties keep the earlier entry. Board links remain
+/// immutable even when the score that first referenced them is replaced.
 pub(crate) fn record(
     conn: &mut PgConnection,
     board: &BoardState,
@@ -168,6 +171,35 @@ pub(crate) fn record(
     let arrangement = serde_json::to_value(arr)
         .map_err(|e| diesel::result::Error::SerializationError(e.into()))?;
     conn.transaction(|conn| {
+        // Serialize even the first submission, where there is no score row
+        // to lock yet. Hash collisions only serialize unrelated categories.
+        // Acquire before touching boards; retain the boards -> scores order
+        // used by migrations and other submit transactions.
+        let mut key = Sha256::new();
+        key.update(b"potatos-personal-best");
+        key.update(user.id.as_bytes());
+        key.update([arr.container.sides() as u8, arr.shape.sides() as u8]);
+        key.update(arr.n.to_le_bytes());
+        let key = i64::from_le_bytes(key.finalize()[..8].try_into().unwrap());
+        diesel::sql_query("SELECT pg_advisory_xact_lock($1)")
+            .bind::<diesel::sql_types::BigInt, _>(key)
+            .execute(conn)?;
+        let board_token = boards::store(conn, board, user.id)?;
+        let own = scores::table
+            .filter(scores::user_id.eq(user.id))
+            .filter(scores::container.eq(arr.container.sides() as i32))
+            .filter(scores::shape.eq(arr.shape.sides() as i32))
+            .filter(scores::n.eq(arr.n as i32));
+        let best = own
+            .order((scores::side, scores::submitted_at, scores::id))
+            .select(Score::as_select())
+            .first::<Score>(conn)
+            .optional()?;
+        if let Some(best) = best.filter(|s| s.side <= arr.side) {
+            diesel::delete(own.filter(scores::id.ne(best.id))).execute(conn)?;
+            return Ok(entry(&best, rank_of(conn, &best)?));
+        }
+        diesel::delete(own).execute(conn)?;
         let new = NewScore {
             container: arr.container.sides() as i32,
             shape: arr.shape.sides() as i32,
@@ -176,7 +208,7 @@ pub(crate) fn record(
             n: arr.n as i32,
             side: arr.side,
             arrangement,
-            board_token: boards::store(conn, board, user.id)?,
+            board_token,
         };
         let score: Score = diesel::insert_into(scores::table)
             .values(&new)

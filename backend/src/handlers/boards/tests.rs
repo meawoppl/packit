@@ -135,7 +135,7 @@ async fn a_submission_stores_its_board_with_its_glue() {
     );
     let (_, bare): (_, ScoreEntry) = call(
         &app,
-        post_as("/api/scores", &submission(&arr, &[]), &second),
+        post_as("/api/scores", &submission(&arr, &[]), &sign_up(&pool)),
     )
     .await;
     assert_ne!(bare.board, entry.board);
@@ -665,13 +665,14 @@ fn upgrading_a_populated_database_links_every_score_to_its_board() {
             );
             assert_eq!(link(conn, twice_first)?, (twice.clone(), false));
             assert_eq!(creator(conn, &twice)?, None);
+            let charlie = scratch_user(conn, "charlie")?;
             let glued = record(
                 conn,
                 &BoardState {
                     arrangement: scored_twice.clone(),
                     glues: glues(),
                 },
-                bob,
+                charlie,
             )?;
             assert_ne!(glued.board, twice);
             assert_eq!(board_rows(conn)?.len(), shares.len() + 3);
@@ -776,14 +777,15 @@ fn the_board_down_migration_never_drops_a_recorded_board() {
 
             conn.batch_execute(UP_MIGRATIONS[6])?;
             conn.batch_execute(UP_MIGRATIONS[7])?;
-            // A recorded board can't go back.
+            // A new account records a board; it cannot go back.
+            let submitter = scratch_user(conn, "newplayer")?;
             record(
                 conn,
                 &BoardState {
                     arrangement: pair(2.75),
                     glues: glues(),
                 },
-                ada,
+                submitter,
             )?;
             let (linked, rows) = (links(conn)?, board_rows(conn)?);
             let refused = run(conn, DOWN).unwrap_err().to_string();
@@ -1154,4 +1156,99 @@ fn container_migration_preserves_square_games_and_refuses_data_loss() {
         assert!(boards.iter().any(|row|row.0==stored));
         Ok(())
     });
+}
+
+#[test]
+fn personal_best_replaces_only_its_owner_and_configuration() {
+    let Some(pool) = test_db() else {
+        return;
+    };
+    pool.get().unwrap().test_transaction::<_,diesel::result::Error,_>(|conn| {
+        scratch_schema(conn,UP_MIGRATIONS.len())?;
+        let a=scratch_user(conn,"alice")?;
+        let b=scratch_user(conn,"bob")?;
+        let board=|side| BoardState { arrangement: pair(side),glues: glues() };
+        let old=record(conn,&board(4.0),a.clone())?;
+        let other=record(conn,&board(4.0),b)?;
+        // Simulate several historical entries, including an unowned name
+        // identical to the account. Identity must never come from its text.
+        diesel::sql_query("INSERT INTO scores(player,n,side,arrangement,user_id,board_token) SELECT player,n,side,arrangement,user_id,board_token FROM scores WHERE id=$1")
+            .bind::<diesel::sql_types::Uuid,_>(old.id).execute(conn)?;
+        diesel::sql_query("INSERT INTO scores(player,n,side,arrangement,board_token) SELECT player,n,side,arrangement,board_token FROM scores WHERE id=$1")
+            .bind::<diesel::sql_types::Uuid,_>(old.id).execute(conn)?;
+        let mut configs=Vec::new();
+        for (shape,container,n) in [(3,4,2),(4,3,2),(4,4,1)] {
+            let mut arr=pair(8.0); arr.shape=shared::Shape::from_sides(shape).unwrap();
+            arr.container=shared::Shape::from_sides(container).unwrap(); arr.n=n;
+            arr.squares.truncate(n as usize);
+            configs.push(record(conn,&BoardState{arrangement:arr,glues:vec![]},a.clone())?.id);
+        }
+        let saved=record(conn,&board(3.0),a.clone())?;
+        assert_ne!(saved.id,old.id);
+        assert_eq!(saved.rank,1);
+        assert_eq!(scores::table.find(old.id).count().get_result::<i64>(conn)?,0);
+        assert_eq!(scores::table.find(other.id).count().get_result::<i64>(conn)?,1);
+        for id in configs { assert_eq!(scores::table.find(id).count().get_result::<i64>(conn)?,1); }
+        assert_eq!(scores::table.filter(scores::user_id.is_null()).count().get_result::<i64>(conn)?,1);
+        assert_eq!(creator(conn,&old.board)?,Some(a.id),"old board links retain their creator");
+        let rows=board_rows(conn)?;
+        let tie=record(conn,&board(3.0),a.clone())?;
+        let worse=record(conn,&board(3.5),a.clone())?;
+        assert_eq!(tie,saved); assert_eq!(worse,saved);
+        assert!(rows.iter().all(|r| board_rows(conn).unwrap().contains(r)),"previous boards survive");
+        assert_eq!(scores::table.filter(scores::user_id.eq(a.id)).filter(scores::n.eq(2)).filter(scores::shape.eq(4)).filter(scores::container.eq(4)).count().get_result::<i64>(conn)?,1);
+        Ok(())
+    });
+}
+
+#[test]
+fn failed_replacement_restores_the_previous_best_and_boards() {
+    let Some(pool) = test_db() else {
+        return;
+    };
+    pool.get().unwrap().test_transaction::<_,diesel::result::Error,_>(|conn| {
+        scratch_schema(conn,UP_MIGRATIONS.len())?;
+        let a=scratch_user(conn,"alice")?;
+        let old=record(conn,&BoardState{arrangement:pair(4.0),glues:vec![]},a.clone())?;
+        let before=board_rows(conn)?;
+        conn.batch_execute("CREATE FUNCTION refuse_score() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'forced insert failure'; END $$; CREATE TRIGGER refuse_score BEFORE INSERT ON scores FOR EACH ROW EXECUTE FUNCTION refuse_score()")?;
+        assert!(record(conn,&BoardState{arrangement:pair(3.0),glues:vec![]},a).is_err());
+        assert_eq!(board_rows(conn)?,before);
+        assert_eq!(scores::table.find(old.id).count().get_result::<i64>(conn)?,1);
+        Ok(())
+    });
+}
+
+#[test]
+fn concurrent_personal_bests_wait_and_keep_the_better_score() {
+    let Some(url) = shared_url() else {
+        return;
+    };
+    for (first_side, second_side) in [(3.0, 4.0), (4.0, 3.0)] {
+        let scratch = SharedScratch::new(&url, UP_MIGRATIONS.len());
+        let mut first = scratch.connect();
+        let user = scratch_user(&mut first, "alice").unwrap();
+        let (saved,pending)=first.transaction::<_,diesel::result::Error,_>(|first| {
+            let saved=record(first,&BoardState{arrangement:pair(first_side),glues:vec![]},user.clone())?;
+            let mut second=scratch.connect();
+            let pid: i32=diesel::select(diesel::dsl::sql::<diesel::sql_types::Integer>("pg_backend_pid()")).get_result(&mut second)?;
+            let pending=std::thread::spawn(move || record(&mut second,&BoardState{arrangement:pair(second_side),glues:vec![]},user));
+            let started=Instant::now();
+            loop {
+                let waiting=count(first,&format!("SELECT count(*) FROM pg_locks WHERE pid={pid} AND locktype='advisory' AND NOT granted"))?;
+                if waiting==1 { break; }
+                assert!(started.elapsed()<Duration::from_secs(5),"second submit must wait for the uncommitted first score");
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            Ok((saved,pending))
+        }).unwrap();
+        let result = pending.join().unwrap().unwrap();
+        assert_eq!(result.side, 3.0);
+        if first_side < second_side {
+            assert_eq!(result, saved);
+        } else {
+            assert_ne!(result.id, saved.id);
+        }
+        assert_eq!(count(&mut first, "SELECT count(*) FROM scores").unwrap(), 1);
+    }
 }

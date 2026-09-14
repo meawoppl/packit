@@ -3484,3 +3484,29 @@ async fn multitouch_does_not_leave_a_double_tap_or_stale_capture() {
     h.destroy();
     r.remove();
 }
+
+#[wasm_bindgen_test]
+async fn submitting_a_worse_score_explains_the_retained_best() {
+    let _gpu = NoWebGpu::install();
+    let api = Api::install(&[("/api/scores", vec![saved()])]);
+    let arrangement = Physics::new(2, 3.0).arrangement();
+    let code = board::encode(&arrangement, &[]);
+    let (handle, root, physics) = mount_at(&format!("s={code}")).await;
+    submit_button(&root, "Settle").click();
+    wait_for_report(8000).await;
+    let before = physics.arrangement();
+    assert!(before.side > 2.0);
+    submit_button(&root, "Submit packing").click();
+    wait_until("retained personal best", || {
+        text(&root, ".pg-status").contains("previous best was better and was kept")
+    })
+    .await;
+    assert_eq!(api.sent("/api/scores").len(), 1);
+    assert_eq!(
+        physics.arrangement(),
+        before,
+        "keeping a previous score must not load its board"
+    );
+    handle.destroy();
+    root.remove();
+}
