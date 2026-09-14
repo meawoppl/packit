@@ -1542,12 +1542,7 @@ async fn share_button_copies_a_short_link_for_the_captured_precise_snapshot() {
     let clipboard = Clipboard::install(false);
     let (handle, root, _) = mount().await;
     submit_button(&root, "Settle").click();
-    for _ in 0..100 {
-        if TEST_REPORT.with(|r| r.borrow().is_some()) {
-            break;
-        }
-        sleep(20).await;
-    }
+    wait_for_report(12_000).await;
     let report = TEST_REPORT.with(|r| r.borrow().clone()).unwrap();
     let url = web_sys::window().unwrap().location().href().unwrap();
     submit_button(&root, "Share").click();
@@ -2239,7 +2234,8 @@ fn history_length() -> u32 {
 async fn tighten_loads_the_solvers_smaller_box_on_request() {
     let _gpu = NoWebGpu::install();
     let (handle, root, physics) = mount().await;
-    click_button(&root, ".pg-submit", "Settle");
+    // Automatic measurement preserves slack; manual Settle now compresses it.
+    physics.set_paused(false);
     wait_for_report(8000).await;
     let loose = TEST_REPORT.with(|r| r.take()).unwrap();
     assert!(
@@ -2527,7 +2523,7 @@ async fn settling_and_sharing_leave_the_address_bar_alone() {
         TEST_REPORT.with(|r| r.take());
         submit_button(&root, "Settle").click();
         sleep(300).await;
-        wait_for_report(3000).await;
+        wait_for_report(12_000).await;
         submit_button(&root, "Share").click();
         sleep(30).await;
         wait_share(&root).await;
@@ -3173,11 +3169,10 @@ async fn polygon_games_load_settle_and_offer_all_shapes() {
             .get_attribute("aria-label")
             .unwrap()
             .contains(shape.plural()));
-        click_button(&root, ".pg-submit", "Settle");
-        wait_until("polygon certified", || {
-            TEST_REPORT.with(|r| r.borrow().is_some())
-        })
-        .await;
+        // This test covers shape-preserving automatic certification;
+        // manual Settle now deliberately compresses the scene first.
+        physics.set_paused(false);
+        wait_for_report(8000).await;
         TEST_REPORT.with(|r| {
             let r = r.borrow();
             assert_eq!(r.as_ref().unwrap().shape, shape);
@@ -3293,11 +3288,9 @@ async fn all_container_games_restore_and_certify_without_changing_shape() {
                 root.query_selector_all(".pg-corner").unwrap().length(),
                 container.sides() as u32
             );
-            click_button(&root, ".pg-submit", "Settle");
-            wait_until("container certified", || {
-                TEST_REPORT.with(|r| r.borrow().is_some())
-            })
-            .await;
+            // Automatic certification retains this imported loose pose.
+            physics.set_paused(false);
+            wait_for_report(8000).await;
             TEST_REPORT.with(|r| assert_eq!(r.borrow().as_ref().unwrap(), &a));
             handle.destroy();
             root.remove();
@@ -3508,6 +3501,31 @@ async fn submitting_a_worse_score_explains_the_retained_best() {
         before,
         "keeping a previous score must not load its board"
     );
+    handle.destroy();
+    root.remove();
+}
+
+#[wasm_bindgen_test]
+async fn settle_button_tensions_a_slack_box_and_certifies_its_tighter_pose() {
+    let _gpu = NoWebGpu::install();
+    let (handle, root, physics) = mount().await;
+    physics.set_paused(true);
+    let before = physics.arrangement();
+    assert_eq!(physics.params().band_tension, 0.0);
+    submit_button(&root, "Settle").click();
+    wait_until("inward tension", || physics.params().band_tension > 0.0).await;
+    assert!(physics.params().target_side < before.side);
+    wait_for_report(12_000).await;
+    let report = TEST_REPORT.with(|r| r.borrow().clone()).unwrap();
+    assert!(
+        report.side < before.side - 0.05,
+        "slack side {} -> {}",
+        before.side,
+        report.side
+    );
+    assert!(shared::geometry::validate(&report, shared::VALIDATION_TOL).is_ok());
+    assert_eq!(physics.params().band_tension, 0.0);
+    assert!(physics.paused());
     handle.destroy();
     root.remove();
 }

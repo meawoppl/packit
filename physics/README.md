@@ -137,3 +137,13 @@ CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER=wasm-bindgen-test-runner \
 The test runner version must match `wasm-bindgen` in `Cargo.lock`. These tests
 require a WebGPU adapter; they fail instead of silently skipping GPU checks.
 Chrome's software-adapter flags in `webdriver.json` are only for testing.
+
+Manual Settle first uses `begin_settle_with_pressure`: a slack, clear scene gets
+gentle inward band tension (15) toward its shape-specific area bound. Existing
+overlap or unsatisfied glue is resolved first without more compression. Pressure
+relaxes toward a local equilibrium, measured by stable poses and boundary size
+over two half-second windows, then releases into the normal strict contact and
+motion checks. The compression time budget includes travel for roomy imports;
+exhaustion reports TimedOut rather than claiming equilibrium. This is a local
+force relaxation, not a global optimum guarantee. Automatic measurement and
+squeeze release keep using `begin_settle` so they do not restart compression.
