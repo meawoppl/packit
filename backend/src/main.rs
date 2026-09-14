@@ -544,20 +544,34 @@ mod tests {
         .await;
         assert!(leaders.iter().any(|e| e.n == 2 && e.side <= 2.0));
 
-        let (status, detail): (_, shared::ScoreDetail) = call(
+        let (status, _): (_, shared::ApiError) = call(
             &app,
             Request::get(format!("/api/scores/{}", loose.id))
                 .body(Body::empty())
                 .unwrap(),
         )
         .await;
+        assert_eq!(
+            status,
+            StatusCode::NOT_FOUND,
+            "an improvement removes the old score"
+        );
+        let (status, detail): (_, shared::ScoreDetail) = call(
+            &app,
+            Request::get(format!("/api/scores/{}", tight.id))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
         assert_eq!(status, StatusCode::OK);
-        assert_eq!(detail.entry.id, loose.id);
-        assert_eq!(detail.entry.side, 3.0);
-        // Rank is computed at read time, so the tighter packing now outranks it.
-        assert!(detail.entry.rank > tight.rank);
-        assert_eq!(detail.arrangement, two_squares(3.0));
-        assert_eq!(detail.entry.board, loose.board);
+        assert_eq!(detail.arrangement, two_squares(2.0));
+        assert_eq!(detail.entry.board, tight.board);
+        let old_code: String = crate::schema::board_states::table
+            .find(&loose.board)
+            .select(crate::schema::board_states::code)
+            .first(&mut app_pool.get().unwrap())
+            .unwrap();
+        assert_eq!(old_code, shared::board::encode(&two_squares(3.0), &[]));
 
         let (status, _): (_, shared::ApiError) = call(
             &app,
