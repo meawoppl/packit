@@ -48,7 +48,7 @@ enum Route {
 
 fn switch(route: Route) -> Html {
     match route {
-        Route::Home => html! { <Home /> },
+        Route::Home => html! { <game::Game key={17u32} n={17} /> },
         Route::Play { n } if (1..=MAX_N).contains(&n) => {
             // Keyed so changing n remounts with fresh physics.
             html! { <game::Game key={n} n={n} /> }
@@ -113,21 +113,6 @@ pub fn app() -> Html {
                 </main>
             </AccountProvider>
         </BrowserRouter>
-    }
-}
-
-#[function_component(Home)]
-fn home() -> Html {
-    html! {
-        <div class="home">
-            <h1>{ "Pick your packing" }</h1>
-            <p>{ "Pack triangles, squares, pentagons, or hexagons into a triangle, square, pentagon, or hexagon. Choose your game from the packing picker." }</p>
-            <div class="n-grid">
-                { for (1..=30u32).map(|n| html! {
-                    <Link<Route> to={Route::Play { n }} classes="n-button">{ n }</Link<Route>>
-                }) }
-            </div>
-        </div>
     }
 }
 
