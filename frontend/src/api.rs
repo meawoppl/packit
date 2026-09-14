@@ -214,21 +214,12 @@ pub async fn sign_out() -> Result<(), Failure> {
     }
 }
 
-pub async fn list_scores(n: Option<u32>, limit: Option<u32>) -> Result<Vec<ScoreEntry>, String> {
-    list_scores_for(shared::Shape::Square, n, limit).await
-}
-pub async fn list_scores_for(
-    shape: shared::Shape,
-    n: Option<u32>,
-    limit: Option<u32>,
-) -> Result<Vec<ScoreEntry>, String> {
-    list_scores_in(shape, shared::Shape::Square, n, limit).await
-}
-pub async fn list_scores_in(
+pub async fn list_player_scores_in(
     shape: shared::Shape,
     container: shared::Shape,
     n: Option<u32>,
     limit: Option<u32>,
+    player: Option<String>,
 ) -> Result<Vec<ScoreEntry>, String> {
     let mut query = if shape.is_square() {
         Vec::new()
@@ -244,6 +235,9 @@ pub async fn list_scores_in(
     if let Some(limit) = limit {
         query.push(format!("limit={limit}"));
     }
+    if let Some(player) = player {
+        query.push(format!("player={}", js_sys::encode_uri_component(&player)));
+    }
     let url = format!("/api/scores?{}", query.join("&"));
     let resp = Request::get(&url).send().await.map_err(|e| e.to_string())?;
     decode(resp).await.map_err(|e| e.to_string())
@@ -257,12 +251,6 @@ pub async fn get_score(id: Uuid) -> Result<ScoreDetail, String> {
     decode(resp).await.map_err(|e| e.to_string())
 }
 
-pub async fn known_records() -> Result<Vec<KnownRecord>, String> {
-    known_records_for(shared::Shape::Square).await
-}
-pub async fn known_records_for(shape: shared::Shape) -> Result<Vec<KnownRecord>, String> {
-    known_records_in(shape, shared::Shape::Square).await
-}
 pub async fn known_records_in(
     shape: shared::Shape,
     container: shared::Shape,

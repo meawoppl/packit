@@ -116,7 +116,7 @@ async fn legacy_names_read_apart_from_account_names() {
             vec![reply(
                 200,
                 json!([
-                    score(1, 1, true, RECORDED, true),
+                    score(2, 1, true, RECORDED, true),
                     score(2, 1, false, LEGACY, false)
                 ]),
             )],
@@ -203,6 +203,84 @@ async fn a_score_page_opens_its_board() {
             format!("/s/{LEGACY}"),
             "Open this board · glue not recorded".to_string()
         )]
+    );
+    handle.destroy();
+    root.remove();
+}
+
+#[function_component(Personal)]
+fn personal() -> Html {
+    html! {<BrowserRouter><Leaderboard player={Some("ada".to_string())}/></BrowserRouter>}
+}
+
+#[wasm_bindgen_test]
+async fn icons_filter_personal_records_and_account_names_link_to_profiles() {
+    let api = Api::install(&[
+        (
+            "/api/scores",
+            vec![reply(200, json!([score(2, 3, true, RECORDED, true)]))],
+        ),
+        ("/api/records", vec![reply(200, json!([]))]),
+    ]);
+    let (handle, root) = mount::<Personal>(".score-board").await;
+    assert!(root.text_content().unwrap().contains("ada’s records"));
+    assert_eq!(
+        root.query_selector("a.player")
+            .unwrap()
+            .unwrap()
+            .get_attribute("href")
+            .as_deref(),
+        Some("/players/ada")
+    );
+    let click = |label: &str| {
+        root.query_selector(&format!("button[aria-label='{label}']"))
+            .unwrap()
+            .unwrap()
+            .unchecked_into::<web_sys::HtmlElement>()
+            .click()
+    };
+    let count = api.sent("/api/scores").len();
+    click("Pieces: triangle");
+    wait_until("piece filter fetch", || {
+        api.sent("/api/scores").len() > count
+    })
+    .await;
+    assert_eq!(
+        root.query_selector("button[aria-label='Pieces: triangle']")
+            .unwrap()
+            .unwrap()
+            .get_attribute("aria-pressed")
+            .as_deref(),
+        Some("true")
+    );
+    let count = api.sent("/api/scores").len();
+    click("Container: hexagon");
+    wait_until("container filter fetch", || {
+        api.sent("/api/scores").len() > count
+    })
+    .await;
+    let count = api.sent("/api/scores").len();
+    let select = root
+        .query_selector("select")
+        .unwrap()
+        .unwrap()
+        .unchecked_into::<web_sys::HtmlSelectElement>();
+    select.set_value("7");
+    select
+        .dispatch_event(&web_sys::Event::new("change").unwrap())
+        .unwrap();
+    wait_until("count filter fetch", || {
+        api.sent("/api/scores").len() > count
+    })
+    .await;
+    assert!(root
+        .text_content()
+        .unwrap()
+        .contains("ranks are among all players"));
+    assert_eq!(
+        select.value(),
+        "7",
+        "count selector keeps the chosen value after rendering"
     );
     handle.destroy();
     root.remove();

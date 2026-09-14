@@ -157,6 +157,8 @@ impl ScoreEntry {
 /// Query string for `GET /api/scores`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ScoresQuery {
+    /// Owned scores for this unique account; never matched by legacy display name.
+    pub player: Option<String>,
     #[serde(default)]
     pub container: Shape,
     #[serde(default)]
@@ -358,6 +360,7 @@ mod tests {
     #[test]
     fn scores_query_roundtrip() {
         roundtrip(ScoresQuery {
+            player: Some("ada".into()),
             container: crate::Shape::Square,
             shape: crate::Shape::Square,
             n: Some(5),

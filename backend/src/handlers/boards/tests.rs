@@ -1252,3 +1252,36 @@ fn concurrent_personal_bests_wait_and_keep_the_better_score() {
         assert_eq!(count(&mut first, "SELECT count(*) FROM scores").unwrap(), 1);
     }
 }
+
+#[test]
+fn personal_records_use_account_identity_and_keep_global_ranks() {
+    let Some(pool) = test_db() else {
+        return;
+    };
+    pool.get().unwrap().test_transaction::<_,diesel::result::Error,_>(|conn| {
+        use crate::handlers::scores::personal_records;
+        use shared::Shape;
+        scratch_schema(conn,UP_MIGRATIONS.len())?;
+        let alice=scratch_user(conn,"alice")?;
+        let bob=scratch_user(conn,"bob")?;
+        let board=|side| BoardState{arrangement:pair(side),glues:vec![]};
+        let mine=record(conn,&board(3.0),alice.clone())?;
+        let other=record(conn,&board(2.0),bob)?;
+        diesel::sql_query("INSERT INTO scores(player,n,side,arrangement,board_token) SELECT 'alice',n,side,arrangement,board_token FROM scores WHERE id=$1")
+            .bind::<diesel::sql_types::Uuid,_>(other.id).execute(conn)?;
+        // Historical duplicate owned entries must not produce duplicate n rows.
+        diesel::sql_query("INSERT INTO scores(player,n,side,arrangement,user_id,board_token) SELECT player,n,side+1,arrangement,user_id,board_token FROM scores WHERE id=$1")
+            .bind::<diesel::sql_types::Uuid,_>(mine.id).execute(conn)?;
+        let mut polygon=pair(8.0);polygon.shape=Shape::Triangle;polygon.container=Shape::Hexagon;
+        let alt=record(conn,&BoardState{arrangement:polygon,glues:vec![]},alice)?;
+        let rows=personal_records(conn,"alice",Shape::Square,Shape::Square,None,100)?;
+        assert_eq!(rows.len(),1);assert_eq!(rows[0].id,mine.id);assert_eq!(rows[0].rank,3);
+        assert!(rows[0].account);assert_eq!(rows[0].board,mine.board);
+        assert_eq!(personal_records(conn,"alice",Shape::Square,Shape::Square,Some(2),100)?,rows);
+        assert!(personal_records(conn,"alice",Shape::Square,Shape::Square,Some(1),100)?.is_empty());
+        assert_eq!(personal_records(conn,"alice",Shape::Triangle,Shape::Hexagon,None,100)?[0].id,alt.id);
+        assert!(personal_records(conn,"unknown",Shape::Square,Shape::Square,None,100)?.is_empty());
+        assert_eq!(personal_records(conn,"bob",Shape::Square,Shape::Square,None,100)?[0].id,other.id);
+        Ok(())
+    });
+}

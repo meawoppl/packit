@@ -225,7 +225,24 @@ pub async fn list(
     State(state): State<Arc<AppState>>,
     Query(query): Query<ScoresQuery>,
 ) -> HandlerResult<Vec<ScoreEntry>> {
+    if let Some(player) = &query.player {
+        if player.len() < 3
+            || player.len() > 24
+            || !player
+                .bytes()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'_' || c == b'-')
+        {
+            return Err(HandlerError::bad_request("invalid username"));
+        }
+    }
     let limit = query.limit.unwrap_or(DEFAULT_LIMIT).clamp(1, MAX_LIMIT) as i64;
+    if let Some(player) = query.player {
+        let rows = with_conn(&state, move |conn| {
+            personal_records(conn, &player, query.shape, query.container, query.n, limit)
+        })
+        .await?;
+        return Ok(Json(rows));
+    }
     let rows = with_conn(&state, move |conn| match query.n {
         Some(n) => {
             let rows: Vec<Score> = scores::table
@@ -265,6 +282,49 @@ pub async fn list(
     })
     .await?;
     Ok(Json(rows))
+}
+
+/// Public account records, with identity resolved through users, not display names.
+pub(crate) fn personal_records(
+    conn: &mut PgConnection,
+    player: &str,
+    shape: shared::Shape,
+    container: shared::Shape,
+    n: Option<u32>,
+    limit: i64,
+) -> QueryResult<Vec<ScoreEntry>> {
+    use crate::schema::users;
+    let owner: Option<Uuid> = users::table
+        .filter(users::username.eq(player))
+        .filter(users::kind.eq("player"))
+        .select(users::id)
+        .first(conn)
+        .optional()?;
+    let Some(owner) = owner else {
+        return Ok(Vec::new());
+    };
+    let mut selection = scores::table
+        .distinct_on(scores::n)
+        .order((
+            scores::n.asc(),
+            scores::side.asc(),
+            scores::submitted_at.asc(),
+            scores::id.asc(),
+        ))
+        .filter(scores::user_id.eq(owner))
+        .filter(scores::shape.eq(shape.sides() as i32))
+        .filter(scores::container.eq(container.sides() as i32))
+        .into_boxed();
+    if let Some(n) = n {
+        selection = selection.filter(scores::n.eq(n as i32));
+    }
+    let rows: Vec<Score> = selection
+        .limit(limit)
+        .select(Score::as_select())
+        .load(conn)?;
+    rows.iter()
+        .map(|s| rank_of(conn, s).map(|rank| entry(s, rank)))
+        .collect()
 }
 
 pub async fn detail(

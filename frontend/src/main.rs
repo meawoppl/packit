@@ -33,6 +33,8 @@ enum Route {
         container: String,
         n: u32,
     },
+    #[at("/players/:username")]
+    PlayerRecords { username: String },
     #[at("/leaderboard")]
     Leaderboard,
     #[at("/leaderboard/:n")]
@@ -83,6 +85,9 @@ fn switch(route: Route) -> Html {
             (Ok(shape), Ok(container)) => html! {<LeaderboardN {n} {shape} {container}/>},
             _ => html! {<h1>{"Unknown shape"}</h1>},
         },
+        Route::PlayerRecords { username } => {
+            html! { <Leaderboard key={username.clone()} player={Some(username.clone())} /> }
+        }
         Route::Leaderboard => html! { <Leaderboard /> },
         Route::LeaderboardN { n } => html! { <LeaderboardN {n} /> },
         Route::PolygonLeaderboard { shape, n } => match shape.parse::<shared::Shape>() {
