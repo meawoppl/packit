@@ -24,6 +24,7 @@ pub struct Scene<'a> {
     /// Side length the viewport is scaled to. The band may contract inside
     /// it, and during a drag the box may outgrow it.
     pub view_side: f64,
+    pub pan: (f64, f64),
     pub band_on: bool,
     pub band_tension: f32,
     pub target_side: f64,
@@ -160,8 +161,8 @@ pub fn draw(canvas: &HtmlCanvasElement, scene: &Scene) {
     let scale = w * (1.0 - 2.0 * PAD_FRACTION) / scene.view_side;
     // The box stays centered, so growing it on every side leaves the squares
     // where they were on screen.
-    let sx = |x: f64| w / 2.0 + (x - side / 2.0) * scale;
-    let sy = |y: f64| w / 2.0 - (y - side / 2.0) * scale;
+    let sx = |x: f64| w / 2.0 + (x - side / 2.0 - scene.pan.0) * scale;
+    let sy = |y: f64| w / 2.0 - (y - side / 2.0 - scene.pan.1) * scale;
 
     ctx.clear_rect(0.0, 0.0, w, w);
     ctx.set_fill_style_str("#101722");

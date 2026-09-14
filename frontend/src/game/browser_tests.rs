@@ -127,6 +127,7 @@ fn set_query(query: &str) {
         .unwrap();
     TEST_REPORT.with(|r| r.take());
     TEST_EXTENT.with(|e| e.set(0.0));
+    TEST_PAN.with(|p| p.set((0.0, 0.0)));
 }
 
 fn new_root() -> Element {
@@ -3302,4 +3303,184 @@ async fn all_container_games_restore_and_certify_without_changing_shape() {
             sleep(25).await;
         }
     }
+}
+
+/// Touch coordinates are client fractions, independent of the world camera.
+fn finger(canvas: &HtmlCanvasElement, kind: &str, id: i32, at: (f64, f64)) {
+    let r = canvas.get_bounding_client_rect();
+    let init = PointerEventInit::new();
+    init.set_bubbles(true);
+    init.set_pointer_type("touch");
+    init.set_pointer_id(id);
+    init.set_client_x((r.left() + r.width() * at.0) as i32);
+    init.set_client_y((r.top() + r.height() * at.1) as i32);
+    canvas
+        .dispatch_event(&PointerEvent::new_with_event_init_dict(kind, &init).unwrap())
+        .unwrap();
+}
+async fn touch_board() -> (yew::AppHandle<Host>, Element, Physics, HtmlCanvasElement) {
+    let (h, r, p) = mount().await;
+    p.set_side(6.0);
+    for i in 0..p.bodies().len() {
+        p.set_pose(i, 1.5 + 3.0 * i as f32, 3.0, 0.0);
+    }
+    p.set_paused(true);
+    sleep(120).await;
+    let c = canvas_of(&r);
+    (h, r, p, c)
+}
+fn client_piece(p: &Physics, i: usize) -> (f64, f64) {
+    let b = p.bodies()[i];
+    let side = p.side();
+    let extent = TEST_EXTENT.with(Cell::get);
+    let pan = TEST_PAN.with(Cell::get);
+    (
+        0.5 + (b.x as f64 - side / 2.0 - pan.0) * 0.91 / extent,
+        0.5 - (b.y as f64 - side / 2.0 - pan.1) * 0.91 / extent,
+    )
+}
+#[wasm_bindgen_test]
+async fn multitouch_drags_independent_pieces_and_cancel_releases_only_one() {
+    let _gpu = NoWebGpu::install();
+    let (h, r, p, c) = touch_board().await;
+    let a = client_piece(&p, 0);
+    let b = client_piece(&p, 1);
+    finger(&c, "pointerdown", 11, a);
+    sleep(20).await;
+    finger(&c, "pointerdown", 22, b);
+    sleep(20).await;
+    finger(&c, "pointermove", 11, (a.0, a.1 - 0.15));
+    finger(&c, "pointermove", 22, (b.0, b.1 + 0.15));
+    sleep(30).await;
+    let lead = p.bodies()[1].y;
+    assert!(!text(&r, ".pg-status").contains("Glue:"));
+    finger(&c, "pointercancel", 11, a);
+    sleep(350).await;
+    assert!(
+        p.bodies()[1].y < lead - 0.2,
+        "lifting A must retain B's held target"
+    );
+    let old = p.bodies()[1].y;
+    finger(&c, "pointermove", 22, (b.0, b.1 - 0.2));
+    sleep(350).await;
+    assert!(p.bodies()[1].y > old + 0.2);
+    finger(&c, "pointerup", 22, b);
+    sleep(20).await;
+    let snapshot = p.arrangement();
+    finger(&c, "pointermove", 22, (0.0, 0.0));
+    sleep(20).await;
+    assert!(p.bodies()[1].x > snapshot.squares[1].cx as f32 - 0.2);
+    h.destroy();
+    r.remove();
+}
+#[wasm_bindgen_test]
+async fn multitouch_twist_turns_without_glue_or_translation_springs() {
+    let _gpu = NoWebGpu::install();
+    let (h, r, p, c) = touch_board().await;
+    let a = client_piece(&p, 0);
+    let radius = 0.025;
+    finger(&c, "pointerdown", 3, (a.0 - radius, a.1));
+    sleep(20).await;
+    finger(&c, "pointerdown", 8, (a.0 + radius, a.1));
+    sleep(20).await;
+    let before = p.bodies()[0];
+    finger(&c, "pointermove", 3, (a.0 - radius, a.1 + radius));
+    finger(&c, "pointermove", 8, (a.0 + radius, a.1 - radius));
+    sleep(250).await;
+    let after = p.bodies()[0];
+    assert!(
+        after.theta > before.theta + 0.02,
+        "twist must turn counterclockwise: {}",
+        after.theta
+    );
+    assert!((after.x - before.x).abs() < 0.15 && (after.y - before.y).abs() < 0.15);
+    assert!(!text(&r, ".pg-status").contains("Glue:"));
+    finger(&c, "lostpointercapture", 3, a);
+    finger(&c, "pointercancel", 8, a);
+    sleep(30).await;
+    h.destroy();
+    r.remove();
+}
+#[wasm_bindgen_test]
+async fn multitouch_pinch_pan_and_subsequent_drag_share_the_camera() {
+    let _gpu = NoWebGpu::install();
+    let (h, r, p, c) = touch_board().await;
+    let before = p.arrangement();
+    let initial = TEST_EXTENT.with(Cell::get);
+    finger(&c, "pointerdown", 4, (0.3, 0.2));
+    sleep(20).await;
+    finger(&c, "pointerdown", 7, (0.7, 0.2));
+    sleep(20).await;
+    finger(&c, "pointermove", 4, (0.2, 0.25));
+    finger(&c, "pointermove", 7, (0.8, 0.25));
+    sleep(60).await;
+    let zoomed = TEST_EXTENT.with(Cell::get);
+    assert!(zoomed < initial * 0.8);
+    let frame: HtmlElement = r
+        .query_selector(".pg-canvas-frame")
+        .unwrap()
+        .unwrap()
+        .dyn_into()
+        .unwrap();
+    assert_eq!(
+        frame.style().get_property_value("overflow").unwrap(),
+        "clip",
+        "offscreen handles cannot enlarge the page"
+    );
+    assert_eq!(p.arrangement(), before, "navigation must not move pieces");
+    let pan = TEST_PAN.with(Cell::get);
+    assert!(pan.1.abs() > 0.01);
+    finger(&c, "pointerup", 4, (0.2, 0.25));
+    finger(&c, "pointerup", 7, (0.8, 0.25));
+    sleep(50).await;
+    assert_eq!(
+        TEST_EXTENT.with(Cell::get),
+        zoomed,
+        "camera persists after release"
+    );
+    let a = client_piece(&p, 0);
+    let y = p.bodies()[0].y;
+    finger(&c, "pointerdown", 19, a);
+    sleep(20).await;
+    finger(&c, "pointermove", 19, (a.0, a.1 - 0.1));
+    sleep(250).await;
+    assert!(
+        p.bodies()[0].y > y + 0.1,
+        "hit testing must follow zoom/pan"
+    );
+    finger(&c, "pointerup", 19, a);
+    h.destroy();
+    r.remove();
+}
+
+#[wasm_bindgen_test]
+async fn multitouch_does_not_leave_a_double_tap_or_stale_capture() {
+    let _gpu = NoWebGpu::install();
+    let (h, r, p, c) = touch_board().await;
+    let a = client_piece(&p, 0);
+    finger(&c, "pointerdown", 1, a);
+    sleep(10).await;
+    finger(&c, "pointerdown", 2, (a.0 + 0.02, a.1));
+    sleep(10).await;
+    finger(&c, "pointerup", 1, a);
+    finger(&c, "pointercancel", 2, a);
+    sleep(10).await;
+    finger(&c, "pointerdown", 3, a);
+    sleep(10).await;
+    finger(&c, "pointerup", 3, a);
+    sleep(20).await;
+    assert!(!text(&r, ".pg-status").contains("Glue:"));
+    // Settle must clear all held fingers; a later move cannot wake it.
+    finger(&c, "pointerdown", 4, a);
+    sleep(10).await;
+    settle_button(&r).click();
+    sleep(50).await;
+    let before = p.arrangement();
+    p.set_paused(true);
+    finger(&c, "pointermove", 4, (0.9, 0.9));
+    sleep(30).await;
+    assert!(p.paused());
+    assert_eq!(p.arrangement(), before);
+    h.destroy();
+    r.remove();
 }

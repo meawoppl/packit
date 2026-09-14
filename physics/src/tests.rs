@@ -437,3 +437,26 @@ fn dense_edge_midpoint_unions_settle() {
     advance(&p, 2400);
     assert!(p.motion() < 0.018, "motion={}", p.motion());
 }
+
+#[test]
+fn independent_grabs_pull_each_piece_and_release_separately() {
+    for shape in [
+        shared::Shape::Triangle,
+        shared::Shape::Square,
+        shared::Shape::Pentagon,
+        shared::Shape::Hexagon,
+    ] {
+        let p = Physics::new_for(shape, 2, 6.0);
+        p.set_pose(0, 1.5, 3.0, 0.0);
+        p.set_pose(1, 4.5, 3.0, 0.0);
+        p.set_grabs(&[(0, 1.5, 4.0), (1, 4.5, 2.0)]);
+        advance(&p, 80);
+        assert!(p.bodies()[0].y > 3.5 && p.bodies()[1].y < 2.5, "{shape:?}");
+        p.set_grabs(&[(1, 4.5, 4.0)]);
+        assert_eq!(p.state.borrow().grabs.len(), 1);
+        advance(&p, 100);
+        assert!(p.bodies()[1].y > 3.5);
+        p.begin_settle();
+        assert!(p.state.borrow().grabs.is_empty());
+    }
+}
