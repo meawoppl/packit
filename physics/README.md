@@ -57,10 +57,12 @@ play screen (`frontend/src/game/`) drives `Physics` directly.
 and glue force per body, separately from body state. GPU output uses the two spare f32
 slots of the existing 32-byte body stride; telemetry never participates in pose
 merging and clears after direct edits. `mouse_force()` exposes the current
-capped mouse spring. The canvas uses logarithmically scaled arrows during
-interaction; zero net contact force correctly produces no arrow even when
-opposing contacts cancel. Outer-band marks depict spring effort and direction,
-with a dashed rest boundary and a solid actual boundary.
+capped mouse spring. The canvas combines these as an unoriented directional-load
+tensor, filtered over 240 ms, and draws a translucent ellipse over each piece.
+Its short axis follows the dominant load; force reversals do not flip it, and
+release fades it away. This is a visual cue, not a stress measurement: opposing
+contacts can cancel in the net telemetry. The dashed boundary shows the target
+and the solid boundary shows the actual container.
 
 ## Centered interaction and settling
 
@@ -69,7 +71,7 @@ resistance above 8 force units, a target lead above 0.18 units, and a chain of
 contacts to a wall must persist for 150 ms before the box grows. Growth is
 limited to 0.5 side units per simulated second and stops on release. Free-space
 motion and brief bumps do not expand the container. Growth releases band
-tension and updates its target to hold the expanded size. Force arrows retain
+tension and updates its target to hold the expanded size. The load overlay uses
 the completed batch's telemetry until the next batch refreshes it.
 
 The renderer must keep the box center fixed: screen position is canvas center

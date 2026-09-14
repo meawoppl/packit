@@ -57,6 +57,7 @@ fn host(props: &HostProps) -> Html {
     html! {
         <BrowserRouter>
             <ContextProvider<Account> context={props.account.clone()}>
+                <nav class="topbar"><picker::Picker n={2} shape={props.shape} container={props.container} /></nav>
                 <Game n={2} shape={props.shape} container={props.container} />
             </ContextProvider<Account>>
         </BrowserRouter>
