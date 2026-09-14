@@ -95,11 +95,17 @@ static HEXAGON_RECORDS: LazyLock<Vec<KnownRecord>> = LazyLock::new(|| {
 pub struct RecordsQuery {
     #[serde(default)]
     shape: shared::Shape,
+    #[serde(default)]
+    container: shared::Shape,
 }
 pub async fn records(
     axum::extract::Query(query): axum::extract::Query<RecordsQuery>,
 ) -> Json<Vec<KnownRecord>> {
-    Json(for_shape(query.shape).clone())
+    Json(if query.container.is_square() {
+        for_shape(query.shape).clone()
+    } else {
+        vec![]
+    })
 }
 
 #[cfg(test)]

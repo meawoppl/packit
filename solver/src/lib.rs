@@ -275,6 +275,7 @@ fn polish(a: &Arrangement) -> Option<Arrangement> {
         })
         .collect();
     let candidate = Arrangement {
+        container: shared::Shape::Square,
         shape: shared::Shape::Square,
         n: a.n,
         side: x[x.len() - 1],
@@ -290,7 +291,7 @@ pub fn refine(input: &Arrangement) -> Result<SolveReport, String> {
     if input.n == 0 || input.n > shared::MAX_N || input.squares.len() != input.n as usize {
         return Err("Invalid piece count".into());
     }
-    if !input.shape.is_square() {
+    if !input.shape.is_square() || !input.container.is_square() {
         return refine_polygon(input);
     }
     if !input.side.is_finite()
@@ -432,24 +433,49 @@ pub fn refine(input: &Arrangement) -> Result<SolveReport, String> {
 fn refine_polygon(input: &Arrangement) -> Result<SolveReport, String> {
     shared::board::check_arrangement(input, input.n)?;
     let mut a = input.clone();
-    let pts: Vec<_> = a.squares.iter().flat_map(|p| a.shape.vertices(p)).collect();
-    let (mut x0, mut y0, mut x1, mut y1) = (
-        f64::INFINITY,
-        f64::INFINITY,
-        f64::NEG_INFINITY,
-        f64::NEG_INFINITY,
-    );
-    for (x, y) in pts {
-        x0 = x0.min(x);
-        y0 = y0.min(y);
-        x1 = x1.max(x);
-        y1 = y1.max(y);
+    if a.container.is_square() {
+        let pts: Vec<_> = a.squares.iter().flat_map(|p| a.shape.vertices(p)).collect();
+        let (mut x0, mut y0, mut x1, mut y1) = (
+            f64::INFINITY,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+            f64::NEG_INFINITY,
+        );
+        for (x, y) in pts {
+            x0 = x0.min(x);
+            y0 = y0.min(y);
+            x1 = x1.max(x);
+            y1 = y1.max(y);
+        }
+        for p in &mut a.squares {
+            p.cx -= x0;
+            p.cy -= y0;
+        }
+        a.side = (x1 - x0).max(y1 - y0);
+    } else {
+        // Homothetic fit about the current container center; no relative pose changes.
+        let center = input.side / 2.0;
+        let extent = input
+            .container
+            .walls(1.0)
+            .iter()
+            .map(|w| {
+                a.squares
+                    .iter()
+                    .flat_map(|p| a.shape.vertices(p))
+                    .map(|(x, y)| {
+                        -((x - center) * w.normal.0 + (y - center) * w.normal.1)
+                            / input.container.apothem()
+                    })
+                    .fold(0.0, f64::max)
+            })
+            .fold(0.0, f64::max);
+        a.side = extent.max(input.container.area_bound(input.shape, input.n)) * (1.0 + 2e-12);
+        for p in &mut a.squares {
+            p.cx += (a.side - input.side) / 2.0;
+            p.cy += (a.side - input.side) / 2.0;
+        }
     }
-    for p in &mut a.squares {
-        p.cx -= x0;
-        p.cy -= y0;
-    }
-    a.side = (x1 - x0).max(y1 - y0);
     let valid = validate(&a, shared::VALIDATION_TOL).is_ok();
     Ok(SolveReport {
         max_violation: shared::geometry::worst_violation(&a),
@@ -467,7 +493,7 @@ fn refine_polygon(input: &Arrangement) -> Result<SolveReport, String> {
         algebraic: None,
         status: "Numerically checked polygon packing".into(),
         reference_side: None,
-        lower_bound: (input.n as f64 * input.shape.area()).sqrt(),
+        lower_bound: input.container.area_bound(input.shape, input.n),
         gap_to_reference_percent: None,
     })
 }
@@ -477,6 +503,7 @@ mod tests {
     use super::*;
     fn grid() -> Arrangement {
         Arrangement {
+            container: shared::Shape::Square,
             shape: shared::Shape::Square,
             n: 4,
             side: 2.0,
@@ -545,6 +572,7 @@ mod tests {
             })
             .collect();
         let report = refine(&Arrangement {
+            container: shared::Shape::Square,
             shape: shared::Shape::Square,
             n: 25,
             side: 5.0,
@@ -565,6 +593,7 @@ mod tests {
                 })
                 .collect();
             let report = refine(&Arrangement {
+                container: shared::Shape::Square,
                 shape: shared::Shape::Square,
                 n: k * k,
                 side: k as f64,
@@ -591,6 +620,7 @@ mod tests {
     fn five_square_polynomials_vanish() {
         let s = 2.0 + std::f64::consts::FRAC_1_SQRT_2;
         let a = Arrangement {
+            container: shared::Shape::Square,
             shape: shared::Shape::Square,
             n: 5,
             side: s,
@@ -633,12 +663,52 @@ mod tests {
     fn polygon_refine_rejects_empty_boards() {
         for shape in shared::Shape::ALL {
             let a = Arrangement {
+                container: shared::Shape::Square,
                 shape,
                 n: 0,
                 side: 1.0,
                 squares: vec![],
             };
             assert!(refine(&a).is_err());
+        }
+    }
+}
+
+#[cfg(test)]
+mod container_tests {
+    #[test]
+    fn tighten_preserves_relative_pose_and_rotations_in_each_container() {
+        for container in [
+            shared::Shape::Triangle,
+            shared::Shape::Pentagon,
+            shared::Shape::Hexagon,
+        ] {
+            let a = shared::Arrangement {
+                container,
+                shape: shared::Shape::Pentagon,
+                n: 2,
+                side: 12.0,
+                squares: vec![
+                    shared::Placement {
+                        cx: 5.0,
+                        cy: 6.0,
+                        theta: 0.23,
+                    },
+                    shared::Placement {
+                        cx: 7.0,
+                        cy: 6.0,
+                        theta: 0.23,
+                    },
+                ],
+            };
+            let report = super::refine(&a).unwrap();
+            assert!(report.valid);
+            assert!(report.arrangement.side < a.side);
+            assert_eq!(report.arrangement.container, container);
+            let p = &report.arrangement.squares;
+            assert!((p[1].cx - p[0].cx - 2.0).abs() < 1e-12);
+            assert_eq!(p[0].theta, 0.23);
+            assert!((report.lower_bound - container.area_bound(a.shape, a.n)).abs() < 1e-12);
         }
     }
 }

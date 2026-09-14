@@ -43,7 +43,13 @@ pub async fn play(
     Path(n): Path<String>,
     query: Option<Query<PlayQuery>>,
 ) -> impl IntoResponse {
-    play_page(state, n, shared::Shape::Square, query)
+    play_page(
+        state,
+        n,
+        shared::Shape::Square,
+        shared::Shape::Square,
+        query,
+    )
 }
 
 pub async fn polygon_play(
@@ -52,8 +58,19 @@ pub async fn polygon_play(
     query: Option<Query<PlayQuery>>,
 ) -> Response {
     match shape.parse() {
-        Ok(shape) => play_page(state, n, shape, query).into_response(),
+        Ok(shape) => play_page(state, n, shape, shared::Shape::Square, query).into_response(),
         Err(_) => StatusCode::NOT_FOUND.into_response(),
+    }
+}
+
+pub async fn container_play(
+    State(state): State<Arc<AppState>>,
+    Path((shape, container, n)): Path<(String, String, String)>,
+    query: Option<Query<PlayQuery>>,
+) -> Response {
+    match (shape.parse(), container.parse()) {
+        (Ok(shape), Ok(container)) => play_page(state, n, shape, container, query).into_response(),
+        _ => StatusCode::NOT_FOUND.into_response(),
     }
 }
 
@@ -61,6 +78,7 @@ fn play_page(
     state: Arc<AppState>,
     n: String,
     shape: shared::Shape,
+    container: shared::Shape,
     query: Option<Query<PlayQuery>>,
 ) -> impl IntoResponse {
     let n = n.parse().ok().filter(|n| (1..=MAX_N).contains(n));
@@ -68,12 +86,13 @@ fn play_page(
     let packing = n.zip(code).and_then(|(n, s)| {
         board::decode(&s, n)
             .ok()
-            .filter(|b| b.arrangement.shape == shape)
+            .filter(|b| b.arrangement.shape == shape && b.arrangement.container == container)
             .map(|b| (b.arrangement, s))
     });
     let tags = meta_tags_for(
         &state.public_url,
         shape,
+        container,
         n,
         packing.as_ref().map(|(a, s)| (a, s.as_str())),
     );
@@ -111,26 +130,25 @@ pub async fn preview_png(query: Option<Query<PreviewQuery>>) -> Response {
 fn meta_tags_for(
     public_url: &str,
     shape: shared::Shape,
+    container: shared::Shape,
     n: Option<u32>,
     packing: Option<(&Arrangement, &str)>,
 ) -> String {
-    let prefix = if shape.is_square() {
-        String::new()
-    } else {
-        format!("{shape}/")
-    };
+    let path = n
+        .map(|n| shape.play_path(container, n))
+        .unwrap_or_else(|| "/".into());
     let pieces = shape.plural();
     let (title, description, url, image) = match (n, packing) {
         (Some(n), Some((a, code))) => (
             format!("{n} {pieces} in a {:.4} box", a.side),
             describe(a),
-            format!("{public_url}/play/{prefix}{n}?s={code}"),
+            format!("{public_url}{path}?s={code}"),
             Some(format!("{public_url}/api/preview.png?n={n}&s={code}")),
         ),
         (Some(n), None) => (
             format!("Pack {n} unit {pieces}"),
-            format!("Pack {n} unit {pieces} into the smallest square you can."),
-            format!("{public_url}/play/{prefix}{n}"),
+            format!("Pack {n} unit {pieces} into the smallest {container} you can."),
+            format!("{public_url}{path}"),
             None,
         ),
         (None, _) => (
@@ -180,13 +198,14 @@ fn describe(a: &Arrangement) -> String {
     };
     let best = crate::handlers::records::for_shape(a.shape)
         .iter()
-        .find(|r| r.n == a.n)
+        .find(|r| r.n == a.n && a.container.is_square())
         .map(|r| format!(" Best known: {:.6}.", r.side))
         .unwrap_or_default();
     format!(
-        "{kind} packing of {} unit {} in a square of side {:.6}.{best} Open it to keep packing.",
+        "{kind} packing of {} unit {} in a {} of side {:.6}.{best} Open it to keep packing.",
         a.n,
         a.shape.plural(),
+        a.container,
         a.side
     )
 }
@@ -211,17 +230,35 @@ pub fn render(a: &Arrangement) -> Result<Vec<u8>, String> {
     let mut pixmap = Pixmap::new(WIDTH, HEIGHT).ok_or_else(fail)?;
     pixmap.fill(Color::from_rgba8(0x10, 0x17, 0x22, 0xff));
     let side = a.side as f32;
-    let scale = (HEIGHT as f32 - 2.0 * PAD) / side;
+    let scale = (HEIGHT as f32 - 2.0 * PAD) / (side * a.container.extent() as f32);
     let view = Transform::from_row(
         scale,
         0.0,
         0.0,
         -scale,
         (WIDTH as f32 - side * scale) / 2.0,
-        HEIGHT as f32 - PAD,
+        (HEIGHT as f32 + side * scale) / 2.0,
     );
     let mut paint = Paint::default();
-    let container = PathBuilder::from_rect(Rect::from_xywh(0.0, 0.0, side, side).ok_or_else(fail)?);
+    let container = if a.container.is_square() {
+        PathBuilder::from_rect(Rect::from_xywh(0.0, 0.0, side, side).ok_or_else(fail)?)
+    } else {
+        let mut path = PathBuilder::new();
+        for (i, (x, y)) in a
+            .container
+            .container_vertices(a.side)
+            .into_iter()
+            .enumerate()
+        {
+            if i == 0 {
+                path.move_to(x as f32, y as f32);
+            } else {
+                path.line_to(x as f32, y as f32);
+            }
+        }
+        path.close();
+        path.finish().ok_or_else(fail)?
+    };
     paint.set_color_rgba8(0x12, 0x18, 0x23, 0xff);
     pixmap.fill_path(&container, &paint, FillRule::Winding, view, None);
 
@@ -283,6 +320,7 @@ mod tests {
     #[test]
     fn huge_finite_angles_render_like_their_normalized_turn() {
         let square = |theta| Arrangement {
+            container: shared::Shape::Square,
             shape: shared::Shape::Square,
             n: 1,
             side: 2.0,

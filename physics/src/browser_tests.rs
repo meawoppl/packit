@@ -290,6 +290,7 @@ async fn centered_drag_growth_matches_cpu_on_every_wall() {
     for (x, y) in [(-2.0, 1.0), (1.0, -2.0), (4.0, 1.0), (1.0, 4.0)] {
         for p in [&cpu, &gpu] {
             p.load(&shared::Arrangement {
+                container: shared::Shape::Square,
                 shape: shared::Shape::Square,
                 n: 1,
                 side: 2.0,
@@ -374,6 +375,7 @@ async fn gpu_settle_preserves_resolvable_wall_glue_chain() {
     assert_eq!(gpu.mode(), Backend::Gpu);
     for offset in [0.005, 0.01, 0.02, 0.05] {
         gpu.load(&shared::Arrangement {
+            container: shared::Shape::Square,
             shape: shared::Shape::Square,
             n: 4,
             side: 2.0,

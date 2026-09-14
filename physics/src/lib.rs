@@ -59,6 +59,7 @@ struct Rotation {
 }
 struct State {
     shape: shared::Shape,
+    container: shared::Shape,
     interaction: interaction::Interaction,
     bodies: Vec<Body>,
     glues: Vec<Glue>,
@@ -91,11 +92,18 @@ impl Physics {
         self.state.borrow().shape
     }
     pub fn new_for(shape: shared::Shape, n: u32, side: f64) -> Self {
+        Self::new_in(shape, shared::Shape::Square, n, side)
+    }
+    pub fn container(&self) -> shared::Shape {
+        self.state.borrow().container
+    }
+    pub fn new_in(shape: shared::Shape, container: shared::Shape, n: u32, side: f64) -> Self {
         assert!((1..=shared::MAX_N).contains(&n));
-        assert!(side.is_finite() && (shape.min_side()..=1000.0).contains(&side));
+        assert!(side.is_finite() && (container.area_bound(shape, 1)..=1000.0).contains(&side));
         let physics = Self {
             state: Rc::new(RefCell::new(State {
                 shape,
+                container,
                 interaction: Default::default(),
                 glues: Vec::new(),
                 bodies: vec![Body::default(); n as usize],
@@ -132,7 +140,12 @@ impl Physics {
         {
             let n = {
                 let mut s = self.state.borrow_mut();
-                if !s.shape.is_square() || s.disposed || s.initializing || s.gpu.is_some() {
+                if !s.shape.is_square()
+                    || !s.container.is_square()
+                    || s.disposed
+                    || s.initializing
+                    || s.gpu.is_some()
+                {
                     return;
                 }
                 s.initializing = true;
@@ -266,7 +279,9 @@ impl Physics {
         self.state.borrow().side
     }
     pub fn set_side(&self, side: f64) {
-        if !side.is_finite() || !(self.shape().min_side()..=1000.0).contains(&side) {
+        if !side.is_finite()
+            || !(self.container().area_bound(self.shape(), 1)..=1000.0).contains(&side)
+        {
             return;
         }
         let mut s = self.state.borrow_mut();
@@ -297,7 +312,9 @@ impl Physics {
             edge_attraction: p.edge_attraction.clamp(0.0, 40.0),
             stiffness: p.stiffness.clamp(300.0, 1600.0),
             band_tension: p.band_tension.clamp(0.0, 100.0),
-            target_side: p.target_side.clamp(s.shape.min_side(), 1000.0),
+            target_side: p
+                .target_side
+                .clamp(s.container.area_bound(s.shape, 1), 1000.0),
             ..p
         };
     }
@@ -439,11 +456,17 @@ impl Physics {
         let mut s = self.state.borrow_mut();
         s.cancel_settle();
         let cols = (s.bodies.len() as f32).sqrt().ceil() as usize;
-        let spacing = s.side as f32 / cols as f32;
+        let width = if s.container.is_square() {
+            s.side
+        } else {
+            s.side * s.container.apothem() * 2.0f64.sqrt()
+        };
+        let offset = (s.side - width) as f32 / 2.0;
+        let spacing = width as f32 / cols as f32;
         for (i, b) in s.bodies.iter_mut().enumerate() {
             *b = Body {
-                x: (i % cols) as f32 * spacing + spacing * 0.5,
-                y: (i / cols) as f32 * spacing + spacing * 0.5,
+                x: offset + (i % cols) as f32 * spacing + spacing * 0.5,
+                y: offset + (i / cols) as f32 * spacing + spacing * 0.5,
                 ..Body::default()
             };
         }
@@ -460,11 +483,12 @@ impl Physics {
     /// Loads a finite scene, including overlaps that the play solver can repair.
     pub fn load(&self, a: &shared::Arrangement) {
         let mut s = self.state.borrow_mut();
-        if a.shape != s.shape
+        if a.container != s.container
+            || a.shape != s.shape
             || a.n as usize != s.bodies.len()
             || a.squares.len() != s.bodies.len()
             || !a.side.is_finite()
-            || !(s.shape.min_side()..=1000.0).contains(&a.side)
+            || !(s.container.area_bound(s.shape, 1)..=1000.0).contains(&a.side)
             || a.squares.iter().any(|p| {
                 !p.theta.is_finite()
                     || ![p.cx, p.cy]
@@ -526,6 +550,7 @@ impl Drop for BusyGuard {
 impl State {
     fn arrangement(&self) -> shared::Arrangement {
         shared::Arrangement {
+            container: self.container,
             shape: self.shape,
             n: self.bodies.len() as u32,
             side: self.side,

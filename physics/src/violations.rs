@@ -29,7 +29,7 @@ pub struct GlueViolation {
 #[derive(Clone, Debug, PartialEq)]
 pub struct ViolationReport {
     pub bodies: Vec<f64>,
-    pub walls: [f64; 4],
+    pub walls: Vec<f64>,
     pub pairs: Vec<PairViolation>,
     pub wall_contacts: Vec<WallViolation>,
     pub max_depth: f64,
@@ -41,7 +41,7 @@ impl ViolationReport {
     pub(crate) fn measure(arrangement: &shared::Arrangement) -> Self {
         let mut report = Self {
             bodies: vec![0.0; arrangement.squares.len()],
-            walls: [0.0; 4],
+            walls: vec![0.0; arrangement.container.sides()],
             pairs: Vec::new(),
             wall_contacts: Vec::new(),
             max_depth: 0.0,
@@ -49,16 +49,13 @@ impl ViolationReport {
             max_glue_error: 0.0,
         };
         for (i, square) in arrangement.squares.iter().enumerate() {
-            let mut depths = [0.0_f64; 4];
-            for (x, y) in arrangement.shape.vertices(square) {
-                for (depth, value) in
-                    depths
-                        .iter_mut()
-                        .zip([-x, -y, x - arrangement.side, y - arrangement.side])
-                {
-                    *depth = depth.max(value);
-                }
-            }
+            let vertices = arrangement.shape.vertices(square);
+            let depths: Vec<f64> = arrangement
+                .container
+                .walls(arrangement.side)
+                .iter()
+                .map(|wall| vertices.iter().map(|&v| wall.depth(v)).fold(0.0, f64::max))
+                .collect();
             for (wall, depth) in depths.into_iter().enumerate() {
                 if depth > 0.0 {
                     report.wall_contacts.push(WallViolation {
@@ -97,8 +94,13 @@ impl State {
     pub(crate) fn violation_report(&self) -> ViolationReport {
         let mut report = ViolationReport::measure(&self.arrangement());
         for (index, glue) in self.glues.iter().enumerate() {
-            let (distance, angle) =
-                crate::glue::error_for(self.shape, *glue, &self.bodies, self.side as f32);
+            let (distance, angle) = crate::glue::error_for(
+                self.shape,
+                self.container,
+                *glue,
+                &self.bodies,
+                self.side as f32,
+            );
             let error = distance.max(angle * 0.5);
             if error > 0.0 {
                 report.glues.push(GlueViolation {
@@ -144,6 +146,7 @@ mod tests {
     #[test]
     fn rotated_pair_and_each_wall_are_reported_without_double_counting() {
         let scene = Arrangement {
+            container: shared::Shape::Square,
             shape: shared::Shape::Square,
             n: 4,
             side: 2.0,

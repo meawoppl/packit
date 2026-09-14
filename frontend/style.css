@@ -878,10 +878,33 @@ main:has(.packing-game) {
 
 /* Shape and count stay together above the primary play actions. */
 .pg-picker { display: grid; gap: 8px; }
-.pg-count-stepper { display:flex; align-items:center; justify-content:center; gap:8px; }
-.pg-count-stepper button { min-width:44px; min-height:44px; }
-.pg-count-stepper input { width:72px; min-height:44px; text-align:center; }
-.pg-shape-picker { display:grid; grid-template-columns:repeat(4,1fr); gap:6px; }
-.pg-shape-picker a { display:flex; align-items:center; justify-content:center; min-height:48px; border:1px solid #465164; border-radius:8px; color:inherit; }
-.pg-shape-picker a.selected { background:#34492b; border-color:#c7f36b; }
-.pg-shape-picker svg { width:30px; height:30px; fill:currentColor; }
+
+/* Direct manipulation must not start browser text selection (#50). Keep
+   editable fields and useful prose/link output selectable. */
+.packing-game {
+    -webkit-user-select: none;
+    user-select: none;
+}
+.pg-canvas-frame, .pg-corner, .pg-game-picker {
+    -webkit-touch-callout: none;
+}
+.packing-game input, .packing-game textarea, .packing-game a, .pg-share-link, .pg-help, .pg-notes {
+    -webkit-user-select: text;
+    user-select: text;
+}
+.pg-game-picker { justify-self:start; width:fit-content; display:flex; align-items:center; gap:1rem; min-height:56px; padding:.3rem .9rem; }
+.pg-game-picker strong { font-size:1.5rem; }
+.pg-game-picker svg { width:48px; height:48px; }
+.pg-game-picker .enclosing { fill:none; stroke:currentColor; stroke-width:2; }
+.pg-game-picker .enclosed { fill:#c7f36b; }
+.pg-picker-modal { color:var(--text, #e2e8ef); background:#17202d; border:1px solid #52647a; border-radius:1rem; padding:1.25rem; width:min(480px, calc(100vw - 2rem)); max-height:calc(100dvh - 2rem); overflow:auto; }
+.pg-picker-modal::backdrop { background:rgb(0 0 0 / .65); }
+.pg-picker-modal form { display:grid; gap:1rem; }
+.pg-picker-modal fieldset { border:0; padding:0; min-width:0; }
+.pg-picker-modal legend { margin-bottom:.5rem; }
+.pg-shape-options { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:.4rem; }
+.pg-shape-options button { display:flex; align-items:center; flex-direction:column; min-width:0; min-height:64px; padding:.4rem; font-size:.8rem; }
+.pg-shape-options svg { width:32px; height:32px; fill:none; stroke:currentColor; stroke-width:3; }
+.pg-shape-options [aria-pressed="true"] { border-color:#c7f36b; color:#c7f36b; background:#27332b; }
+
+.pg-picker-confirm { background:#c7f36b; color:#101722; font-weight:700; }

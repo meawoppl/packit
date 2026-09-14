@@ -282,3 +282,7 @@ Optional edge attraction and algebraic contact expressions are square-only.
 All shapes use geometric validation for submissions. The polygon reference files
 contain selected exact-formula benchmarks from Friedman's tables; a count without
 one shows no reference rather than a rounded decimal treated as an exact record.
+
+The compact game picker shows the count beside a piece inside its container. Open it to choose the count and either shape (triangle, square, pentagon or hexagon), then Play. Each piece has unit edge length, and the reported side is the **container's edge length**. Density uses the actual container area. Corner controls follow its vertices; drag inward to squeeze and release to settle. Leaderboards are separate for every piece/container/count combination. Literature benchmarks currently apply only to square containers.
+
+Board controls avoid accidental text selection during dragging and touch gestures. Editable fields, board links and help text remain selectable.

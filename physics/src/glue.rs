@@ -8,7 +8,7 @@ impl Physics {
         if s.disposed {
             return Err("Simulation disposed".into());
         }
-        shared::glue::check_for(glues, s.bodies.len(), s.shape)?;
+        shared::glue::check_in(glues, s.bodies.len(), s.shape, s.container)?;
         s.cancel_settle();
         s.glues = glues.to_vec();
         Ok(())
@@ -85,8 +85,26 @@ fn world(f: Feature, bodies: &[Body], side: f32) -> World {
         owner,
     }
 }
-fn world_for(shape: shared::Shape, f: Feature, bodies: &[Body], side: f32) -> World {
-    if shape.is_square() || matches!(f, Feature::Wall(_)) {
+fn world_for(
+    shape: shared::Shape,
+    container: shared::Shape,
+    f: Feature,
+    bodies: &[Body],
+    side: f32,
+) -> World {
+    if let Feature::Wall(w) = f {
+        let wall = container.walls(side as f64)[w as usize];
+        return World {
+            p: [
+                (wall.a.0 + wall.b.0) as f32 / 2.,
+                (wall.a.1 + wall.b.1) as f32 / 2.,
+            ],
+            n: [wall.normal.0 as f32, wall.normal.1 as f32],
+            half: side / 2.,
+            owner: None,
+        };
+    }
+    if shape.is_square() {
         return world(f, bodies, side);
     }
     let i = f.square().unwrap();
@@ -120,18 +138,21 @@ fn world_for(shape: shared::Shape, f: Feature, bodies: &[Body], side: f32) -> Wo
         owner: Some(i),
     }
 }
-fn wall_derivative(p: V, side: f32) -> V {
+fn wall_derivative(container: shared::Shape, p: V, side: f32) -> V {
+    if !container.is_square() {
+        return [p[0] / side - 0.5, p[1] / side - 0.5];
+    }
     [
         if p[0] >= side - 1e-6 { 1. } else { 0. },
         if p[1] >= side - 1e-6 { 1. } else { 0. },
     ]
 }
-fn velocity(w: World, p: V, bodies: &[Body], side: f32, band: f32) -> V {
+fn velocity(container: shared::Shape, w: World, p: V, bodies: &[Body], side: f32, band: f32) -> V {
     if let Some(i) = w.owner {
         let b = bodies[i];
         add([b.vx, b.vy], mul(tangent(sub(p, [b.x, b.y])), b.omega))
     } else {
-        mul(wall_derivative(p, side), band)
+        mul(wall_derivative(container, p, side), band)
     }
 }
 fn omega(w: World, bodies: &[Body]) -> f32 {
@@ -188,10 +209,16 @@ fn contact_geometry(mut a: World, mut b: World) -> (World, World, V, V, V, bool,
     (a, b, pa, pb, normal, sliding, angle)
 }
 
-pub(super) fn error_for(shape: shared::Shape, g: Glue, bodies: &[Body], side: f32) -> (f64, f64) {
+pub(super) fn error_for(
+    shape: shared::Shape,
+    container: shared::Shape,
+    g: Glue,
+    bodies: &[Body],
+    side: f32,
+) -> (f64, f64) {
     let (_, _, pa, pb, normal, sliding, angle) = contact_geometry(
-        world_for(shape, g.a, bodies, side),
-        world_for(shape, g.b, bodies, side),
+        world_for(shape, container, g.a, bodies, side),
+        world_for(shape, container, g.b, bodies, side),
     );
     let delta = sub(pb, pa);
     let distance = if sliding {
@@ -210,10 +237,19 @@ pub(super) fn forces(
     band: f32,
     k: f32,
 ) -> (Vec<[f32; 3]>, f32) {
-    forces_for(shared::Shape::Square, glues, bodies, side, band, k)
+    forces_for(
+        shared::Shape::Square,
+        shared::Shape::Square,
+        glues,
+        bodies,
+        side,
+        band,
+        k,
+    )
 }
 pub(super) fn forces_for(
     shape: shared::Shape,
+    container: shared::Shape,
     glues: &[Glue],
     bodies: &[Body],
     side: f32,
@@ -239,8 +275,8 @@ pub(super) fn forces_for(
                 .max(g.b.square().map_or(0, |i| degrees[i]));
         let weight = 1.0 / degree.max(1) as f32;
         let (a, b, pa, pb, normal, sliding, angle) = contact_geometry(
-            world_for(shape, g.a, bodies, side),
-            world_for(shape, g.b, bodies, side),
+            world_for(shape, container, g.a, bodies, side),
+            world_for(shape, container, g.b, bodies, side),
         );
         let mut couple = if a.half > 0. && b.half > 0. {
             (k / 24. * angle + 4. * (omega(b, bodies) - omega(a, bodies))).clamp(-12., 12.)
@@ -249,8 +285,8 @@ pub(super) fn forces_for(
         };
         let delta = sub(pb, pa);
         let speed = sub(
-            velocity(b, pb, bodies, side, band),
-            velocity(a, pa, bodies, side, band),
+            velocity(container, b, pb, bodies, side, band),
+            velocity(container, a, pa, bodies, side, band),
         );
         let mut force = add(mul(delta, k), mul(speed, 18.));
         if sliding {
@@ -265,7 +301,7 @@ pub(super) fn forces_for(
                 out[i][1] += f[1];
                 out[i][2] += 6. * (cross(sub(p, [bodies[i].x, bodies[i].y]), f) + c);
             } else {
-                reaction += dot(f, wall_derivative(p, side));
+                reaction += dot(f, wall_derivative(container, p, side));
             }
         }
     }

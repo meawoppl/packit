@@ -169,6 +169,8 @@ pub struct LeaderboardNProps {
     pub n: u32,
     #[prop_or_default]
     pub shape: shared::Shape,
+    #[prop_or_default]
+    pub container: shared::Shape,
 }
 
 /// Every submission for one `n`, ranked.
@@ -176,10 +178,11 @@ pub struct LeaderboardNProps {
 pub fn leaderboard_n(props: &LeaderboardNProps) -> Html {
     let n = props.n;
     let shape = props.shape;
-    let scores = use_fetch((shape, n), |(shape, n)| {
-        api::list_scores_for(shape, Some(n), None)
+    let container = props.container;
+    let scores = use_fetch((shape, container, n), |(shape, container, n)| {
+        api::list_scores_in(shape, container, Some(n), None)
     });
-    let records = use_fetch(shape, api::known_records_for);
+    let records = use_fetch((shape, container), |(s, c)| api::known_records_in(s, c));
     let known = records
         .as_ref()
         .and_then(|r| r.as_ref().ok())
@@ -187,14 +190,14 @@ pub fn leaderboard_n(props: &LeaderboardNProps) -> Html {
 
     html! {
         <div class="leaderboard">
-            <h1>{ format!("{n} {}", shape.plural()) }</h1>
+            <h1>{ format!("{n} {} in a {container}", shape.plural()) }</h1>
             <p>
                 { match &known {
                     Some(k) => html! { <>{ "Best known side: " }{ known_cell(k) }{ format!(" ({})", k.source) }</> },
                     None => html! { <span class="muted">{ "No literature record loaded for this n." }</span> },
                 } }
             </p>
-            <Link<Route> to={Route::play(shape,n)} classes="button">{ "Play this n" }</Link<Route>>
+            <Link<Route> to={Route::play_in(shape,container,n)} classes="button">{ "Play this n" }</Link<Route>>
             { loading_or_error(&scores).unwrap_or_else(|| {
                 let scores = scores.as_ref().and_then(|r| r.as_ref().ok()).unwrap();
                 if scores.is_empty() {
@@ -247,7 +250,12 @@ pub fn score_page(props: &ScorePageProps) -> Html {
         .and_then(|r| r.as_ref().ok())
         .map(|d| d.entry.shape)
         .unwrap_or_default();
-    let records = use_fetch(shape, api::known_records_for);
+    let container = detail
+        .as_ref()
+        .and_then(|r| r.as_ref().ok())
+        .map(|d| d.entry.container)
+        .unwrap_or_default();
+    let records = use_fetch((shape, container), |(s, c)| api::known_records_in(s, c));
     if let Some(h) = loading_or_error(&detail) {
         return h;
     }
@@ -270,7 +278,7 @@ pub fn score_page(props: &ScorePageProps) -> Html {
             <ArrangementSvg arrangement={arrangement.clone()} />
             <p>{ board_link(entry, "Open this board") }</p>
             <p>
-                <Link<Route> to={Route::leaderboard(entry.shape,entry.n)}>{ "Back to leaderboard" }</Link<Route>>
+                <Link<Route> to={Route::leaderboard_in(entry.shape,entry.container,entry.n)}>{ "Back to leaderboard" }</Link<Route>>
             </p>
         </div>
     }
@@ -286,10 +294,17 @@ pub struct ArrangementSvgProps {
 pub fn arrangement_svg(props: &ArrangementSvgProps) -> Html {
     let arr = &props.arrangement;
     let s = arr.side;
-    let view = format!("{} {} {} {}", -0.05 * s, -0.05 * s, 1.1 * s, 1.1 * s);
+    let extent = s * arr.container.extent() * 1.1;
+    let view = format!(
+        "{} {} {} {}",
+        (s - extent) / 2.0,
+        (s - extent) / 2.0,
+        extent,
+        extent
+    );
     html! {
         <svg class="arrangement" viewBox={view}>
-            <rect class="container" x="0" y="0" width={s.to_string()} height={s.to_string()} />
+            <polygon class="container" points={arr.container.container_vertices(s).into_iter().map(|(x,y)|format!("{x},{}",s-y)).collect::<Vec<_>>().join(" ")} />
             { for arr.squares.iter().enumerate().map(|(i, p)| {
                 let points = arr.shape.vertices(p)
                     .iter()
