@@ -442,3 +442,27 @@ async fn touch_springs_use_live_cpu_state_then_resume_gpu() {
         assert!((a.y - b.y).abs() < 0.15);
     }
 }
+
+#[wasm_bindgen_test(async)]
+async fn gpu_slack_settle_tightens_then_finishes_clear() {
+    let gpu = Physics::new(2, 3.0);
+    gpu.init_gpu().await;
+    assert_eq!(gpu.mode(), Backend::Gpu);
+    let before = gpu.arrangement();
+    gpu.begin_settle_with_pressure();
+    assert_eq!(gpu.arrangement(), before);
+    assert!(gpu.params().band_tension > 0.0);
+    for _ in 0..390 {
+        gpu.step(6).await;
+    }
+    assert_eq!(
+        gpu.settle_status().phase,
+        SettlePhase::Settled,
+        "{:?}",
+        gpu.settle_status()
+    );
+    assert!(gpu.side() < 2.9);
+    assert!(gpu.violations().max_depth <= crate::SETTLE_DEPTH);
+    assert_eq!(gpu.params().band_tension, 0.0);
+    gpu.dispose();
+}

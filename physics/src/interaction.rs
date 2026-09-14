@@ -1,10 +1,12 @@
 //! Controls shared by both simulation backends. All timing uses simulated time.
-use crate::{Params, Physics, State, ViolationReport};
+use crate::{Body, Params, Physics, State, ViolationReport};
 
 pub const SETTLE_DEPTH: f64 = 1e-5;
 pub const SETTLE_LIMIT: f64 = 12.0;
 pub const SETTLE_GLUE_ERROR: f64 = 1e-3;
 const CALM_WINDOW: f64 = 0.5;
+const COMPRESSION_MIN_BUDGET: f64 = 20.0;
+const GENTLE_TENSION: f32 = 15.0;
 const MOTION_PER_SQUARE: f32 = 0.002;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -36,6 +38,13 @@ pub(crate) struct Interaction {
     progress_depth: f64,
     stall_time: f64,
     opening: bool,
+    compressing: bool,
+    compression_elapsed: f64,
+    compression_limit: f64,
+    compression_timed_out: bool,
+    compression_pose: Vec<Body>,
+    compression_side: f64,
+    compression_window: f64,
     status: SettleStatus,
     saved_params: Option<Params>,
 }
@@ -82,6 +91,44 @@ impl Physics {
         s.paused = false;
     }
 
+    /// First seek a damped local equilibrium under inward band pressure,
+    /// then release it and resolve residual contacts before reporting Settled.
+    /// Already-overlapping or unsatisfied-glue scenes resolve first instead.
+    /// This bounded local relaxation is not a global packing optimizer.
+    pub fn begin_settle_with_pressure(&self) {
+        let original = self.params();
+        self.begin_settle();
+        let mut s = self.state.borrow_mut();
+        if s.disposed {
+            return;
+        }
+        let report = s.violation_report();
+        if report.max_depth > SETTLE_DEPTH || report.max_glue_error > SETTLE_GLUE_ERROR {
+            return;
+        }
+        let floor = s.container.area_bound(s.shape, s.bodies.len() as u32);
+        // Don't grow a cramped box in the compression phase.
+        if s.side <= floor {
+            return;
+        }
+        s.interaction.compressing = true;
+        s.interaction.compression_pose = s.bodies.clone();
+        s.interaction.compression_side = s.side;
+        // The wall speed is capped at one unit/second. Allow travel plus
+        // damping time even for imported boards much larger than the pieces.
+        s.interaction.compression_limit = COMPRESSION_MIN_BUDGET + 2.0 * (s.side - floor);
+        s.params.band_tension = if original.band_tension > 0.0 {
+            original.band_tension
+        } else {
+            GENTLE_TENSION
+        };
+        s.params.target_side = if original.band_tension > 0.0 && original.target_side < s.side {
+            original.target_side.max(floor)
+        } else {
+            floor
+        };
+    }
+
     /// Cancel the controller and release the band without moving any bodies.
     /// The caller decides whether to pause or continue direct interaction.
     pub fn cancel_settle(&self) {
@@ -114,6 +161,12 @@ impl State {
         self.interaction.pressure_time = 0.0;
         self.interaction.stall_time = 0.0;
         self.interaction.opening = false;
+        self.interaction.compressing = false;
+        self.interaction.compression_elapsed = 0.0;
+        self.interaction.compression_limit = 0.0;
+        self.interaction.compression_timed_out = false;
+        self.interaction.compression_pose.clear();
+        self.interaction.compression_window = 0.0;
     }
 
     /// This changes reference frame, not velocity or relative body positions.
@@ -153,6 +206,58 @@ impl State {
         if self.interaction.status.phase == SettlePhase::Running {
             let report = self.violation_report();
             let motion = self.total_motion();
+            if self.interaction.compressing {
+                self.interaction.status = SettleStatus {
+                    phase: SettlePhase::Running,
+                    elapsed: self.interaction.status.elapsed + dt,
+                    max_depth: report.max_depth,
+                    motion,
+                    max_glue_error: report.max_glue_error,
+                };
+                // Stiff contacts can have alternating substep velocities even
+                // at a stationary pose. Judge compression equilibrium over a
+                // real time window, then require low velocity after releasing.
+                self.interaction.compression_window += dt;
+                if self.interaction.compression_window >= CALM_WINDOW {
+                    let displacement = self
+                        .bodies
+                        .iter()
+                        .zip(&self.interaction.compression_pose)
+                        .map(|(a, b)| {
+                            let angle = f64::from(a.theta - b.theta);
+                            f64::from(a.x - b.x)
+                                .hypot(f64::from(a.y - b.y))
+                                .max(angle.sin().atan2(angle.cos()).abs())
+                        })
+                        .fold(0.0, f64::max);
+                    let calm = displacement <= 0.002
+                        && (self.side - self.interaction.compression_side).abs() <= 0.002;
+                    self.interaction.calm_time = if calm {
+                        self.interaction.calm_time + self.interaction.compression_window
+                    } else {
+                        0.0
+                    };
+                    self.interaction.compression_window = 0.0;
+                    self.interaction.compression_pose.clone_from(&self.bodies);
+                    self.interaction.compression_side = self.side;
+                }
+                if (self.interaction.status.elapsed >= 1.0
+                    && self.interaction.calm_time >= 2.0 * CALM_WINDOW)
+                    || self.interaction.status.elapsed >= self.interaction.compression_limit
+                {
+                    self.interaction.compression_timed_out =
+                        self.interaction.calm_time < 2.0 * CALM_WINDOW;
+                    self.interaction.compression_elapsed = self.interaction.status.elapsed;
+                    self.interaction.compressing = false;
+                    self.params.band_tension = 0.0;
+                    self.params.target_side = self.side;
+                    self.band_velocity = 0.0;
+                    self.interaction.calm_time = 0.0;
+                    self.interaction.progress_depth = report.max_depth;
+                    self.interaction.stall_time = 0.0;
+                }
+                return;
+            }
             // Give contacts time to resolve at the existing size. Restart the
             // observation window whenever penetration falls meaningfully.
             let progress = self.interaction.progress_depth - report.max_depth;
@@ -183,8 +288,12 @@ impl State {
                 0.0
             };
             if self.interaction.calm_time >= CALM_WINDOW {
-                self.finish_settle(SettlePhase::Settled);
-            } else if status.elapsed >= SETTLE_LIMIT {
+                self.finish_settle(if self.interaction.compression_timed_out {
+                    SettlePhase::TimedOut
+                } else {
+                    SettlePhase::Settled
+                });
+            } else if status.elapsed >= SETTLE_LIMIT + self.interaction.compression_elapsed {
                 self.finish_settle(
                     if report.max_depth > SETTLE_DEPTH || report.max_glue_error > SETTLE_GLUE_ERROR
                     {
@@ -389,6 +498,75 @@ mod tests {
         p.set_mouse(0.0, 0.0, None, false);
         run(&p, 40);
         assert_eq!(p.side(), 2.0, "a brief bump must not grow the box");
+    }
+
+    #[test]
+    fn slack_settle_applies_pressure_then_finishes_clear_and_releases_band() {
+        for shape in shared::Shape::ALL {
+            for container in shared::Shape::ALL {
+                let p = Physics::new_in(shape, container, 1, 4.0);
+                p.set_pose(0, 2.0, 2.0, 0.0);
+                let before = p.arrangement();
+                p.begin_settle_with_pressure();
+                assert_eq!(p.arrangement(), before, "no input teleport");
+                assert!(p.params().band_tension > 0.0);
+                assert!(p.params().target_side < 4.0);
+                run(&p, 900);
+                assert_eq!(
+                    p.settle_status().phase,
+                    SettlePhase::Settled,
+                    "{shape}/{container}: {:?}",
+                    p.settle_status()
+                );
+                assert!(p.side() < 3.9, "{shape}/{container} did not tighten");
+                assert!(p.violations().max_depth <= SETTLE_DEPTH);
+                assert_eq!(p.params().band_tension, 0.0);
+                assert!(p.paused());
+            }
+        }
+    }
+
+    #[test]
+    fn roomy_boards_reach_equilibrium_and_polygon_sides_can_shrink_below_one() {
+        for (shape, container, side, expected) in [
+            (shared::Shape::Square, shared::Shape::Square, 20.0, 1.01),
+            (shared::Shape::Triangle, shared::Shape::Hexagon, 0.9, 0.85),
+        ] {
+            let p = Physics::new_in(shape, container, 1, side);
+            p.set_pose(0, (side / 2.0) as f32, (side / 2.0) as f32, 0.0);
+            p.begin_settle_with_pressure();
+            assert!(p.params().band_tension > 0.0);
+            run(&p, 1500);
+            assert_eq!(
+                p.settle_status().phase,
+                SettlePhase::Settled,
+                "{shape}/{container}: {:?}",
+                p.settle_status()
+            );
+            assert!(p.side() < expected, "{shape}/{container}: {}", p.side());
+            assert!(p.violations().max_depth <= SETTLE_DEPTH);
+        }
+    }
+
+    #[test]
+    fn pressure_settle_cancels_cleanly_and_resolves_cramped_scenes_first() {
+        let p = Physics::new(2, 4.0);
+        p.begin_settle_with_pressure();
+        assert!(p.params().band_tension > 0.0);
+        run(&p, 10);
+        p.set_mouse(1.0, 1.0, Some(0), true);
+        assert_eq!(p.settle_status().phase, SettlePhase::Idle);
+        assert_eq!(p.params().band_tension, 0.0);
+        let p = Physics::new(2, 1.8);
+        p.begin_settle_with_pressure();
+        assert_eq!(
+            p.params().band_tension,
+            0.0,
+            "don't squeeze existing overlaps harder"
+        );
+        run(&p, 900);
+        assert_eq!(p.settle_status().phase, SettlePhase::Settled);
+        assert!(p.violations().max_depth <= SETTLE_DEPTH);
     }
 
     #[test]

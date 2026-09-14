@@ -155,6 +155,7 @@ pub enum Msg {
     Squeeze,
     SqueezeDown,
     Measure,
+    SettleWithPressure,
     /// Load the solver's smaller packing of the certified scene.
     Tighten,
     Refine,
@@ -1026,6 +1027,10 @@ impl Component for Game {
             Msg::Anneal => self.toggle_run(n, RunKind::Anneal),
             Msg::Squeeze => self.toggle_run(n, RunKind::Squeeze),
             Msg::SqueezeDown => self.toggle_run(n, RunKind::SqueezeDown),
+            Msg::SettleWithPressure => {
+                self.stop_anneal();
+                self.start_settle(true)
+            }
             Msg::Measure => {
                 self.stop_anneal();
                 self.settle()
@@ -1309,7 +1314,7 @@ impl Component for Game {
                             <div class="pg-row"><span>{ "Area filled" }</span><strong>{ &r.density }</strong></div>
                             <div class="pg-help">{ &r.record }</div>
                             <div class="pg-actions">
-                                <button class="pg-primary" disabled={self.busy} onclick={link.callback(|_| Msg::Measure)}>
+                                <button class="pg-primary" disabled={self.busy} onclick={link.callback(|_| Msg::SettleWithPressure)}>
                                     { if self.settling { "Settling…" } else { "Settle" } }
                                 </button>
                                 { self.tighter.as_ref().map(|t| html! {
@@ -1635,6 +1640,10 @@ impl Game {
     /// Settle: the physics lets the constraints resolve (opening the box
     /// only while squares still overlap), then the settled pose is measured.
     fn settle(&mut self) -> bool {
+        self.start_settle(false)
+    }
+
+    fn start_settle(&mut self, pressure: bool) -> bool {
         if self.busy {
             return false;
         }
@@ -1645,7 +1654,11 @@ impl Game {
         self.rotating = false;
         self.last_pointer = None;
         self.desired_side = None;
-        self.physics.begin_settle();
+        if pressure {
+            self.physics.begin_settle_with_pressure();
+        } else {
+            self.physics.begin_settle();
+        }
         self.settling = true;
         self.invalidate();
         self.set_status("Settling…", false);
