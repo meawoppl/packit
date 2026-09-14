@@ -24,13 +24,13 @@ impl Feature {
         }
     }
 
-    fn valid(self, n: usize, sides: u8) -> bool {
+    fn valid(self, n: usize, sides: u8, walls: u8) -> bool {
         match self {
             Self::Edge { square, edge } | Self::Midpoint { square, edge } => {
                 square < n && edge < sides
             }
             Self::Corner { square, corner } => square < n && corner < sides,
-            Self::Wall(w) => w < 4,
+            Self::Wall(w) => w < walls,
         }
     }
 }
@@ -48,12 +48,20 @@ pub fn check(glues: &[Glue], n: usize) -> Result<(), String> {
     check_for(glues, n, crate::Shape::Square)
 }
 pub fn check_for(glues: &[Glue], n: usize, shape: crate::Shape) -> Result<(), String> {
+    check_in(glues, n, shape, crate::Shape::Square)
+}
+pub fn check_in(
+    glues: &[Glue],
+    n: usize,
+    shape: crate::Shape,
+    container: crate::Shape,
+) -> Result<(), String> {
     if glues.len() > MAX_GLUES {
         return Err("Too many glue constraints".into());
     }
     for (i, g) in glues.iter().enumerate() {
-        if !g.a.valid(n, shape.sides() as u8)
-            || !g.b.valid(n, shape.sides() as u8)
+        if !g.a.valid(n, shape.sides() as u8, container.sides() as u8)
+            || !g.b.valid(n, shape.sides() as u8, container.sides() as u8)
             || g.a.square() == g.b.square()
         {
             return Err("Glue requires valid features on different objects".into());

@@ -32,6 +32,8 @@ pub struct Placement {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Arrangement {
     #[serde(default, skip_serializing_if = "Shape::is_square")]
+    pub container: Shape,
+    #[serde(default, skip_serializing_if = "Shape::is_square")]
     pub shape: Shape,
     pub n: u32,
     pub side: f64,
@@ -124,6 +126,8 @@ pub struct SubmitScore {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ScoreEntry {
     #[serde(default)]
+    pub container: Shape,
+    #[serde(default)]
     pub shape: Shape,
     pub id: Uuid,
     pub player: String,
@@ -153,6 +157,8 @@ impl ScoreEntry {
 /// Query string for `GET /api/scores`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ScoresQuery {
+    #[serde(default)]
+    pub container: Shape,
     #[serde(default)]
     pub shape: Shape,
     pub n: Option<u32>,
@@ -215,6 +221,7 @@ mod tests {
 
     fn sample_arrangement() -> Arrangement {
         Arrangement {
+            container: crate::Shape::Square,
             shape: crate::Shape::Square,
             n: 2,
             side: 2.0,
@@ -235,6 +242,7 @@ mod tests {
 
     fn sample_entry() -> ScoreEntry {
         ScoreEntry {
+            container: crate::Shape::Square,
             shape: crate::Shape::Square,
             id: Uuid::new_v4(),
             player: "ada".to_string(),
@@ -350,6 +358,7 @@ mod tests {
     #[test]
     fn scores_query_roundtrip() {
         roundtrip(ScoresQuery {
+            container: crate::Shape::Square,
             shape: crate::Shape::Square,
             n: Some(5),
             limit: None,

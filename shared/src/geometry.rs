@@ -122,7 +122,7 @@ pub fn worst_violation(arr: &Arrangement) -> f64 {
     let squares = &arr.squares;
     let protrusions = squares
         .iter()
-        .map(|p| crate::shape::protrusion(arr.shape, p, arr.side));
+        .map(|p| arr.container.protrusion(arr.shape, p, arr.side));
     let overlaps = squares.iter().enumerate().flat_map(|(i, a)| {
         squares[i + 1..]
             .iter()
@@ -153,7 +153,7 @@ pub fn validate(arr: &Arrangement, tol: f64) -> Result<(), Violation> {
         if !p.is_finite() {
             return Err(Violation::NonFinite { index: Some(i) });
         }
-        let depth = crate::shape::protrusion(arr.shape, p, arr.side);
+        let depth = arr.container.protrusion(arr.shape, p, arr.side);
         if depth > tol {
             return Err(Violation::OutOfBounds { index: i, depth });
         }
@@ -199,6 +199,7 @@ pub fn tighten(squares: &[Placement]) -> Arrangement {
         })
         .collect();
     Arrangement {
+        container: crate::Shape::Square,
         shape: crate::Shape::Square,
         n: squares.len() as u32,
         side: bounding_side(&squares),
@@ -242,25 +243,18 @@ fn separate(arr: &mut Arrangement) {
     const HAIR: f64 = 1e-12;
     let side = arr.side;
     for p in &mut arr.squares {
-        let corners = arr.shape.vertices(p);
-        let low =
-            |axis: fn(&(f64, f64)) -> f64| corners.iter().map(axis).fold(f64::INFINITY, f64::min);
-        let high = |axis: fn(&(f64, f64)) -> f64| {
-            corners.iter().map(axis).fold(f64::NEG_INFINITY, f64::max)
-        };
-        let shift = |lo: f64, hi: f64| {
-            if lo < 0.0 {
-                HAIR - lo
-            } else if hi > side {
-                side - hi - HAIR
-            } else {
-                0.0
+        for wall in arr.container.walls(side) {
+            let depth = arr
+                .shape
+                .vertices(p)
+                .into_iter()
+                .map(|v| wall.depth(v))
+                .fold(0.0, f64::max);
+            if depth > 0.0 {
+                p.cx += wall.normal.0 * (depth + HAIR);
+                p.cy += wall.normal.1 * (depth + HAIR);
             }
-        };
-        let dx = shift(low(|c| c.0), high(|c| c.0));
-        let dy = shift(low(|c| c.1), high(|c| c.1));
-        p.cx += dx;
-        p.cy += dy;
+        }
     }
     for i in 0..arr.squares.len() {
         for j in i + 1..arr.squares.len() {
@@ -288,6 +282,7 @@ mod tests {
 
     fn pair(gap: f64) -> Arrangement {
         Arrangement {
+            container: crate::Shape::Square,
             shape: crate::Shape::Square,
             n: 2,
             side: 2.0,
@@ -312,12 +307,14 @@ mod tests {
     #[test]
     fn certify_keeps_valid_packings_exactly() {
         let loose = Arrangement {
+            container: crate::Shape::Square,
             shape: crate::Shape::Square,
             n: 2,
             side: 2.5,
             squares: vec![sq(0.75, 0.75, 0.0), sq(1.75, 0.75, 0.0)],
         };
         let huge = Arrangement {
+            container: crate::Shape::Square,
             shape: crate::Shape::Square,
             n: 2,
             side: 1000.0,
@@ -347,6 +344,7 @@ mod tests {
     #[test]
     fn certify_separates_a_rotated_corner_contact() {
         let arr = Arrangement {
+            container: crate::Shape::Square,
             shape: crate::Shape::Square,
             n: 2,
             side: 3.0,
@@ -370,6 +368,7 @@ mod tests {
         );
         // Wedged between the walls: no nudge within the box can clear it.
         let wedged = Arrangement {
+            container: crate::Shape::Square,
             shape: crate::Shape::Square,
             n: 2,
             side: 2.0 - 1e-5,
@@ -383,6 +382,7 @@ mod tests {
             .map(|i| sq((i % k) as f64 + 0.5, (i / k) as f64 + 0.5, 0.0))
             .collect();
         Arrangement {
+            container: crate::Shape::Square,
             shape: crate::Shape::Square,
             n: k * k,
             side: k as f64,
@@ -456,6 +456,7 @@ mod tests {
     #[test]
     fn rejects_bad_side_and_tolerance() {
         let empty = Arrangement {
+            container: crate::Shape::Square,
             shape: crate::Shape::Square,
             n: 0,
             side: 0.0,
@@ -478,6 +479,7 @@ mod tests {
         // s = 2 + 1/sqrt(2): four corner squares plus a 45-degree center square.
         let s = 2.0 + std::f64::consts::FRAC_1_SQRT_2;
         let arr = Arrangement {
+            container: crate::Shape::Square,
             shape: crate::Shape::Square,
             n: 5,
             side: s,
@@ -496,6 +498,7 @@ mod tests {
     #[test]
     fn worst_violation_covers_overlap_and_walls() {
         let arr = |side, squares| Arrangement {
+            container: crate::Shape::Square,
             shape: crate::Shape::Square,
             n: 2,
             side,

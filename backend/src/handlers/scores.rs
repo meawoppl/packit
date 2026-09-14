@@ -88,6 +88,7 @@ where
 fn rank_of(conn: &mut PgConnection, score: &Score) -> QueryResult<u32> {
     let better: i64 = scores::table
         .filter(scores::shape.eq(score.shape))
+        .filter(scores::container.eq(score.container))
         .filter(scores::n.eq(score.n))
         .filter(
             scores::side
@@ -107,6 +108,8 @@ fn rank_of(conn: &mut PgConnection, score: &Score) -> QueryResult<u32> {
 
 fn entry(score: &Score, rank: u32) -> ScoreEntry {
     ScoreEntry {
+        container: shared::Shape::from_sides(score.container as u8)
+            .expect("validated stored container"),
         shape: shared::Shape::from_sides(score.shape as u8).expect("validated stored shape"),
         id: score.id,
         player: score.player.clone(),
@@ -166,6 +169,7 @@ pub(crate) fn record(
         .map_err(|e| diesel::result::Error::SerializationError(e.into()))?;
     conn.transaction(|conn| {
         let new = NewScore {
+            container: arr.container.sides() as i32,
             shape: arr.shape.sides() as i32,
             player: user.username,
             user_id: user.id,
@@ -194,6 +198,7 @@ pub async fn list(
         Some(n) => {
             let rows: Vec<Score> = scores::table
                 .filter(scores::shape.eq(query.shape.sides() as i32))
+                .filter(scores::container.eq(query.container.sides() as i32))
                 .filter(scores::n.eq(n as i32))
                 .order((
                     scores::side.asc(),
@@ -212,6 +217,7 @@ pub async fn list(
         None => {
             let rows: Vec<Score> = scores::table
                 .filter(scores::shape.eq(query.shape.sides() as i32))
+                .filter(scores::container.eq(query.container.sides() as i32))
                 .distinct_on(scores::n)
                 .order((
                     scores::n.asc(),
@@ -260,6 +266,7 @@ mod tests {
 
     fn packing(squares: Vec<(f64, f64)>, side: f64) -> Arrangement {
         Arrangement {
+            container: shared::Shape::Square,
             shape: shared::Shape::Square,
             n: squares.len() as u32,
             side,
@@ -304,6 +311,7 @@ mod tests {
     #[test]
     fn entries_say_whether_an_account_submitted_them() {
         let score = |user_id| Score {
+            container: 4,
             shape: 4,
             id: Uuid::new_v4(),
             player: "ada".into(),

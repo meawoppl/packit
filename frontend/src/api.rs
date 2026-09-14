@@ -222,11 +222,22 @@ pub async fn list_scores_for(
     n: Option<u32>,
     limit: Option<u32>,
 ) -> Result<Vec<ScoreEntry>, String> {
+    list_scores_in(shape, shared::Shape::Square, n, limit).await
+}
+pub async fn list_scores_in(
+    shape: shared::Shape,
+    container: shared::Shape,
+    n: Option<u32>,
+    limit: Option<u32>,
+) -> Result<Vec<ScoreEntry>, String> {
     let mut query = if shape.is_square() {
         Vec::new()
     } else {
         vec![format!("shape={shape}")]
     };
+    if !container.is_square() {
+        query.push(format!("container={container}"));
+    }
     if let Some(n) = n {
         query.push(format!("n={n}"));
     }
@@ -250,6 +261,15 @@ pub async fn known_records() -> Result<Vec<KnownRecord>, String> {
     known_records_for(shared::Shape::Square).await
 }
 pub async fn known_records_for(shape: shared::Shape) -> Result<Vec<KnownRecord>, String> {
+    known_records_in(shape, shared::Shape::Square).await
+}
+pub async fn known_records_in(
+    shape: shared::Shape,
+    container: shared::Shape,
+) -> Result<Vec<KnownRecord>, String> {
+    if !container.is_square() {
+        return Ok(vec![]);
+    }
     let url = if shape.is_square() {
         "/api/records".into()
     } else {

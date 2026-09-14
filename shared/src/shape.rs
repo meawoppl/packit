@@ -27,6 +27,15 @@ impl Shape {
     pub fn from_sides(n: u8) -> Option<Self> {
         Self::ALL.into_iter().find(|s| s.sides() == n as usize)
     }
+    pub fn play_path(self, container: Shape, n: u32) -> String {
+        if !container.is_square() {
+            format!("/play/{self}/{container}/{n}")
+        } else if self.is_square() {
+            format!("/play/{n}")
+        } else {
+            format!("/play/{self}/{n}")
+        }
+    }
     pub fn name(self) -> &'static str {
         match self {
             Self::Triangle => "triangle",
@@ -55,6 +64,63 @@ impl Shape {
     }
     pub fn min_side(self) -> f64 {
         self.area().sqrt()
+    }
+    /// Regular container of edge length `side`, centered at `(side/2, side/2)`.
+    /// Square coordinates and its historical wall order remain unchanged.
+    pub fn container_vertices(self, side: f64) -> Vec<(f64, f64)> {
+        self.vertices(&Placement {
+            cx: 0.0,
+            cy: 0.0,
+            theta: 0.0,
+        })
+        .into_iter()
+        .map(|(x, y)| (side * (x + 0.5), side * (y + 0.5)))
+        .collect()
+    }
+    pub fn apothem(self) -> f64 {
+        0.5 / (std::f64::consts::PI / self.sides() as f64).tan()
+    }
+    pub fn extent(self) -> f64 {
+        if self.is_square() {
+            1.0
+        } else {
+            2.0 * self.radius()
+        }
+    }
+    pub fn area_bound(self, piece: Shape, n: u32) -> f64 {
+        (n as f64 * piece.area() / self.area()).sqrt()
+    }
+    /// Wall endpoints in the glue order: left/bottom/right/top for squares,
+    /// otherwise consecutive counterclockwise vertices starting at the top.
+    pub fn walls(self, side: f64) -> Vec<Wall> {
+        let v = self.container_vertices(side);
+        let order: Vec<_> = if self.is_square() {
+            vec![3, 0, 1, 2]
+        } else {
+            (0..v.len()).collect()
+        };
+        order
+            .into_iter()
+            .map(|i| {
+                let a = v[i];
+                let b = v[(i + 1) % v.len()];
+                let len = (b.0 - a.0).hypot(b.1 - a.1);
+                let normal = (-(b.1 - a.1) / len, (b.0 - a.0) / len);
+                Wall {
+                    a,
+                    b,
+                    normal,
+                    limit: a.0 * normal.0 + a.1 * normal.1,
+                }
+            })
+            .collect()
+    }
+    pub fn protrusion(self, piece: Shape, p: &Placement, side: f64) -> f64 {
+        let vertices = piece.vertices(p);
+        self.walls(side)
+            .iter()
+            .flat_map(|wall| vertices.iter().map(move |&p| wall.depth(p)))
+            .fold(0.0, f64::max)
     }
     pub fn vertices(self, p: &Placement) -> Vec<(f64, f64)> {
         if self.is_square() {
@@ -152,6 +218,7 @@ mod tests {
             }
         }
         let impossible = crate::Arrangement {
+            container: crate::Shape::Square,
             shape: Shape::Triangle,
             n: 1,
             side: 0.7,
@@ -179,6 +246,7 @@ mod tests {
             });
         let side = (2.0f64.sqrt() + 6.0f64.sqrt()) / 4.0;
         let a = crate::Arrangement {
+            container: crate::Shape::Square,
             shape,
             n: 1,
             side,
@@ -191,5 +259,99 @@ mod tests {
         assert!(crate::geometry::validate(&a, crate::VALIDATION_TOL).is_ok());
         let code = crate::board::encode(&a, &[]);
         assert_eq!(crate::board::decode(&code, 1).unwrap().arrangement, a);
+    }
+}
+
+/// An inward unit normal and its halfplane `dot(normal, point) >= limit`.
+#[derive(Clone, Copy, Debug)]
+pub struct Wall {
+    pub a: (f64, f64),
+    pub b: (f64, f64),
+    pub normal: (f64, f64),
+    pub limit: f64,
+}
+impl Wall {
+    pub fn depth(&self, p: (f64, f64)) -> f64 {
+        self.limit - self.normal.0 * p.0 - self.normal.1 * p.1
+    }
+}
+
+#[cfg(test)]
+mod container_tests {
+    use super::*;
+    #[test]
+    fn every_container_has_unit_edges_and_correct_halfplanes() {
+        for shape in Shape::ALL {
+            let walls = shape.walls(3.7);
+            assert_eq!(walls.len(), shape.sides());
+            for wall in walls {
+                assert!(((wall.b.0 - wall.a.0).hypot(wall.b.1 - wall.a.1) - 3.7).abs() < 1e-12);
+                assert!(wall.depth((1.85, 1.85)) < 0.0);
+                assert!(wall.depth(wall.a).abs() < 1e-12);
+                let outside = (
+                    wall.a.0 - wall.normal.0 * 0.01,
+                    wall.a.1 - wall.normal.1 * 0.01,
+                );
+                assert!((wall.depth(outside) - 0.01).abs() < 1e-12);
+            }
+        }
+    }
+    #[test]
+    fn same_shape_fits_exactly_and_each_wall_detects_escape() {
+        for container in Shape::ALL {
+            let a = crate::Arrangement {
+                container,
+                shape: container,
+                n: 1,
+                side: 1.0,
+                squares: vec![Placement {
+                    cx: 0.5,
+                    cy: 0.5,
+                    theta: 0.0,
+                }],
+            };
+            assert!(crate::geometry::validate(&a, crate::VALIDATION_TOL).is_ok());
+            for wall in container.walls(1.0) {
+                let mut outside = a.clone();
+                outside.squares[0].cx -= wall.normal.0 * 0.01;
+                outside.squares[0].cy -= wall.normal.1 * 0.01;
+                assert!(crate::geometry::validate(&outside, crate::VALIDATION_TOL).is_err());
+            }
+        }
+    }
+    #[test]
+    fn all_sixteen_games_round_trip_with_their_last_wall_and_feature() {
+        for container in Shape::ALL {
+            for shape in Shape::ALL {
+                let a = crate::Arrangement {
+                    container,
+                    shape,
+                    n: 1,
+                    side: 5.0,
+                    squares: vec![Placement {
+                        cx: 2.5,
+                        cy: 2.5,
+                        theta: 0.3,
+                    }],
+                };
+                assert!(crate::geometry::validate(&a, crate::VALIDATION_TOL).is_ok());
+                let glue = crate::glue::Glue {
+                    a: crate::glue::Feature::Corner {
+                        square: 0,
+                        corner: shape.sides() as u8 - 1,
+                    },
+                    b: crate::glue::Feature::Wall(container.sides() as u8 - 1),
+                };
+                let encoded = crate::board::encode(&a, &[glue]);
+                let b = crate::board::decode(&encoded, 1).unwrap();
+                assert_eq!(a, b.arrangement);
+                assert_eq!(b.glues, vec![glue]);
+                let invalid = crate::glue::Glue {
+                    b: crate::glue::Feature::Wall(container.sides() as u8),
+                    ..glue
+                };
+                assert!(crate::board::decode(&crate::board::encode(&a, &[invalid]), 1).is_err());
+            }
+        }
     }
 }

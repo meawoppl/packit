@@ -8,6 +8,7 @@ use crate::schema::scores;
 #[diesel(table_name = scores)]
 pub struct Score {
     pub shape: i32,
+    pub container: i32,
     pub id: Uuid,
     pub player: String,
     pub n: i32,
@@ -23,6 +24,7 @@ pub struct Score {
 #[diesel(table_name = scores)]
 pub struct NewScore {
     pub shape: i32,
+    pub container: i32,
     pub player: String,
     pub user_id: Uuid,
     pub n: i32,

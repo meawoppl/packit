@@ -38,7 +38,11 @@ impl Anchor {
 }
 
 /// Every feature of `n` squares plus the four walls.
-pub fn features(shape: shared::Shape, n: usize) -> impl Iterator<Item = Feature> {
+pub fn features(
+    shape: shared::Shape,
+    container: shared::Shape,
+    n: usize,
+) -> impl Iterator<Item = Feature> {
     (0..n)
         .flat_map(move |square| {
             (0..shape.sides() as u8).flat_map(move |k| {
@@ -49,7 +53,7 @@ pub fn features(shape: shared::Shape, n: usize) -> impl Iterator<Item = Feature>
                 ]
             })
         })
-        .chain((0..4).map(Feature::Wall))
+        .chain((0..container.sides() as u8).map(Feature::Wall))
 }
 
 /// Two features can be glued unless they share a square (or are both walls).
@@ -60,7 +64,13 @@ pub fn compatible(a: Feature, b: Feature) -> bool {
 /// World position of `f`. Edge and midpoint `k` are the local +x, +y, -x,
 /// -y faces; corner bit 0 is +x and bit 1 is +y; walls are left, bottom,
 /// right, top.
-pub fn anchor(shape: shared::Shape, bodies: &[Body], side: f64, f: Feature) -> Option<Anchor> {
+pub fn anchor(
+    shape: shared::Shape,
+    container: shared::Shape,
+    bodies: &[Body],
+    side: f64,
+    f: Feature,
+) -> Option<Anchor> {
     if !shape.is_square() {
         if let Some(i) = f.square() {
             let b = bodies.get(i)?;
@@ -110,11 +120,11 @@ pub fn anchor(shape: shared::Shape, bodies: &[Body], side: f64, f: Feature) -> O
             Anchor::Segment(local(square, u - v, v - u)?, local(square, u + v, v + u)?)
         }
         Feature::Wall(k) => {
-            let (lo, hi) = match k {
-                0 => ((0.0, 0.0), (0.0, side)),
-                1 => ((0.0, 0.0), (side, 0.0)),
-                2 => ((side, 0.0), (side, side)),
-                _ => ((0.0, side), (side, side)),
+            let wall = *container.walls(side).get(k as usize)?;
+            let (lo, hi) = if container.is_square() && (k == 0 || k == 3) {
+                (wall.b, wall.a)
+            } else {
+                (wall.a, wall.b)
             };
             Anchor::Segment(lo, hi)
         }
@@ -135,6 +145,7 @@ const WALL_YIELD: f64 = 0.05;
 /// snap distance and walls yield to a square edge lying along them.
 pub fn pick(
     shape: shared::Shape,
+    container: shared::Shape,
     bodies: &[Body],
     side: f64,
     p: (f64, f64),
@@ -146,9 +157,9 @@ pub fn pick(
         Feature::Edge { .. } => 0.0,
         Feature::Wall(_) => -(reach / 4.0).min(WALL_YIELD),
     };
-    features(shape, bodies.len())
+    features(shape, container, bodies.len())
         .filter(|f| allow(*f))
-        .filter_map(|f| Some((f, anchor(shape, bodies, side, f)?.distance(p))))
+        .filter_map(|f| Some((f, anchor(shape, container, bodies, side, f)?.distance(p))))
         .filter(|(_, d)| *d <= reach)
         .min_by(|(fa, da), (fb, db)| (da - bias(*fa)).total_cmp(&(db - bias(*fb))))
         .map(|(f, _)| f)
@@ -158,13 +169,14 @@ pub fn pick(
 /// a wall end sits on the wall where it is nearest the other end.
 pub fn link(
     shape: shared::Shape,
+    container: shared::Shape,
     bodies: &[Body],
     side: f64,
     g: Glue,
 ) -> Option<((f64, f64), (f64, f64))> {
     let (a, b) = (
-        anchor(shape, bodies, side, g.a)?,
-        anchor(shape, bodies, side, g.b)?,
+        anchor(shape, container, bodies, side, g.a)?,
+        anchor(shape, container, bodies, side, g.b)?,
     );
     Some(match (g.a, g.b) {
         (Feature::Wall(_), _) => (a.nearest(b.center()), b.center()),
@@ -176,6 +188,7 @@ pub fn link(
 /// Index of the glue whose link midpoint is nearest `p`, within `reach`.
 pub fn glue_at(
     shape: shared::Shape,
+    container: shared::Shape,
     bodies: &[Body],
     side: f64,
     glues: &[Glue],
@@ -186,7 +199,7 @@ pub fn glue_at(
         .iter()
         .enumerate()
         .filter_map(|(i, g)| {
-            let (a, b) = link(shape, bodies, side, *g)?;
+            let (a, b) = link(shape, container, bodies, side, *g)?;
             let mid = ((a.0 + b.0) / 2.0, (a.1 + b.1) / 2.0);
             Some((i, (p.0 - mid.0).hypot(p.1 - mid.1)))
         })
@@ -215,7 +228,13 @@ mod tests {
     #[test]
     fn anchors_follow_the_documented_numbering() {
         let bodies = [body(1.0, 1.0, 0.0)];
-        let point = |f| match anchor(shared::Shape::Square, &bodies, 4.0, f) {
+        let point = |f| match anchor(
+            shared::Shape::Square,
+            shared::Shape::Square,
+            &bodies,
+            4.0,
+            f,
+        ) {
             Some(Anchor::Point(p)) => p,
             other => panic!("{other:?}"),
         };
@@ -246,6 +265,7 @@ mod tests {
         ));
         let Some(Anchor::Segment(a, b)) = anchor(
             shared::Shape::Square,
+            shared::Shape::Square,
             &bodies,
             4.0,
             Feature::Edge { square: 0, edge: 0 },
@@ -254,11 +274,18 @@ mod tests {
         };
         assert!(close(a, (1.5, 0.5)) && close(b, (1.5, 1.5)), "{a:?} {b:?}");
         assert_eq!(
-            anchor(shared::Shape::Square, &bodies, 4.0, Feature::Wall(3)),
+            anchor(
+                shared::Shape::Square,
+                shared::Shape::Square,
+                &bodies,
+                4.0,
+                Feature::Wall(3)
+            ),
             Some(Anchor::Segment((0.0, 4.0), (4.0, 4.0)))
         );
         assert_eq!(
             anchor(
+                shared::Shape::Square,
                 shared::Shape::Square,
                 &bodies,
                 4.0,
@@ -274,7 +301,17 @@ mod tests {
     #[test]
     fn points_beat_edges_and_edges_beat_walls() {
         let bodies = [body(1.0, 1.0, 0.0)];
-        let at = |p| pick(shared::Shape::Square, &bodies, 4.0, p, 0.12, |_| true);
+        let at = |p| {
+            pick(
+                shared::Shape::Square,
+                shared::Shape::Square,
+                &bodies,
+                4.0,
+                p,
+                0.12,
+                |_| true,
+            )
+        };
         assert_eq!(
             at((1.55, 1.52)),
             Some(Feature::Corner {
@@ -299,7 +336,17 @@ mod tests {
         // between a corner and a midpoint.
         let bodies = [body(0.5, 1.5, 0.0)];
         for reach in [0.3, 0.6] {
-            let at = |p| pick(shared::Shape::Square, &bodies, 4.0, p, reach, |_| true);
+            let at = |p| {
+                pick(
+                    shared::Shape::Square,
+                    shared::Shape::Square,
+                    &bodies,
+                    4.0,
+                    p,
+                    reach,
+                    |_| true,
+                )
+            };
             assert_eq!(
                 at((1.02, 1.25)),
                 Some(Feature::Edge { square: 0, edge: 0 }),
@@ -334,9 +381,15 @@ mod tests {
         let bodies = [body(1.0, 1.0, std::f32::consts::FRAC_PI_2)];
         // Local +x now faces world +y.
         assert_eq!(
-            pick(shared::Shape::Square, &bodies, 4.0, (1.0, 1.5), 0.1, |_| {
-                true
-            }),
+            pick(
+                shared::Shape::Square,
+                shared::Shape::Square,
+                &bodies,
+                4.0,
+                (1.0, 1.5),
+                0.1,
+                |_| { true }
+            ),
             Some(Feature::Midpoint { square: 0, edge: 0 })
         );
     }
@@ -345,9 +398,15 @@ mod tests {
     fn the_second_pick_skips_the_first_square() {
         let bodies = [body(0.5, 0.5, 0.0), body(1.5, 0.5, 0.0)];
         let first = Feature::Edge { square: 0, edge: 0 };
-        let second = pick(shared::Shape::Square, &bodies, 2.0, (1.0, 0.25), 0.1, |f| {
-            compatible(first, f)
-        });
+        let second = pick(
+            shared::Shape::Square,
+            shared::Shape::Square,
+            &bodies,
+            2.0,
+            (1.0, 0.25),
+            0.1,
+            |f| compatible(first, f),
+        );
         assert_eq!(second, Some(Feature::Edge { square: 1, edge: 2 }));
         assert!(!compatible(Feature::Wall(0), Feature::Wall(2)));
         assert!(compatible(Feature::Wall(0), first));
@@ -361,7 +420,13 @@ mod tests {
             b: Feature::Edge { square: 1, edge: 2 },
         };
         assert_eq!(
-            link(shared::Shape::Square, &bodies, 2.0, edges),
+            link(
+                shared::Shape::Square,
+                shared::Shape::Square,
+                &bodies,
+                2.0,
+                edges
+            ),
             Some(((1.0, 0.5), (1.0, 0.5)))
         );
         let wall = Glue {
@@ -372,13 +437,20 @@ mod tests {
             },
         };
         assert_eq!(
-            link(shared::Shape::Square, &bodies, 2.0, wall),
+            link(
+                shared::Shape::Square,
+                shared::Shape::Square,
+                &bodies,
+                2.0,
+                wall
+            ),
             Some(((2.0, 2.0), (2.0, 1.0)))
         );
 
         let glues = [edges, wall];
         assert_eq!(
             glue_at(
+                shared::Shape::Square,
                 shared::Shape::Square,
                 &bodies,
                 2.0,
@@ -389,11 +461,27 @@ mod tests {
             Some(0)
         );
         assert_eq!(
-            glue_at(shared::Shape::Square, &bodies, 2.0, &glues, (2.0, 1.5), 0.1),
+            glue_at(
+                shared::Shape::Square,
+                shared::Shape::Square,
+                &bodies,
+                2.0,
+                &glues,
+                (2.0, 1.5),
+                0.1
+            ),
             Some(1)
         );
         assert_eq!(
-            glue_at(shared::Shape::Square, &bodies, 2.0, &glues, (0.2, 1.8), 0.1),
+            glue_at(
+                shared::Shape::Square,
+                shared::Shape::Square,
+                &bodies,
+                2.0,
+                &glues,
+                (0.2, 1.8),
+                0.1
+            ),
             None
         );
     }

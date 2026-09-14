@@ -473,6 +473,7 @@ fn glued_scene() -> (Arrangement, Vec<Glue>) {
         theta: 0.125,
     };
     let arrangement = Arrangement {
+        container: shared::Shape::Square,
         shape: shared::Shape::Square,
         n: 2,
         side: unique_side(2.5),
@@ -499,6 +500,7 @@ fn loose_scene() -> Arrangement {
         theta: 0.0,
     };
     Arrangement {
+        container: shared::Shape::Square,
         shape: shared::Shape::Square,
         n: 2,
         side: unique_side(2.5),
@@ -622,6 +624,7 @@ async fn passkeys_gate_sharing_and_submitting_in_a_real_browser() {
     // An expired session: the page still thinks it's signed in, the server
     // answers 401, and signing in again sends the same board.
     let other = Arrangement {
+        container: shared::Shape::Square,
         shape: shared::Shape::Square,
         side: unique_side(2.75),
         ..scene.clone()

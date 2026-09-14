@@ -47,7 +47,9 @@ const fn hex_len(n: u32, glues: usize) -> usize {
 
 pub fn encode(a: &Arrangement, glues: &[Glue]) -> String {
     let mut bytes = Vec::with_capacity(hex_len(a.n, glues.len()) / 2);
-    bytes.push(if a.shape.is_square() {
+    bytes.push(if !a.container.is_square() {
+        0x80 | ((a.container.sides() as u8 - 3) << 2) | (a.shape.sides() as u8 - 3)
+    } else if a.shape.is_square() {
         VERSION
     } else {
         a.shape.sides() as u8
@@ -60,7 +62,14 @@ pub fn encode(a: &Arrangement, glues: &[Glue]) -> String {
         }
     }
     if !glues.is_empty() {
-        bytes.extend_from_slice(&[GLUE_TAG, if a.shape.is_square() { GLUE_VERSION } else { 3 }]);
+        bytes.extend_from_slice(&[
+            GLUE_TAG,
+            if a.shape.is_square() && a.container.is_square() {
+                GLUE_VERSION
+            } else {
+                3
+            },
+        ]);
         bytes.extend_from_slice(&(glues.len() as u16).to_le_bytes());
         for f in glues.iter().flat_map(|g| [g.a, g.b]) {
             let (kind, square, index) = match f {
@@ -71,7 +80,12 @@ pub fn encode(a: &Arrangement, glues: &[Glue]) -> String {
             };
             let bits = kind
                 | ((index as u16) << 2)
-                | ((square as u16) << if a.shape.is_square() { 4 } else { 5 });
+                | ((square as u16)
+                    << if a.shape.is_square() && a.container.is_square() {
+                        4
+                    } else {
+                        5
+                    });
             bytes.extend_from_slice(&bits.to_le_bytes());
         }
     }
@@ -128,13 +142,24 @@ pub fn decode(hex: &str, n: u32) -> Result<BoardState, String> {
     }
     let hex = hex.as_bytes();
     let version = from_hex(hex.get(..2).ok_or("Missing board version")?)?[0];
-    let shape = if version == VERSION {
-        crate::Shape::Square
+    let (shape, container) = if version & 0xf0 == 0x80 {
+        let piece = crate::Shape::from_sides(3 + (version & 3)).unwrap();
+        let container = crate::Shape::from_sides(3 + ((version >> 2) & 3)).unwrap();
+        if container.is_square() {
+            return Err("Noncanonical square container header".into());
+        }
+        (piece, container)
     } else {
-        crate::Shape::from_sides(version)
-            .filter(|s| !s.is_square())
-            .ok_or("Unsupported board code version")?
+        let piece = if version == VERSION {
+            crate::Shape::Square
+        } else {
+            crate::Shape::from_sides(version)
+                .filter(|s| !s.is_square())
+                .ok_or("Unsupported board code version")?
+        };
+        (piece, crate::Shape::Square)
     };
+    let compact = shape.is_square() && container.is_square();
     let base = hex_len(n, 0);
     // The trailer's own header gives the glue count, so the full length is
     // known before the rest of the code is decoded.
@@ -145,7 +170,7 @@ pub fn decode(hex: &str, n: u32) -> Result<BoardState, String> {
             return Err(format!("This board code is not for {n} squares"));
         };
         let trailer = from_hex(trailer)?;
-        if trailer[..2] != [GLUE_TAG, if shape.is_square() { GLUE_VERSION } else { 3 }] {
+        if trailer[..2] != [GLUE_TAG, if compact { GLUE_VERSION } else { 3 }] {
             return Err("This board code has unsupported glue data".into());
         }
         let count = u16::from_le_bytes([trailer[2], trailer[3]]) as usize;
@@ -176,6 +201,7 @@ pub fn decode(hex: &str, n: u32) -> Result<BoardState, String> {
         })
         .collect();
     let arrangement = Arrangement {
+        container,
         shape,
         n,
         side: f64_at(3),
@@ -185,10 +211,7 @@ pub fn decode(hex: &str, n: u32) -> Result<BoardState, String> {
     let features = base / 2 + TRAILER_BYTES;
     let feature_at = |i: usize| {
         let at = features + i * FEATURE_BYTES;
-        feature(
-            u16::from_le_bytes([bytes[at], bytes[at + 1]]),
-            !shape.is_square(),
-        )
+        feature(u16::from_le_bytes([bytes[at], bytes[at + 1]]), !compact)
     };
     let glues = (0..count)
         .map(|i| {
@@ -198,7 +221,7 @@ pub fn decode(hex: &str, n: u32) -> Result<BoardState, String> {
             })
         })
         .collect::<Result<Vec<_>, String>>()?;
-    glue::check_for(&glues, n as usize, shape)?;
+    glue::check_in(&glues, n as usize, shape, container)?;
     Ok(BoardState { arrangement, glues })
 }
 
@@ -210,7 +233,7 @@ pub fn check_arrangement(arr: &Arrangement, n: u32) -> Result<(), String> {
         && arr.n == n
         && arr.squares.len() == n as usize
         && arr.side.is_finite()
-        && (arr.shape.min_side()..=MAX_COORD).contains(&arr.side)
+        && (arr.container.area_bound(arr.shape, 1)..=MAX_COORD).contains(&arr.side)
         && arr
             .squares
             .iter()
@@ -230,6 +253,7 @@ mod tests {
         let s = 2.0 + std::f64::consts::FRAC_1_SQRT_2;
         let sq = |cx, cy, theta| Placement { cx, cy, theta };
         Arrangement {
+            container: crate::Shape::Square,
             shape: crate::Shape::Square,
             n: 5,
             side: s,
@@ -462,6 +486,7 @@ mod polygon_tests {
     fn every_shape_and_last_feature_round_trips() {
         for shape in crate::Shape::ALL {
             let a = Arrangement {
+                container: crate::Shape::Square,
                 shape,
                 n: 1,
                 side: 3.0,
@@ -499,6 +524,29 @@ mod polygon_tests {
                 )
                 .is_err());
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod container_header_tests {
+    use super::*;
+    #[test]
+    fn noncanonical_and_reserved_headers_are_rejected() {
+        let a = Arrangement {
+            container: crate::Shape::Triangle,
+            shape: crate::Shape::Square,
+            n: 1,
+            side: 5.0,
+            squares: vec![Placement {
+                cx: 2.5,
+                cy: 2.5,
+                theta: 0.0,
+            }],
+        };
+        let code = encode(&a, &[]);
+        for byte in [0x84, 0x85, 0x86, 0x87, 0x90, 0xc0, 0xff, 0x04] {
+            assert!(decode(&format!("{byte:02x}{}", &code[2..]), 1).is_err());
         }
     }
 }

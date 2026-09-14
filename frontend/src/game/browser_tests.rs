@@ -46,6 +46,8 @@ struct HostProps {
     account: Account,
     #[prop_or_default]
     shape: shared::Shape,
+    #[prop_or_default]
+    container: shared::Shape,
 }
 
 /// `Game` renders router links, so tests mount it inside a router, with an
@@ -55,7 +57,7 @@ fn host(props: &HostProps) -> Html {
     html! {
         <BrowserRouter>
             <ContextProvider<Account> context={props.account.clone()}>
-                <Game n={2} shape={props.shape} />
+                <Game n={2} shape={props.shape} container={props.container} />
             </ContextProvider<Account>>
         </BrowserRouter>
     }
@@ -96,6 +98,7 @@ async fn mount_as(query: &str, username: Option<&str>) -> (yew::AppHandle<Host>,
     set_query(query);
     let root = new_root();
     let props = HostProps {
+        container: shared::Shape::Square,
         account: account(username),
         shape: shared::Shape::Square,
     };
@@ -247,7 +250,13 @@ async fn double_tap(canvas: &HtmlCanvasElement, p: (f64, f64), extent: f64) {
 
 fn midpoint(physics: &Physics, square: usize, edge: u8) -> (f64, f64) {
     let feature = Feature::Midpoint { square, edge };
-    match glue::anchor(physics.shape(), &physics.bodies(), physics.side(), feature) {
+    match glue::anchor(
+        physics.shape(),
+        physics.container(),
+        &physics.bodies(),
+        physics.side(),
+        feature,
+    ) {
         Some(glue::Anchor::Point(p)) => p,
         other => panic!("{other:?}"),
     }
@@ -264,7 +273,16 @@ fn empty_spot(physics: &Physics) -> (f64, f64) {
         .flat_map(|i| (1..10).map(move |j| (side * i as f64 / 10.0, side * j as f64 / 10.0)))
         .find(|p| {
             canvas::hit(&bodies, *p).is_none()
-                && glue::pick(physics.shape(), &bodies, side, *p, 0.3, |_| true).is_none()
+                && glue::pick(
+                    physics.shape(),
+                    physics.container(),
+                    &bodies,
+                    side,
+                    *p,
+                    0.3,
+                    |_| true,
+                )
+                .is_none()
         })
         .expect("an empty spot on the board")
 }
@@ -476,7 +494,14 @@ async fn tapping_a_link_removes_just_that_link() {
 
     force_button(&root, "Pause").click();
     sleep(30).await;
-    let (a, b) = glue::link(physics.shape(), &physics.bodies(), physics.side(), top).unwrap();
+    let (a, b) = glue::link(
+        physics.shape(),
+        physics.container(),
+        &physics.bodies(),
+        physics.side(),
+        top,
+    )
+    .unwrap();
     let on_link = ((a.0 + b.0) / 2.0, (a.1 + b.1) / 2.0);
     double_tap(&canvas, on_link, extent).await;
     let status = text(&root, ".pg-status");
@@ -1057,6 +1082,7 @@ async fn squeeze_bounds_take_in_out_of_range_scenes() {
     let _gpu = NoWebGpu::install();
     let sq = |cx, cy| shared::Placement { cx, cy, theta: 0.0 };
     let roomy = Arrangement {
+        container: shared::Shape::Square,
         shape: shared::Shape::Square,
         n: 2,
         side: 10.0,
@@ -1090,6 +1116,7 @@ async fn squeeze_bounds_take_in_out_of_range_scenes() {
     root.remove();
 
     let overlapped = Arrangement {
+        container: shared::Shape::Square,
         shape: shared::Shape::Square,
         n: 2,
         side: 1.3,
@@ -1278,6 +1305,7 @@ fn two_squares() -> Arrangement {
         theta: 0.125,
     };
     Arrangement {
+        container: shared::Shape::Square,
         shape: shared::Shape::Square,
         n: 2,
         side: 2.5,
@@ -2072,6 +2100,7 @@ fn cramped() -> Arrangement {
         theta: 0.0,
     };
     Arrangement {
+        container: shared::Shape::Square,
         shape: shared::Shape::Square,
         n: 2,
         side: 1.8,
@@ -2764,6 +2793,7 @@ async fn signed_in_submit_sends_the_certified_board_with_its_glue() {
     assert_eq!(
         physics.arrangement(),
         Arrangement {
+            container: shared::Shape::Square,
             shape: shared::Shape::Square,
             squares,
             ..report
@@ -3098,6 +3128,7 @@ async fn polygon_games_load_settle_and_offer_all_shapes() {
         shared::Shape::Hexagon,
     ] {
         let a = Arrangement {
+            container: shared::Shape::Square,
             shape,
             n: 2,
             side: 5.0,
@@ -3119,6 +3150,7 @@ async fn polygon_games_load_settle_and_offer_all_shapes() {
         let handle = yew::Renderer::<Host>::with_root_and_props(
             root.clone(),
             HostProps {
+                container: shared::Shape::Square,
                 account: account(Some("tester")),
                 shape,
             },
@@ -3128,20 +3160,17 @@ async fn polygon_games_load_settle_and_offer_all_shapes() {
         let physics = TEST_PHYSICS.with(|p| p.borrow().clone()).unwrap();
         assert_eq!(physics.shape(), shape);
         assert!(physics.paused());
-        assert_eq!(root.query_selector_all(".pg-shape").unwrap().length(), 4);
         assert_eq!(
-            root.query_selector_all(".pg-count-stepper button")
-                .unwrap()
-                .length(),
-            2
+            root.query_selector_all(".pg-game-picker").unwrap().length(),
+            1
         );
         assert!(root
-            .query_selector(".pg-shape.selected")
+            .query_selector(".pg-game-picker")
             .unwrap()
             .unwrap()
-            .get_attribute("href")
+            .get_attribute("aria-label")
             .unwrap()
-            .contains(shape.name()));
+            .contains(shape.plural()));
         click_button(&root, ".pg-submit", "Settle");
         wait_until("polygon certified", || {
             TEST_REPORT.with(|r| r.borrow().is_some())
@@ -3154,5 +3183,123 @@ async fn polygon_games_load_settle_and_offer_all_shapes() {
         handle.destroy();
         root.remove();
         sleep(40).await;
+    }
+}
+
+#[wasm_bindgen_test]
+async fn picker_is_a_modal_and_cancel_preserves_the_board() {
+    let _gpu = NoWebGpu::install();
+    let (handle, root, physics) = mount().await;
+    physics.set_paused(true);
+    let before = physics.arrangement();
+    let window = web_sys::window().unwrap();
+    let document = window.document().unwrap();
+    let body = document.body().unwrap();
+    body.style().set_property("overflow", "auto").unwrap();
+    let button = root
+        .query_selector(".pg-game-picker")
+        .unwrap()
+        .unwrap()
+        .dyn_into::<HtmlElement>()
+        .unwrap();
+    button.click();
+    sleep(40).await;
+    let dialog = root
+        .query_selector("dialog")
+        .unwrap()
+        .unwrap()
+        .dyn_into::<web_sys::HtmlDialogElement>()
+        .unwrap();
+    assert!(dialog.open());
+    assert_eq!(
+        body.style().get_property_value("overflow").unwrap(),
+        "hidden"
+    );
+    assert_eq!(document.active_element().unwrap().id(), "game-count");
+    assert_eq!(
+        dialog
+            .query_selector_all("fieldset button")
+            .unwrap()
+            .length(),
+        8
+    );
+    click_button(&root, "dialog", "Cancel");
+    sleep(40).await;
+    assert!(!dialog.open());
+    assert_eq!(body.style().get_property_value("overflow").unwrap(), "auto");
+    assert_eq!(
+        document.active_element().unwrap(),
+        button.clone().unchecked_into::<Element>()
+    );
+    assert_eq!(physics.arrangement(), before);
+    button.click();
+    sleep(30).await;
+    let options = web_sys::EventInit::new();
+    options.set_cancelable(true);
+    options.set_bubbles(true);
+    dialog
+        .dispatch_event(&Event::new_with_event_init_dict("cancel", &options).unwrap())
+        .unwrap();
+    sleep(30).await;
+    assert!(!dialog.open());
+    assert_eq!(physics.arrangement(), before);
+    body.style().remove_property("overflow").unwrap();
+    handle.destroy();
+    root.remove();
+}
+
+#[wasm_bindgen_test]
+async fn all_container_games_restore_and_certify_without_changing_shape() {
+    let _gpu = NoWebGpu::install();
+    for container in shared::Shape::ALL {
+        for shape in shared::Shape::ALL {
+            let a = shared::Arrangement {
+                shape,
+                container,
+                n: 2,
+                side: 8.0,
+                squares: vec![
+                    shared::Placement {
+                        cx: 3.0,
+                        cy: 4.0,
+                        theta: 0.0,
+                    },
+                    shared::Placement {
+                        cx: 5.0,
+                        cy: 4.0,
+                        theta: 0.0,
+                    },
+                ],
+            };
+            set_query(&format!("s={}", board::encode(&a, &[])));
+            let root = new_root();
+            let handle = yew::Renderer::<Host>::with_root_and_props(
+                root.clone(),
+                HostProps {
+                    account: account(Some("tester")),
+                    shape,
+                    container,
+                },
+            )
+            .render();
+            sleep(100).await;
+            let physics = TEST_PHYSICS.with(|p| p.borrow().clone()).unwrap();
+            assert_eq!(physics.shape(), shape);
+            assert_eq!(physics.container(), container);
+            assert!(physics.paused());
+            assert_eq!(
+                root.query_selector_all(".pg-corner").unwrap().length(),
+                container.sides() as u32
+            );
+            click_button(&root, ".pg-submit", "Settle");
+            wait_until("container certified", || {
+                TEST_REPORT.with(|r| r.borrow().is_some())
+            })
+            .await;
+            TEST_REPORT.with(|r| assert_eq!(r.borrow().as_ref().unwrap(), &a));
+            handle.destroy();
+            root.remove();
+            sleep(25).await;
+        }
     }
 }

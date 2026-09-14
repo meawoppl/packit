@@ -5,7 +5,7 @@ fn radius(t: f32, x: f32, y: f32) -> f32 {
 }
 impl State {
     pub(super) fn cpu_step(&mut self) {
-        if !self.shape.is_square() {
+        if !self.shape.is_square() || !self.container.is_square() {
             self.polygon_step();
             return;
         }

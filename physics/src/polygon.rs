@@ -37,6 +37,7 @@ impl State {
                 * (2.0 + (std::f64::consts::TAU / shape.sides() as f64).cos()))) as f32;
         let (glues, glue_reaction) = glue::forces_for(
             shape,
+            self.container,
             &self.glues,
             &self.bodies,
             side as f32,
@@ -86,12 +87,9 @@ impl State {
                     f[1] -= 1.8 * dy / (d2 * d2.sqrt());
                 }
             }
-            for (normal, limit) in [
-                ((1.0, 0.0), 0.0),
-                ((0.0, 1.0), 0.0),
-                ((-1.0, 0.0), -side),
-                ((0.0, -1.0), -side),
-            ] {
+            for wall in self.container.walls(side) {
+                let normal = wall.normal;
+                let limit = wall.limit;
                 let at = support(&vertices[i], normal, false);
                 let depth = limit - at.0 * normal.0 - at.1 * normal.1;
                 if depth > 0.0 {
@@ -103,7 +101,9 @@ impl State {
                     f[0] += nx * force;
                     f[1] += ny * force;
                     f[2] += (r.0 * ny - r.1 * nx) * force * inv_i;
-                    if normal.0 < 0.0 || normal.1 < 0.0 {
+                    if !self.container.is_square() {
+                        reaction += force as f64 * self.container.apothem();
+                    } else if normal.0 < 0.0 || normal.1 < 0.0 {
                         reaction += p.stiffness as f64 * depth;
                     }
                 }
@@ -141,8 +141,19 @@ impl State {
             self.band_velocity = ((self.band_velocity as f64 + force * FIXED_STEP / (2.0 * n))
                 * (-8.0 * FIXED_STEP).exp())
             .clamp(-1.0, 1.0) as f32;
-            self.side = (self.side + self.band_velocity as f64 * FIXED_STEP)
-                .clamp((n * shape.area()).sqrt(), 1000.0);
+            let next_side = (self.side + self.band_velocity as f64 * FIXED_STEP)
+                .clamp(self.container.area_bound(shape, n as u32), 1000.0);
+            if !self.container.is_square() {
+                let shift = (next_side - self.side) / 2.0;
+                for b in &mut self.bodies {
+                    b.x += shift as f32;
+                    b.y += shift as f32;
+                }
+                self.mouse.x += shift as f32;
+                self.mouse.y += shift as f32;
+                self.interaction.frame_shift += shift;
+            }
+            self.side = next_side;
         }
     }
 }
@@ -158,6 +169,7 @@ mod tests {
         ] {
             let physics = crate::Physics::new_for(shape, 2, 10.0);
             let a = shared::Arrangement {
+                container: shared::Shape::Square,
                 shape,
                 n: 2,
                 side: 10.0,
@@ -203,6 +215,7 @@ mod tests {
             let corner = shape.sides() - 1;
             piece.cx -= shape.vertices(&piece)[corner].0;
             p.load(&shared::Arrangement {
+                container: shared::Shape::Square,
                 shape,
                 n: 1,
                 side: 6.0,
@@ -219,4 +232,118 @@ mod tests {
             assert!(p.violations().max_glue_error < 1e-6);
         }
     }
+}
+
+#[cfg(test)]
+mod container_tests {
+    use super::step_test;
+    use shared::{Arrangement, Placement, Shape};
+    #[test]
+    fn every_container_wall_pushes_inward_and_settles() {
+        for container in Shape::ALL {
+            for shape in Shape::ALL {
+                for wall in container.walls(8.0) {
+                    let mut piece = Placement {
+                        cx: 4.0,
+                        cy: 4.0,
+                        theta: 0.2,
+                    };
+                    let low = shape
+                        .vertices(&piece)
+                        .iter()
+                        .map(|p| wall.normal.0 * p.0 + wall.normal.1 * p.1)
+                        .fold(f64::INFINITY, f64::min);
+                    piece.cx += wall.normal.0 * (wall.limit - low - 0.03);
+                    piece.cy += wall.normal.1 * (wall.limit - low - 0.03);
+                    let physics = crate::Physics::new_in(shape, container, 1, 8.0);
+                    physics.load(&Arrangement {
+                        container,
+                        shape,
+                        n: 1,
+                        side: 8.0,
+                        squares: vec![piece],
+                    });
+                    let before = physics.violations().max_depth;
+                    physics.set_paused(false);
+                    step_test(&physics, 1);
+                    let body = physics.bodies()[0];
+                    assert!(
+                        body.vx as f64 * wall.normal.0 + body.vy as f64 * wall.normal.1 > 0.0,
+                        "{shape}/{container}"
+                    );
+                    physics.begin_settle();
+                    for _ in 0..1200 {
+                        step_test(&physics, 6);
+                        if physics.paused() {
+                            break;
+                        }
+                    }
+                    assert!(
+                        physics.violations().max_depth < before / 10.0,
+                        "{shape}/{container}: {:?}",
+                        physics.settle_status()
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod band_container_tests {
+    use super::step_test;
+    use shared::{Arrangement, Placement, Shape};
+    #[test]
+    fn pressure_on_each_polygon_wall_opens_the_band_and_preserves_the_frame() {
+        for container in [Shape::Triangle, Shape::Pentagon, Shape::Hexagon] {
+            for wall in container.walls(8.0) {
+                let shape = Shape::Triangle;
+                let mut piece = Placement {
+                    cx: 4.0,
+                    cy: 4.0,
+                    theta: 0.0,
+                };
+                let low = shape
+                    .vertices(&piece)
+                    .into_iter()
+                    .map(|p| wall.normal.0 * p.0 + wall.normal.1 * p.1)
+                    .fold(f64::INFINITY, f64::min);
+                piece.cx += wall.normal.0 * (wall.limit - low - 0.05);
+                piece.cy += wall.normal.1 * (wall.limit - low - 0.05);
+                let p = crate::Physics::new_in(shape, container, 1, 8.0);
+                p.load(&Arrangement {
+                    container,
+                    shape,
+                    n: 1,
+                    side: 8.0,
+                    squares: vec![piece],
+                });
+                let mut params = p.params();
+                params.band_tension = 30.0;
+                params.target_side = 8.0;
+                p.set_params(params);
+                p.set_paused(false);
+                step_test(&p, 1);
+                assert!(
+                    p.side() > 8.0,
+                    "pressure must open {container} wall {:?}",
+                    wall.normal
+                );
+                assert!((p.frame_shift() - (p.side() - 8.0) / 2.0).abs() < 1e-12);
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+fn step_test(p: &crate::Physics, n: u32) {
+    use std::{
+        future::Future,
+        task::{Context, Poll, Waker},
+    };
+    let mut f = std::pin::pin!(p.step(n));
+    assert!(matches!(
+        f.as_mut().poll(&mut Context::from_waker(Waker::noop())),
+        Poll::Ready(())
+    ));
 }

@@ -18,6 +18,7 @@ const PULSE_PERIOD_MS: f64 = 1600.0;
 /// Everything the renderer needs for one frame.
 pub struct Scene<'a> {
     pub shape: shared::Shape,
+    pub container: shared::Shape,
     pub bodies: &'a [Body],
     pub side: f64,
     /// Side length the viewport is scaled to. The band may contract inside
@@ -168,24 +169,37 @@ pub fn draw(canvas: &HtmlCanvasElement, scene: &Scene) {
 
     ctx.set_stroke_style_str("#263247");
     ctx.set_line_width(1.0);
-    for x in (0..).map(|k| k as f64 * 0.5).take_while(|x| *x <= side) {
+    for x in (0..)
+        .map(|k| k as f64 * 0.5)
+        .take_while(|x| scene.container.is_square() && *x <= side)
+    {
         line(&ctx, (sx(x), sy(side)), (sx(x), sy(0.0)));
         line(&ctx, (sx(0.0), sy(x)), (sx(side), sy(x)));
     }
 
     ctx.set_stroke_style_str(if scene.band_on { "#c7f36b" } else { "#819376" });
     ctx.set_line_width(if scene.band_on { 3.0 } else { 2.0 });
-    ctx.stroke_rect(sx(0.0), sy(side), side * scale, side * scale);
+    if scene.container.is_square() {
+        ctx.stroke_rect(sx(0.0), sy(side), side * scale, side * scale);
+    } else {
+        container_path(&ctx, scene.container, side, &sx, &sy);
+        ctx.stroke();
+    }
 
     // Draw the spring's rest boundary and inward pressure marks. The solid
     // boundary always remains the actual collision square.
-    if scene.band_on {
+    if scene.band_on && scene.container.is_square() {
         let stress = band_stress(side, scene.target_side, scene.band_tension);
         ctx.save();
         ctx.set_stroke_style_str("#c7f36b");
         ctx.set_global_alpha(0.15 + 0.55 * stress);
         ctx.set_line_width(4.0 + 10.0 * stress);
-        ctx.stroke_rect(sx(0.0), sy(side), side * scale, side * scale);
+        if scene.container.is_square() {
+            ctx.stroke_rect(sx(0.0), sy(side), side * scale, side * scale);
+        } else {
+            container_path(&ctx, scene.container, side, &sx, &sy);
+            ctx.stroke();
+        }
         ctx.set_line_width(1.0);
         let target = scene.target_side.min(scene.view_side.max(side));
         let _ = ctx.set_line_dash(&js_sys::Array::of2(&4.into(), &6.into()));
@@ -246,14 +260,9 @@ pub fn draw(canvas: &HtmlCanvasElement, scene: &Scene) {
         ctx.restore();
     }
     // Walls in glue order: left, bottom, right, top.
-    let walls = [
-        ((0.0, 0.0), (0.0, side)),
-        ((0.0, 0.0), (side, 0.0)),
-        ((side, 0.0), (side, side)),
-        ((0.0, side), (side, side)),
-    ];
+    let walls = scene.container.walls(side).into_iter().map(|w| (w.a, w.b));
     ctx.set_line_width(5.0 * dpr);
-    for ((a, b), depth) in walls.into_iter().zip(scene.violations.walls) {
+    for ((a, b), depth) in walls.zip(scene.violations.walls.iter().copied()) {
         if let Some(alpha) = pulse_alpha(depth, scene.now_ms) {
             ctx.set_global_alpha((alpha * 2.0).min(1.0));
             line(&ctx, (sx(a.0), sy(a.1)), (sx(b.0), sy(b.1)));
@@ -266,7 +275,7 @@ pub fn draw(canvas: &HtmlCanvasElement, scene: &Scene) {
     ctx.set_fill_style_str("#ffcf4d");
     ctx.set_line_width(3.0 * dpr);
     for g in scene.glues {
-        if let Some((a, b)) = glue::link(scene.shape, scene.bodies, side, *g) {
+        if let Some((a, b)) = glue::link(scene.shape, scene.container, scene.bodies, side, *g) {
             line(&ctx, (sx(a.0), sy(a.1)), (sx(b.0), sy(b.1)));
             dot(
                 &ctx,
@@ -308,16 +317,18 @@ pub fn draw(canvas: &HtmlCanvasElement, scene: &Scene) {
         ctx.set_fill_style_str("#ffffff");
         ctx.set_global_alpha(0.6);
         ctx.set_line_width(2.0 * dpr);
-        let targets = glue::features(scene.shape, scene.bodies.len())
+        let targets = glue::features(scene.shape, scene.container, scene.bodies.len())
             .filter(|f| first.is_none_or(|a| glue::compatible(a, *f)));
         for f in targets {
-            match glue::anchor(scene.shape, scene.bodies, side, f) {
+            match glue::anchor(scene.shape, scene.container, scene.bodies, side, f) {
                 Some(Anchor::Point(p)) => dot(&ctx, (sx(p.0), sy(p.1)), 3.5 * dpr),
                 Some(Anchor::Segment(p, q)) => line(&ctx, (sx(p.0), sy(p.1)), (sx(q.0), sy(q.1))),
                 None => {}
             }
         }
-        if let Some(anchor) = first.and_then(|a| glue::anchor(scene.shape, scene.bodies, side, a)) {
+        if let Some(anchor) =
+            first.and_then(|a| glue::anchor(scene.shape, scene.container, scene.bodies, side, a))
+        {
             ctx.set_global_alpha(1.0);
             ctx.set_stroke_style_str("#ffcf4d");
             ctx.set_fill_style_str("#ffcf4d");
@@ -414,6 +425,24 @@ fn dot(ctx: &CanvasRenderingContext2d, at: (f64, f64), radius: f64) {
     ctx.begin_path();
     let _ = ctx.arc(at.0, at.1, radius, 0.0, std::f64::consts::TAU);
     ctx.fill();
+}
+
+fn container_path(
+    ctx: &CanvasRenderingContext2d,
+    container: shared::Shape,
+    side: f64,
+    sx: &impl Fn(f64) -> f64,
+    sy: &impl Fn(f64) -> f64,
+) {
+    ctx.begin_path();
+    for (i, (x, y)) in container.container_vertices(side).into_iter().enumerate() {
+        if i == 0 {
+            ctx.move_to(sx(x), sy(y));
+        } else {
+            ctx.line_to(sx(x), sy(y));
+        }
+    }
+    ctx.close_path();
 }
 
 #[cfg(test)]
