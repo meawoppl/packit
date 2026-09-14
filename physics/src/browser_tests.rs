@@ -420,3 +420,25 @@ async fn gpu_settle_preserves_resolvable_wall_glue_chain() {
     }
     gpu.dispose();
 }
+
+#[wasm_bindgen_test(async)]
+async fn touch_springs_use_live_cpu_state_then_resume_gpu() {
+    let p = Physics::new(2, 6.0);
+    p.set_pose(0, 1.5, 3.0, 0.0);
+    p.set_pose(1, 4.5, 3.0, 0.0);
+    p.init_gpu().await;
+    assert_eq!(p.mode(), Backend::Gpu);
+    p.set_grabs(&[(0, 1.5, 4.0), (1, 4.5, 2.0)]);
+    assert_eq!(p.mode(), Backend::Cpu);
+    for _ in 0..20 {
+        p.step(6).await;
+    }
+    assert!(p.bodies()[0].y > 3.5 && p.bodies()[1].y < 2.5);
+    p.set_grabs(&[]);
+    let before = p.bodies();
+    assert_eq!(p.mode(), Backend::Gpu);
+    p.step(1).await;
+    for (a, b) in before.iter().zip(p.bodies()) {
+        assert!((a.y - b.y).abs() < 0.15);
+    }
+}

@@ -286,3 +286,5 @@ one shows no reference rather than a rounded decimal treated as an exact record.
 The compact game picker shows the count beside a piece inside its container. Open it to choose the count and either shape (triangle, square, pentagon or hexagon), then Play. Each piece has unit edge length, and the reported side is the **container's edge length**. Density uses the actual container area. Corner controls follow its vertices; drag inward to squeeze and release to settle. Leaderboards are separate for every piece/container/count combination. Literature benchmarks currently apply only to square containers.
 
 Board controls avoid accidental text selection during dragging and touch gestures. Editable fields, board links and help text remain selectable.
+
+On touch screens, drag different pieces with different fingers. Two fingers starting on the same piece twist it; two starting on empty board space pinch to zoom and pan. The camera stays where you leave it; **Fit board** in Advanced restores the full view. Two-finger gestures never open glue; double-tap with one finger to glue. Page scrolling and browser zoom still work outside the board.

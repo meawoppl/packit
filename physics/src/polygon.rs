@@ -112,9 +112,12 @@ impl State {
             f[1] += glues[i][1];
             f[2] += glues[i][2] * inv_i / 6.0;
             self.contact_forces[i] = [f[0], f[1]];
-            if self.mouse.down && self.mouse.index == Some(i) {
-                let dx = self.mouse.x - b.x;
-                let dy = self.mouse.y - b.y;
+            for mouse in std::iter::once(&self.mouse)
+                .chain(&self.grabs)
+                .filter(|m| m.down && m.index == Some(i))
+            {
+                let dx = mouse.x - b.x;
+                let dy = mouse.y - b.y;
                 let gain = 100.0 * (0.4 / dx.hypot(dy).max(0.0001)).min(1.0);
                 f[0] += dx * gain - b.vx * 14.0;
                 f[1] += dy * gain - b.vy * 14.0;
@@ -151,6 +154,10 @@ impl State {
                 }
                 self.mouse.x += shift as f32;
                 self.mouse.y += shift as f32;
+                for m in &mut self.grabs {
+                    m.x += shift as f32;
+                    m.y += shift as f32;
+                }
                 self.interaction.frame_shift += shift;
             }
             self.side = next_side;

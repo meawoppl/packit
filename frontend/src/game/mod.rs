@@ -7,6 +7,7 @@ mod files;
 mod glue;
 mod picker;
 mod tap;
+mod touch;
 
 use crate::account::{Account, SignInAsk};
 use crate::anneal::{Anneal, Command, Schedule};
@@ -49,6 +50,7 @@ thread_local! {
     static TEST_REPORT: std::cell::RefCell<Option<Arrangement>> = const { std::cell::RefCell::new(None) };
     /// The viewport extent the last frame was drawn at.
     static TEST_EXTENT: Cell<f64> = const { Cell::new(0.0) };
+    static TEST_PAN: Cell<(f64,f64)> = const { Cell::new((0.0,0.0)) };
 }
 
 const STEP_HZ: f64 = 120.0;
@@ -120,7 +122,7 @@ pub enum Msg {
     Records(Result<Vec<KnownRecord>, String>),
     PointerDown(PointerEvent),
     PointerMove(PointerEvent),
-    PointerUp,
+    PointerUp(PointerEvent),
     Wheel(usize, f32),
     /// On-screen turn buttons: turn the selected square by this many radians.
     Turn(f32),
@@ -147,6 +149,7 @@ pub enum Msg {
     TogglePause,
     Shake,
     Reset,
+    ResetView,
     Anneal,
     Squeeze,
     SqueezeDown,
@@ -223,6 +226,9 @@ pub struct Game {
     /// shares. It holds for a whole drag, so growth under the pointer can't
     /// rescale the view and chase it.
     extent: Rc<Cell<f64>>,
+    pan: Rc<Cell<(f64, f64)>>,
+    manual_view: bool,
+    touch: touch::Touch,
     last_time: Option<f64>,
     accumulator: f64,
     stepping: bool,
@@ -440,6 +446,9 @@ impl Component for Game {
             wheel: None,
             view_side: Rc::new(Cell::new(side)),
             extent: Rc::new(Cell::new(side * ctx.props().container.extent())),
+            pan: Rc::new(Cell::new((0.0, 0.0))),
+            manual_view: false,
+            touch: touch::Touch::default(),
             last_time: None,
             accumulator: 0.0,
             stepping: false,
@@ -528,9 +537,10 @@ impl Component for Game {
         }
         if let Some(canvas) = self.canvas.cast::<HtmlCanvasElement>() {
             // Registered by hand: wheel needs a non-passive listener to stop page scroll.
-            let (physics, extent, link) = (
+            let (physics, extent, pan, link) = (
                 self.physics.clone(),
                 self.extent.clone(),
+                self.pan.clone(),
                 ctx.link().clone(),
             );
             let target = canvas.clone();
@@ -548,6 +558,8 @@ impl Component for Game {
                         extent.get(),
                         physics.side(),
                     );
+                    let offset = pan.get();
+                    let p = (p.0 + offset.0, p.1 + offset.1);
                     if let Some(i) = canvas::hit_for(physics.shape(), &physics.bodies(), p) {
                         e.prevent_default();
                         link.send_message(Msg::Wheel(i, e.delta_y().signum() as f32));
@@ -571,7 +583,7 @@ impl Component for Game {
                 | Msg::Records(_)
                 | Msg::PointerDown(_)
                 | Msg::PointerMove(_)
-                | Msg::PointerUp
+                | Msg::PointerUp(_)
                 | Msg::Key(_)
                 | Msg::ClearGlue
                 | Msg::Submitted(..)
@@ -608,7 +620,36 @@ impl Component for Game {
             params.band_tension = 0.0;
             self.physics.set_params(params);
         }
+        if self.touch.active()
+            && matches!(
+                msg,
+                Msg::Reset
+                    | Msg::ResetView
+                    | Msg::Measure
+                    | Msg::Tighten
+                    | Msg::TogglePause
+                    | Msg::Shake
+                    | Msg::Anneal
+                    | Msg::Squeeze
+                    | Msg::SqueezeDown
+                    | Msg::Imported(_)
+                    | Msg::TargetSide(_)
+                    | Msg::CornerStart(..)
+                    | Msg::Turn(_)
+                    | Msg::Wheel(..)
+            )
+        {
+            self.clear_touch();
+            self.dragging = false;
+        }
         match msg {
+            Msg::ResetView => {
+                self.pan.set((0.0, 0.0));
+                self.manual_view = false;
+                self.view_side.set(self.physics.side());
+                self.draw();
+                true
+            }
             Msg::Frame(time) => {
                 self.frame = None;
                 let elapsed = self
@@ -660,6 +701,12 @@ impl Component for Game {
                 self.refresh_readout()
             }
             Msg::PointerDown(e) => {
+                if e.pointer_type() == "touch" {
+                    return self.touch_down(&e);
+                }
+                if self.touch.active() {
+                    return false;
+                }
                 if self.busy {
                     return false;
                 }
@@ -700,6 +747,12 @@ impl Component for Game {
                 true
             }
             Msg::PointerMove(e) => {
+                if e.pointer_type() == "touch" {
+                    return self.touch_move(&e);
+                }
+                if self.touch.active() {
+                    return false;
+                }
                 self.taps.moved((e.client_x() as f64, e.client_y() as f64));
                 let Some(canvas) = self.canvas.cast::<HtmlCanvasElement>() else {
                     return false;
@@ -720,7 +773,13 @@ impl Component for Game {
                 self.push_mouse();
                 false
             }
-            Msg::PointerUp => {
+            Msg::PointerUp(e) => {
+                if e.pointer_type() == "touch" {
+                    return self.touch_up(&e);
+                }
+                if self.touch.active() {
+                    return false;
+                }
                 self.dragging = false;
                 self.rotating = false;
                 self.last_pointer = None;
@@ -934,6 +993,8 @@ impl Component for Game {
                 true
             }
             Msg::Reset => {
+                self.pan.set((0.0, 0.0));
+                self.manual_view = false;
                 self.stop_anneal();
                 self.desired_side = None;
                 let side = initial_side(n)
@@ -1191,14 +1252,14 @@ impl Component for Game {
                                 aria-label={format!("{} packing playfield. Drag to move. Select a piece, then use arrow keys to move and Q or E to rotate. Double-click to glue two features; Escape cancels.",ctx.props().shape.plural())}
                                 onpointerdown={link.callback(Msg::PointerDown)}
                                 onpointermove={link.callback(Msg::PointerMove)}
-                                onpointerup={link.callback(|_| Msg::PointerUp)}
-                                onpointercancel={link.callback(|_| Msg::PointerUp)}
-                                onlostpointercapture={link.callback(|_| Msg::PointerUp)}
+                                onpointerup={link.callback(Msg::PointerUp)}
+                                onpointercancel={link.callback(Msg::PointerUp)}
+                                onlostpointercapture={link.callback(Msg::PointerUp)}
                                 onkeydown={link.callback(Msg::Key)} />
                             { for corner_positions(self.physics.container()).into_iter().enumerate().map(|(corner, (px,py))| {
                                 let name = if self.physics.container().is_square() { ["top left","top right","bottom left","bottom right"][corner].to_string() } else { format!("{}",corner+1) };
-                                let x = 50.0 + 91.0 * px * self.physics.side() / self.extent.get();
-                                let y = 50.0 - 91.0 * py * self.physics.side() / self.extent.get();
+                                let x = 50.0 + 91.0 * (px * self.physics.side()-self.pan.get().0) / self.extent.get();
+                                let y = 50.0 - 91.0 * (py * self.physics.side()-self.pan.get().1) / self.extent.get();
                                 let angle = py.atan2(px).to_degrees();
                                 let corner = corner as u8;
                                 html! { <button class="pg-corner" disabled={self.busy}
@@ -1314,6 +1375,7 @@ impl Component for Game {
                                     { if self.physics.paused() { "Resume" } else { "Pause" } }
                                 </button>
                                 <button onclick={link.callback(|_| Msg::Shake)}>{ "Shake" }</button>
+                                <button onclick={link.callback(|_| Msg::ResetView)}>{ "Fit board" }</button>
                                 <button onclick={link.callback(|_| Msg::Reset)}>{ "Reset" }</button>
                                 { for [(RunKind::Anneal, "Anneal"), (RunKind::Squeeze, "Gentle squeeze"), (RunKind::SqueezeDown, "Squeeze down")].map(|(kind, label)| {
                                     let running = r.anneal.filter(|_| self.run_kind == kind);
@@ -1343,7 +1405,7 @@ impl Component for Game {
                                     <button class="pg-clear-glue" onclick={link.callback(|_| Msg::ClearGlue)}>{ "Clear glue" }</button>
                                 }) }
                                 <span class="pg-hint-mouse">{ "drag · wheel to rotate · shift-drag to spin · double-click to glue" }</span>
-                                <span class="pg-hint-touch">{ "drag to move · tap a square, then ⟲ ⟳ to turn · double-tap to glue" }</span>
+                                <span class="pg-hint-touch">{ "drag pieces · two fingers on a piece to turn · pinch/pan empty space · double-tap to glue" }</span>
                             </div>
                         <p class="pg-help">{ "Force arrows: blue = net contact and edge pull · gold = mouse spring. Dashed band = target size." }</p>
                         <details class="pg-details">
@@ -1561,6 +1623,7 @@ impl Game {
         if self.busy {
             return false;
         }
+        self.clear_touch();
         // The physics drops mouse and rotation input; end the drag here too.
         // The selection stays, so keys and turn buttons still act on it.
         self.dragging = false;
@@ -1678,7 +1741,7 @@ impl Game {
         // Hold the scale during a drag: a refit would move the pointer's
         // world position outward and the box would chase it. The box may
         // outgrow the view until the square is let go.
-        if !self.dragging && self.corner_drag.is_none() {
+        if !self.manual_view && !self.dragging && self.corner_drag.is_none() {
             if extent > self.view_side.get() {
                 self.view_side
                     .set(self.view_side.get() + (extent - self.view_side.get()) * 0.12);
@@ -1688,7 +1751,10 @@ impl Game {
             );
         }
         #[cfg(all(test, target_arch = "wasm32"))]
-        TEST_EXTENT.with(|e| e.set(self.extent.get()));
+        {
+            TEST_EXTENT.with(|e| e.set(self.extent.get()));
+            TEST_PAN.with(|p| p.set(self.pan.get()));
+        }
         let forces = self.physics.contact_forces();
         let show_forces = self.dragging
             || self.rotating
@@ -1708,13 +1774,14 @@ impl Game {
                 bodies: &bodies,
                 side: self.physics.side(),
                 view_side: self.extent.get(),
+                pan: self.pan.get(),
                 band_on: params.band_tension > 0.0,
                 band_tension: params.band_tension,
                 target_side: params.target_side,
                 forces: show_forces.then_some(&forces),
                 mouse_force: self.physics.mouse_force(),
                 selected: self.selected,
-                tether: self.dragging.then_some(self.mouse),
+                tether: (self.dragging && !self.touch.active()).then_some(self.mouse),
                 violations: &violations,
                 now_ms,
                 best: self
@@ -1817,13 +1884,7 @@ impl Game {
     }
 
     fn world(&self, canvas: &HtmlCanvasElement, e: &PointerEvent) -> (f64, f64) {
-        let extent = self.extent.get();
-        canvas::to_world(
-            canvas,
-            (e.client_x() as f64, e.client_y() as f64),
-            extent,
-            self.physics.side(),
-        )
+        self.client_world(canvas, (e.client_x() as f64, e.client_y() as f64))
     }
 
     fn push_mouse(&self) {
@@ -2021,6 +2082,9 @@ impl Game {
             );
             return;
         }
+        self.clear_touch();
+        self.pan.set((0.0, 0.0));
+        self.manual_view = false;
         self.desired_side = None;
         self.physics.load(a);
         self.view_side.set(self.physics.side());

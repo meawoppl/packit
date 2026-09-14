@@ -108,3 +108,9 @@ Two agents share this repo; message before touching the other's files.
 - Square-piece/square-container games retain the GPU path. Other combinations use polygon CPU contacts. Non-square band changes shift bodies and the mouse by half the actual side delta; generalized wall reaction is measured about the fixed center. Settle grows only after stalled contact progress, as before.
 - Canonical codes retain every old square-container byte. Polygon enclosures use header `0x80 | ((container_sides-3)<<2) | (piece_sides-3)`, with the existing 3-bit-feature glue trailer. Headers that redundantly encode a square enclosure are rejected. Scores filter by container, piece shape, and count. No square-container literature benchmark is shown for another enclosure.
 - Picker uses a native modal dialog, draft choices, and Apply navigation. The game surface suppresses browser selection, but inputs, links and help remain selectable. Keep game action selectors distinct from modal buttons.
+
+## Multitouch
+
+- Board touch pointers are tracked by pointerId in game/touch.rs. Distinct pieces get independent springs; two pointers on the same piece rotate; two starting on empty space pan/pinch the view. Multi-pointer sequences never contribute to double-tap glue. Single-touch glue is recognized on release so a second finger cannot accidentally open it.
+- Camera pan is a world offset relative to the current container center. Drawing, picking, wheel and corner controls share pan and extent. Manual zoom persists until Fit board, Reset or import. Physics frame growth shifts every grab target with the bodies.
+- Physics::set_grabs uses capped CPU springs while held and resumes the existing GPU from the live pose when released. Independent drag targets survive another pointer releasing; only a remaining finger from a same-piece rotation is rebased. Settle/reset/load clear grabs.

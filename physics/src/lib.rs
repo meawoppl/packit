@@ -67,6 +67,7 @@ struct State {
     side: f64,
     params: Params,
     mouse: Mouse,
+    grabs: Vec<Mouse>,
     rotation: Rotation,
     band_velocity: f32,
     paused: bool,
@@ -118,6 +119,7 @@ impl Physics {
                     target_side: side,
                 },
                 mouse: Mouse::default(),
+                grabs: Vec::new(),
                 rotation: Rotation::default(),
                 band_velocity: 0.0,
                 paused: false,
@@ -163,6 +165,9 @@ impl Physics {
         }
     }
     pub fn mode(&self) -> Backend {
+        if !self.state.borrow().grabs.is_empty() {
+            return Backend::Cpu;
+        }
         #[cfg(target_arch = "wasm32")]
         if self
             .state
@@ -187,7 +192,9 @@ impl Physics {
                 if s.paused || s.disposed || s.stepping {
                     return;
                 }
-                if let Some(gpu) = s.gpu.clone().filter(|g| g.alive()) {
+                if !s.grabs.is_empty() {
+                    None
+                } else if let Some(gpu) = s.gpu.clone().filter(|g| g.alive()) {
                     s.stepping = true;
                     Some((
                         gpu,
@@ -369,6 +376,30 @@ impl Physics {
             down,
         };
     }
+    /// Independent touch springs, one per body. Multitouch uses the CPU
+    /// integrator while held; the GPU resumes from that live pose on release.
+    pub fn set_grabs(&self, targets: &[(usize, f32, f32)]) {
+        let mut s = self.state.borrow_mut();
+        let mut grabs = Vec::new();
+        for &(i, x, y) in targets.iter().take(s.bodies.len()) {
+            if i < s.bodies.len()
+                && x.is_finite()
+                && y.is_finite()
+                && !grabs.iter().any(|m: &Mouse| m.index == Some(i))
+            {
+                grabs.push(Mouse {
+                    index: Some(i),
+                    x,
+                    y,
+                    down: true,
+                });
+            }
+        }
+        if !grabs.is_empty() {
+            s.cancel_settle_for_drag();
+        }
+        s.grabs = grabs;
+    }
     pub fn set_pose(&self, i: usize, x: f32, y: f32, theta: f32) {
         if ![x, y, theta].iter().all(|v| v.is_finite()) {
             return;
@@ -472,6 +503,7 @@ impl Physics {
         }
         s.band_velocity = 0.0;
         s.mouse.down = false;
+        s.grabs.clear();
         s.rotation = Rotation::default();
         s.glues.clear();
         s.contact_forces.fill([0.0; 2]);
@@ -503,6 +535,7 @@ impl Physics {
         s.params.target_side = a.side;
         s.band_velocity = 0.0;
         s.mouse.down = false;
+        s.grabs.clear();
         s.rotation = Rotation::default();
         s.glues.clear();
         for (b, p) in s.bodies.iter_mut().zip(&a.squares) {

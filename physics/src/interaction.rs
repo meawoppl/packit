@@ -71,6 +71,7 @@ impl Physics {
         s.interaction.status.phase = SettlePhase::Running;
         s.interaction.progress_depth = s.violation_report().max_depth;
         s.mouse.down = false;
+        s.grabs.clear();
         s.rotation = Default::default();
         s.params.attraction = false;
         s.params.edge_attraction = 0.0;
@@ -133,6 +134,10 @@ impl State {
         }
         self.mouse.x += shift as f32;
         self.mouse.y += shift as f32;
+        for m in &mut self.grabs {
+            m.x += shift as f32;
+            m.y += shift as f32;
+        }
         self.side += increase;
         self.params.target_side = self.side;
         self.band_velocity = 0.0;
@@ -196,16 +201,10 @@ impl State {
         if !self.interaction.drag_expansion {
             return;
         }
-        let Some(i) = self.mouse.index.filter(|_| self.mouse.down) else {
-            self.interaction.pressure_time = 0.0;
-            return;
-        };
-        let b = self.bodies[i];
-        let (dx, dy) = (self.mouse.x - b.x, self.mouse.y - b.y);
-        let distance = dx.hypot(dy);
-        let contact = self.contact_forces[i];
-        let resistance = -(contact[0] * dx + contact[1] * dy) / distance.max(1e-6);
-        if distance <= 0.18 || resistance <= 8.0 {
+        if !std::iter::once(&self.mouse)
+            .chain(&self.grabs)
+            .any(|m| m.down && m.index.is_some())
+        {
             self.interaction.pressure_time = 0.0;
             return;
         }
@@ -227,11 +226,39 @@ impl State {
                     changed = true;
                 }
             }
-            if !changed || connected[i] {
+            if !changed {
                 break;
             }
         }
-        if !connected[i] {
+        let mouse = std::iter::once(&self.mouse)
+            .chain(&self.grabs)
+            .filter(|m| m.down && m.index.is_some_and(|i| connected[i]))
+            .max_by(|a, b| {
+                let pressure = |m: &super::Mouse| {
+                    let i = m.index.unwrap();
+                    let b = self.bodies[i];
+                    let (dx, dy) = (m.x - b.x, m.y - b.y);
+                    let c = self.contact_forces[i];
+                    if dx.hypot(dy) <= 0.18 {
+                        0.0
+                    } else {
+                        -(c[0] * dx + c[1] * dy) / dx.hypot(dy)
+                    }
+                };
+                pressure(a).total_cmp(&pressure(b))
+            })
+            .copied();
+        let Some(mouse) = mouse else {
+            self.interaction.pressure_time = 0.0;
+            return;
+        };
+        let i = mouse.index.unwrap();
+        let b = self.bodies[i];
+        let (dx, dy) = (mouse.x - b.x, mouse.y - b.y);
+        let distance = dx.hypot(dy);
+        let contact = self.contact_forces[i];
+        let resistance = -(contact[0] * dx + contact[1] * dy) / distance.max(1e-6);
+        if distance <= 0.18 || resistance <= 8.0 {
             self.interaction.pressure_time = 0.0;
             return;
         }
@@ -569,5 +596,43 @@ mod tests {
         p.begin_settle();
         p.dispose();
         assert_eq!(p.settle_status().phase, SettlePhase::Idle);
+    }
+}
+
+#[cfg(test)]
+mod touch_tests {
+    use super::*;
+
+    #[test]
+    fn interior_grab_cannot_mask_another_fingers_wall_pressure() {
+        let p = Physics::new(3, 8.0);
+        p.set_pose(0, 3.0, 4.0, 0.0);
+        p.set_pose(1, 0.49, 1.0, 0.0);
+        p.set_pose(2, 3.95, 4.0, 0.0);
+        p.set_drag_expansion(true);
+        p.set_grabs(&[(0, 2.0, 4.0), (1, -0.5, 1.0)]);
+        let mut s = p.state.borrow_mut();
+        s.contact_forces[0] = [60.0, 0.0];
+        s.contact_forces[1] = [20.0, 0.0];
+        s.step_interaction(0.2);
+        assert!(s.side > 8.0, "the wall-connected grab must grow the box");
+    }
+
+    #[test]
+    fn grabs_reject_invalid_targets_and_shift_with_the_frame() {
+        let p = Physics::new(2, 4.0);
+        p.set_grabs(&[(0, 1.0, 1.0), (0, 3.0, 3.0)]);
+        assert_eq!(p.state.borrow().grabs.len(), 1);
+        p.state.borrow_mut().grow_frame(0.2);
+        let s = p.state.borrow();
+        assert!((s.grabs[0].x - 1.1).abs() < 1e-6);
+        assert!((s.grabs[0].y - 1.1).abs() < 1e-6);
+        drop(s);
+        p.set_grabs(&[(9, 1.0, 1.0), (0, f32::NAN, 0.0)]);
+        assert!(p.state.borrow().grabs.is_empty());
+        p.set_grabs(&[(0, 1.0, 1.0)]);
+        let a = p.arrangement();
+        p.load(&a);
+        assert!(p.state.borrow().grabs.is_empty());
     }
 }
