@@ -3416,6 +3416,17 @@ async fn multitouch_pinch_pan_and_subsequent_drag_share_the_camera() {
     sleep(60).await;
     let zoomed = TEST_EXTENT.with(Cell::get);
     assert!(zoomed < initial * 0.8);
+    let frame: HtmlElement = r
+        .query_selector(".pg-canvas-frame")
+        .unwrap()
+        .unwrap()
+        .dyn_into()
+        .unwrap();
+    assert_eq!(
+        frame.style().get_property_value("overflow").unwrap(),
+        "clip",
+        "offscreen handles cannot enlarge the page"
+    );
     assert_eq!(p.arrangement(), before, "navigation must not move pieces");
     let pan = TEST_PAN.with(Cell::get);
     assert!(pan.1.abs() > 0.01);

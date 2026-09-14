@@ -1247,7 +1247,7 @@ impl Component for Game {
                 </div>
 
                         <div class="pg-board">
-                            <div class="pg-canvas-frame">
+                            <div class="pg-canvas-frame" style={self.manual_view.then_some("overflow:clip")}>
                             <canvas ref={self.canvas.clone()} tabindex="0"
                                 aria-label={format!("{} packing playfield. Drag to move. Select a piece, then use arrow keys to move and Q or E to rotate. Double-click to glue two features; Escape cancels.",ctx.props().shape.plural())}
                                 onpointerdown={link.callback(Msg::PointerDown)}
