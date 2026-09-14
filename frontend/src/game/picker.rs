@@ -47,13 +47,15 @@ pub fn picker(props: &Props) -> Html {
             let body = web_sys::window()
                 .and_then(|w| w.document())
                 .and_then(|d| d.body());
-            let overflow = body
-                .as_ref()
-                .map(|b| b.style().get_property_value("overflow").unwrap_or_default());
+            let mut overflow = None;
             if let Some(d) = dialog.cast::<HtmlDialogElement>() {
                 if *open {
                     if d.show_modal().is_ok() {
                         if let Some(b) = &body {
+                            overflow = Some((
+                                b.style().get_property_value("overflow").unwrap_or_default(),
+                                b.style().get_property_priority("overflow"),
+                            ));
                             let _ = b.style().set_property("overflow", "hidden");
                         }
                         if let Some(i) = input.cast::<HtmlInputElement>() {
@@ -68,8 +70,10 @@ pub fn picker(props: &Props) -> Html {
                 }
             }
             move || {
-                if let (Some(b), Some(value)) = (body, overflow) {
-                    let _ = b.style().set_property("overflow", &value);
+                if let (Some(b), Some((value, priority))) = (body, overflow) {
+                    let _ = b
+                        .style()
+                        .set_property_with_priority("overflow", &value, &priority);
                 }
             }
         });
