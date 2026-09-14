@@ -917,3 +917,12 @@ main:has(.packing-game) {
 .topbar .pg-game-picker strong { font-size: 1.15rem; }
 .topbar .pg-game-picker svg { width: 36px; height: 36px; }
 @media (max-width: 600px) { .topbar { column-gap: .75rem; } }
+
+.leaderboard-filters { display:flex; flex-wrap:wrap; align-items:end; gap:1rem; margin:1rem 0; }
+.leaderboard-filters fieldset { border:0; padding:0; margin:0; }
+.leaderboard-filters label { display:grid; gap:.25rem; }
+.leaderboard-filters legend { margin-bottom:.25rem; }
+.leaderboard-shapes { display:flex; gap:.35rem; }
+.leaderboard-shapes button, .leaderboard-filters select { min-width:44px; min-height:44px; border:1px solid #52647a; border-radius:8px; color:#e2e8ef; background:#273348; cursor:pointer; }
+.leaderboard-shapes button[aria-pressed="true"] { border-color:#c7f36b; background:#35472d; }
+.leaderboard-shapes svg { display:block; width:32px; height:32px; fill:none; stroke:currentColor; stroke-width:2; }

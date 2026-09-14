@@ -119,3 +119,8 @@ Two agents share this repo; message before touching the other's files.
 
 - Score submission keeps one best score per signed-in UUID and (container, piece shape, n). Better submissions delete older owned entries and insert their replacement atomically; worse/tied submissions keep the earliest best. Existing duplicate entries are pruned only when that owner submits in that category, never by name or by a bulk migration. Board rows and public tokens are preserved.
 - `scores::record` acquires a transaction-scoped advisory lock for the account/category before touching board rows, then follows boards -> scores lock order. This serializes concurrent first submissions as well as replacements. Test both race orders and failure after deletion, using actual Diesel transactions rather than manual BEGIN around a Diesel transaction.
+
+## Leaderboard filters and player records
+
+- `/players/:username` uses the same icon/count filters as the global leaderboard. `GET /api/scores?player=<username>` resolves the account UUID through `users`, never through `scores.player`; same-named legacy scores remain unowned. Personal listings select one best per n within the selected piece/container category and keep each entry's global rank. SQL DISTINCT ON ordering and bounded limits matter for historical duplicates.
+- Account names link to their records; legacy names remain plain tagged text. Filter selects mark the selected option explicitly so rerenders retain the displayed count. Keep the selected-game Play link, timestamps, and board links on both views.

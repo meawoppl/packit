@@ -58,7 +58,7 @@ fn gap_pct(side: f64, known: f64) -> String {
 /// for an account.
 fn player_name(e: &ScoreEntry) -> Html {
     if e.account {
-        return html! { <span class="player">{ &e.player }</span> };
+        return html! { <Link<Route> classes="player" to={Route::PlayerRecords { username: e.player.clone() }}>{ &e.player }</Link<Route>> };
     }
     html! {
         <span class="player legacy" title="Submitted before accounts, under a name anyone could type">
@@ -89,59 +89,111 @@ fn loading_or_error<T>(state: &Option<Result<T, String>>) -> Option<Html> {
     }
 }
 
-/// Overview: every `n` with a known record, alongside the best player result.
+#[derive(Properties, PartialEq)]
+pub struct LeaderboardProps {
+    #[prop_or_default]
+    pub player: Option<String>,
+    #[prop_or_default]
+    pub initial_n: Option<u32>,
+    #[prop_or_default]
+    pub shape: shared::Shape,
+    #[prop_or_default]
+    pub container: shared::Shape,
+}
+
+fn shape_icon(shape: shared::Shape) -> Html {
+    let points = shape
+        .vertices(&shared::Placement {
+            cx: 0.0,
+            cy: 0.0,
+            theta: 0.0,
+        })
+        .iter()
+        .map(|(x, y)| {
+            format!(
+                "{},{}",
+                24.0 + x / shape.radius() * 19.0,
+                24.0 - y / shape.radius() * 19.0
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(" ");
+    html! { <svg viewBox="0 0 48 48" aria-hidden="true"><polygon {points}/></svg> }
+}
+
+/// Filter the public ranking or a unique account's personal records.
 #[function_component(Leaderboard)]
-pub fn leaderboard() -> Html {
-    let records = use_fetch((), |_| api::known_records());
-    let leaders = use_fetch((), |_| api::list_scores(None, Some(shared::MAX_N)));
-
-    if let Some(h) = loading_or_error(&records).or_else(|| loading_or_error(&leaders)) {
-        return h;
-    }
-    let records = records.as_ref().and_then(|r| r.as_ref().ok()).unwrap();
-    let leaders: &[ScoreEntry] = leaders.as_ref().and_then(|r| r.as_ref().ok()).unwrap();
-
+pub fn leaderboard(props: &LeaderboardProps) -> Html {
+    let account = use_context::<crate::account::Account>();
+    let shape = use_state(|| props.shape);
+    let container = use_state(|| props.container);
+    let n = use_state(|| props.initial_n);
+    let records = use_fetch((*shape, *container), |(s, c)| api::known_records_in(s, c));
+    let leaders = use_fetch(
+        (*shape, *container, *n, props.player.clone()),
+        |(s, c, n, p)| api::list_player_scores_in(s, c, n, Some(shared::MAX_N), p),
+    );
+    let known: &[KnownRecord] = records
+        .as_ref()
+        .and_then(|r| r.as_ref().ok())
+        .map_or(&[], |v| v.as_slice());
+    let scores: &[ScoreEntry] = leaders
+        .as_ref()
+        .and_then(|r| r.as_ref().ok())
+        .map_or(&[], |v| v.as_slice());
+    let counts: Vec<u32> = if let Some(n) = *n {
+        vec![n]
+    } else if props.player.is_some() {
+        scores.iter().map(|e| e.n).collect()
+    } else {
+        (1..=shared::MAX_N).collect()
+    };
+    let choose_n = {
+        let n = n.clone();
+        Callback::from(move |e: Event| {
+            let input: web_sys::HtmlSelectElement = e.target_unchecked_into();
+            n.set(input.value().parse().ok());
+        })
+    };
     html! {
         <div class="leaderboard">
-            <h1>{ "Leaderboard" }</h1>
-            <table>
-                <thead>
-                    <tr>
-                        <th>{ "n" }</th>
-                        <th>{ "Best known" }</th>
-                        <th>{ "Top player" }</th>
-                        <th>{ "Side" }</th>
-                        <th>{ "Gap" }</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    { for records.iter().map(|rec| {
-                        let top = leaders.iter().find(|e| e.n == rec.n);
-                        html! {
-                            <tr>
-                                <td>
-                                    <Link<Route> to={Route::LeaderboardN { n: rec.n }}>{ rec.n }</Link<Route>>
-                                </td>
-                                <td>{ known_cell(rec) }</td>
-                                { match top {
-                                    Some(e) => html! {
-                                        <>
-                                            <td>{ player_name(e) }</td>
-                                            <td>{ fmt_side(e.side) }</td>
-                                            <td>{ gap_pct(e.side, rec.side) }</td>
-                                        </>
-                                    },
-                                    None => html! {
-                                        <td colspan="3" class="muted">
-                                            <Link<Route> to={Route::Play { n: rec.n }}>{ "unclaimed, play it" }</Link<Route>>
-                                        </td>
-                                    },
-                                } }
-                            </tr>
-                        }
-                    }) }
-                </tbody>
-            </table>
+            <h1>{props.player.as_ref().map_or_else(||"Leaderboard".into(),|p|format!("{p}’s records"))}</h1>
+            {props.player.as_ref().map(|_|html!{<Link<Route> to={Route::Leaderboard}>{"All players"}</Link<Route>>})}
+            {account.and_then(|a|a.username).filter(|name|Some(name)!=props.player.as_ref()).map(|username|html!{<p><Link<Route> to={Route::PlayerRecords{username}}>{"My records"}</Link<Route>></p>})}
+            <div class="leaderboard-filters">
+                <label>{"Number"}<select aria-label="Number of pieces" onchange={choose_n}>
+                    <option value="all" selected={n.is_none()}>{"All"}</option>
+                    {for (1..=shared::MAX_N).map(|i|html!{<option value={i.to_string()} selected={*n==Some(i)}>{i}</option>})}
+                </select></label>
+                {for [("Pieces", shape.clone()), ("Container", container.clone())].into_iter().map(|(label, state)|html!{
+                    <fieldset><legend>{label}</legend><div class="leaderboard-shapes">
+                        {for shared::Shape::ALL.into_iter().map(|s| {let state=state.clone();html!{
+                            <button type="button" aria-label={format!("{label}: {s}")} title={s.name()}
+                                aria-pressed={(*state==s).to_string()} onclick={Callback::from(move |_|state.set(s))}>{shape_icon(s)}</button>
+                        }})}
+                    </div></fieldset>
+                })}
+            </div>
+            <p class="muted">{format!("{} in a {}", shape.plural(), *container)}{if props.player.is_some(){" · ranks are among all players"}else{""}}</p>
+            {n.map(|n|html!{<p><Link<Route> to={Route::play_in(*shape,*container,n)} classes="button">{"Play this game"}</Link<Route>></p>})}
+            {records.as_ref().and_then(|r|r.as_ref().err()).map(|e|html!{<p class="error">{format!("Could not load reference records: {e}")}</p>})}
+            {loading_or_error(&leaders).unwrap_or_else(||{
+                if props.player.is_some() && scores.is_empty() {return html!{<p class="muted">{"No records for this account in this configuration."}</p>};}
+                html!{<table><thead><tr><th>{"n"}</th><th>{"Rank"}</th><th>{"Player"}</th><th>{"Side"}</th><th>{"Best known"}</th><th>{"Gap"}</th><th>{"When"}</th><th>{"Board"}</th></tr></thead>
+                    <tbody>{for counts.iter().map(|count|{
+                        let rec=known.iter().find(|r|r.n==*count);
+                        let entries: Vec<_>=scores.iter().filter(|e|e.n==*count).collect();
+                        if entries.is_empty(){return html!{<tr><td>{count}</td><td colspan="3"><Link<Route> to={Route::play_in(*shape,*container,*count)}>{"No submissions · play"}</Link<Route>></td><td>{rec.map(known_cell)}</td><td colspan="3"></td></tr>};}
+                        html!{<>{for entries.into_iter().map(|e|html!{<tr>
+                            <td><Link<Route> to={Route::leaderboard_in(*shape,*container,*count)}>{count}</Link<Route>></td>
+                            <td>{e.rank}</td><td>{player_name(e)}</td>
+                            <td><Link<Route> to={Route::Score{id:e.id}}>{fmt_side(e.side)}</Link<Route>></td>
+                            <td>{rec.map(known_cell)}</td><td>{rec.map(|r|gap_pct(e.side,r.side)).unwrap_or_default()}</td>
+                            <td class="muted">{e.submitted_at.format("%Y-%m-%d %H:%M").to_string()}</td><td>{board_link(e,"Open")}</td>
+                        </tr>})}</>}
+                    })}</tbody>
+                </table>}
+            })}
         </div>
     }
 }
@@ -173,67 +225,10 @@ pub struct LeaderboardNProps {
     pub container: shared::Shape,
 }
 
-/// Every submission for one `n`, ranked.
+/// Category links initialize the same interactive leaderboard filters.
 #[function_component(LeaderboardN)]
 pub fn leaderboard_n(props: &LeaderboardNProps) -> Html {
-    let n = props.n;
-    let shape = props.shape;
-    let container = props.container;
-    let scores = use_fetch((shape, container, n), |(shape, container, n)| {
-        api::list_scores_in(shape, container, Some(n), None)
-    });
-    let records = use_fetch((shape, container), |(s, c)| api::known_records_in(s, c));
-    let known = records
-        .as_ref()
-        .and_then(|r| r.as_ref().ok())
-        .and_then(|r| r.iter().find(|k| k.n == n).cloned());
-
-    html! {
-        <div class="leaderboard">
-            <h1>{ format!("{n} {} in a {container}", shape.plural()) }</h1>
-            <p>
-                { match &known {
-                    Some(k) => html! { <>{ "Best known side: " }{ known_cell(k) }{ format!(" ({})", k.source) }</> },
-                    None => html! { <span class="muted">{ "No literature record loaded for this n." }</span> },
-                } }
-            </p>
-            <Link<Route> to={Route::play_in(shape,container,n)} classes="button">{ "Play this n" }</Link<Route>>
-            { loading_or_error(&scores).unwrap_or_else(|| {
-                let scores = scores.as_ref().and_then(|r| r.as_ref().ok()).unwrap();
-                if scores.is_empty() {
-                    return html! { <p class="muted">{ "No submissions yet. Be the first." }</p> };
-                }
-                html! {
-                    <table>
-                        <thead>
-                            <tr>
-                                <th>{ "#" }</th>
-                                <th>{ "Player" }</th>
-                                <th>{ "Side" }</th>
-                                <th>{ "Gap" }</th>
-                                <th>{ "When" }</th>
-                                <th>{ "Board" }</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            { for scores.iter().map(|e| html! {
-                                <tr>
-                                    <td>{ e.rank }</td>
-                                    <td>
-                                        <Link<Route> to={Route::Score { id: e.id }}>{ player_name(e) }</Link<Route>>
-                                    </td>
-                                    <td>{ fmt_side(e.side) }</td>
-                                    <td>{ known.as_ref().map(|k| gap_pct(e.side, k.side)).unwrap_or_default() }</td>
-                                    <td class="muted">{ e.submitted_at.format("%Y-%m-%d %H:%M").to_string() }</td>
-                                    <td>{ board_link(e, "Open") }</td>
-                                </tr>
-                            }) }
-                        </tbody>
-                    </table>
-                }
-            }) }
-        </div>
-    }
+    html! { <Leaderboard key={format!("{}-{}-{}",props.shape,props.container,props.n)} initial_n={Some(props.n)} shape={props.shape} container={props.container} /> }
 }
 
 #[derive(Properties, PartialEq)]
