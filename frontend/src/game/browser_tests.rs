@@ -3169,11 +3169,10 @@ async fn polygon_games_load_settle_and_offer_all_shapes() {
             .get_attribute("aria-label")
             .unwrap()
             .contains(shape.plural()));
-        click_button(&root, ".pg-submit", "Settle");
-        wait_until("polygon certified", || {
-            TEST_REPORT.with(|r| r.borrow().is_some())
-        })
-        .await;
+        // This test covers shape-preserving automatic certification;
+        // manual Settle now deliberately compresses the scene first.
+        physics.set_paused(false);
+        wait_for_report(8000).await;
         TEST_REPORT.with(|r| {
             let r = r.borrow();
             assert_eq!(r.as_ref().unwrap().shape, shape);
@@ -3289,11 +3288,9 @@ async fn all_container_games_restore_and_certify_without_changing_shape() {
                 root.query_selector_all(".pg-corner").unwrap().length(),
                 container.sides() as u32
             );
-            click_button(&root, ".pg-submit", "Settle");
-            wait_until("container certified", || {
-                TEST_REPORT.with(|r| r.borrow().is_some())
-            })
-            .await;
+            // Automatic certification retains this imported loose pose.
+            physics.set_paused(false);
+            wait_for_report(8000).await;
             TEST_REPORT.with(|r| assert_eq!(r.borrow().as_ref().unwrap(), &a));
             handle.destroy();
             root.remove();
