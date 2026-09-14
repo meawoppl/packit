@@ -3,9 +3,10 @@
 #[cfg(all(test, target_arch = "wasm32"))]
 mod browser_tests;
 mod canvas;
+mod compression;
 mod files;
 mod glue;
-mod picker;
+pub(crate) mod picker;
 mod tap;
 mod touch;
 
@@ -18,7 +19,7 @@ use gloo_events::{EventListener, EventListenerOptions};
 use gloo_render::{request_animation_frame, AnimationFrame};
 use physics::{Backend, Feature, Glue, Physics, SettlePhase, SETTLE_GLUE_ERROR};
 use shared::{board, Arrangement, BoardCode, BoardLink, KnownRecord, ScoreEntry, SubmitScore};
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::time::Duration;
 use wasm_bindgen::JsCast;
@@ -217,6 +218,7 @@ struct Readout {
 pub struct Game {
     physics: Physics,
     canvas: NodeRef,
+    compression: RefCell<compression::Compression>,
     file_input: NodeRef,
     frame: Option<AnimationFrame>,
     wheel: Option<EventListener>,
@@ -441,6 +443,7 @@ impl Component for Game {
         let mut game = Self {
             physics,
             canvas: NodeRef::default(),
+            compression: RefCell::default(),
             file_input: NodeRef::default(),
             frame: None,
             wheel: None,
@@ -1015,6 +1018,7 @@ impl Component for Game {
                 self.physics.set_params(params);
                 self.view_side.set(side);
                 self.physics.reset();
+                self.compression.take();
                 self.invalidate();
                 self.set_status("Fresh grid. Make it yours.", false);
                 true
@@ -1299,7 +1303,6 @@ impl Component for Game {
                     </div>
                     <aside class="pg-sidebar">
                         <section class="pg-panel pg-submit">
-                    <picker::Picker n={n} shape={ctx.props().shape} container={ctx.props().container} />
                             <h2>{ "Your packing" }</h2>
                             <div class="pg-stat">{ &r.side }<small>{ " side length" }</small></div>
                             <div class="pg-meter"><span style={format!("width: {}", r.meter)}></span></div>
@@ -1419,7 +1422,7 @@ impl Component for Game {
                                 <span class="pg-hint-mouse">{ "drag · wheel to rotate · shift-drag to spin · double-click to glue" }</span>
                                 <span class="pg-hint-touch">{ "drag pieces · two fingers on a piece to turn · pinch/pan empty space · double-tap to glue" }</span>
                             </div>
-                        <p class="pg-help">{ "Force arrows: blue = net contact and edge pull · gold = mouse spring. Dashed band = target size." }</p>
+                        <p class="pg-help">{ "Gold ellipses flatten along the pressure direction and fade as forces ease. Dashed band = target size." }</p>
                         <details class="pg-details">
                             <summary>{ "How to play & what the score means" }</summary>
                             <p>{ "Each piece has edge length 1. Make the container smaller while keeping every piece inside and avoiding overlap. Dragging and rotating resume physics, push neighbors, and resist blocked motion. Drag a corner inward to squeeze the packing; let go and the box springs back out from the squares' pressure until nothing overlaps, then settles. Turn on forces, or use Q/E to rotate a selected square. Arrow keys nudge it. Space pauses." }</p>
@@ -1768,14 +1771,15 @@ impl Game {
             TEST_PAN.with(|p| p.set(self.pan.get()));
         }
         let forces = self.physics.contact_forces();
-        let show_forces = self.dragging
-            || self.rotating
-            || (self.selected.is_some() && self.physics.motion() > 0.002 * bodies.len() as f32);
         let glues = self.physics.glues();
         let violations = self.physics.violations();
         let now_ms = web_sys::window()
             .and_then(|w| w.performance())
             .map_or(0.0, |p| p.now());
+        let compression =
+            self.compression
+                .borrow_mut()
+                .update(now_ms, &forces, self.physics.mouse_force());
         canvas::draw(
             &canvas,
             &Scene {
@@ -1790,8 +1794,7 @@ impl Game {
                 band_on: params.band_tension > 0.0,
                 band_tension: params.band_tension,
                 target_side: params.target_side,
-                forces: show_forces.then_some(&forces),
-                mouse_force: self.physics.mouse_force(),
+                compression: &compression,
                 selected: self.selected,
                 tether: (self.dragging && !self.touch.active()).then_some(self.mouse),
                 violations: &violations,
@@ -2099,6 +2102,7 @@ impl Game {
         self.manual_view = false;
         self.desired_side = None;
         self.physics.load(a);
+        self.compression.take();
         self.view_side.set(self.physics.side());
         self.invalidate();
         self.set_status("Imported. Settle to validate.", false);
@@ -2189,6 +2193,7 @@ impl Game {
         if moved > 0.0 {
             // Loading clears glue; the nudged packing has the same squares.
             self.physics.load(&certified);
+            self.compression.take();
             let _ = self.physics.set_glues(glues);
             self.physics.set_paused(true);
         }
@@ -2212,6 +2217,7 @@ impl Game {
         }
         // Loading clears glue; the smaller packing has the same squares.
         self.physics.load(&tighter);
+        self.compression.take();
         let _ = self.physics.set_glues(&glues);
         self.physics.set_paused(true);
         self.certified = None;

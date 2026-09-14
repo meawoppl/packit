@@ -48,7 +48,7 @@ enum Route {
 
 fn switch(route: Route) -> Html {
     match route {
-        Route::Home => html! { <Home /> },
+        Route::Home => html! { <game::Game key={17u32} n={17} /> },
         Route::Play { n } if (1..=MAX_N).contains(&n) => {
             // Keyed so changing n remounts with fresh physics.
             html! { <game::Game key={n} n={n} /> }
@@ -96,6 +96,34 @@ fn switch(route: Route) -> Html {
     }
 }
 
+#[function_component(HeaderPicker)]
+fn header_picker() -> Html {
+    let configuration = match use_route::<Route>() {
+        Some(Route::Home) => Some((17, shared::Shape::Square, shared::Shape::Square)),
+        Some(Route::Play { n }) => Some((n, shared::Shape::Square, shared::Shape::Square)),
+        Some(Route::Polygon { shape, n }) => shape
+            .parse()
+            .ok()
+            .map(|shape| (n, shape, shared::Shape::Square)),
+        Some(Route::Container {
+            shape,
+            container,
+            n,
+        }) => shape
+            .parse()
+            .ok()
+            .zip(container.parse().ok())
+            .map(|(shape, container)| (n, shape, container)),
+        _ => None,
+    };
+    match configuration {
+        Some((n, shape, container)) if (1..=MAX_N).contains(&n) => html! {
+            <game::picker::Picker key={format!("{shape}-{container}-{n}")} {n} {shape} {container} />
+        },
+        _ => Html::default(),
+    }
+}
+
 #[function_component(App)]
 pub fn app() -> Html {
     html! {
@@ -106,6 +134,7 @@ pub fn app() -> Html {
                     <a class="tagline" href="https://x.com/meawoppl/status/2097861010388554039"
                         target="_blank" rel="noopener noreferrer">{ "pack taters, impress your wife" }</a>
                     <Link<Route> to={Route::Leaderboard}>{ "Leaderboard" }</Link<Route>>
+                    <HeaderPicker />
                     <AccountMenu />
                 </nav>
                 <main>
@@ -113,21 +142,6 @@ pub fn app() -> Html {
                 </main>
             </AccountProvider>
         </BrowserRouter>
-    }
-}
-
-#[function_component(Home)]
-fn home() -> Html {
-    html! {
-        <div class="home">
-            <h1>{ "Pick your packing" }</h1>
-            <p>{ "Pack triangles, squares, pentagons, or hexagons into a triangle, square, pentagon, or hexagon. Choose your game from the packing picker." }</p>
-            <div class="n-grid">
-                { for (1..=30u32).map(|n| html! {
-                    <Link<Route> to={Route::Play { n }} classes="n-button">{ n }</Link<Route>>
-                }) }
-            </div>
-        </div>
     }
 }
 

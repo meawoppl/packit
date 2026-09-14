@@ -292,7 +292,8 @@ svg.arrangement .square {
     padding: 0;
 }
 
-.packing-game * {
+.packing-game *,
+.pg-picker, .pg-picker * {
     box-sizing: border-box;
 }
 
@@ -402,25 +403,26 @@ svg.arrangement .square {
 
 .packing-game button,
 .packing-game input[type="text"],
-.packing-game input[type="number"] {
+.packing-game input[type="number"],
+.pg-picker button, .pg-picker input[type="number"] {
     font: inherit;
     border: 1px solid #445067;
     border-radius: 9px;
     background: #273348;
-    color: var(--ink);
+    color: var(--ink, #e2e8ef);
     padding: 10px 14px;
     min-height: 44px;
     touch-action: manipulation;
 }
 
-.packing-game button {
+.packing-game button, .pg-picker button {
     cursor: pointer;
     font-size: 14px;
     font-weight: 700;
 }
 
 @media (hover: hover) {
-    .packing-game button:hover {
+    .packing-game button:hover, .pg-picker button:hover {
         background: #35455e;
     }
 }
@@ -490,7 +492,7 @@ svg.arrangement .square {
     }
 }
 
-.packing-game button:disabled {
+.packing-game button:disabled, .pg-picker button:disabled {
     opacity: 0.45;
     cursor: wait;
 }
@@ -908,3 +910,10 @@ main:has(.packing-game) {
 .pg-shape-options [aria-pressed="true"] { border-color:#c7f36b; color:#c7f36b; background:#27332b; }
 
 .pg-picker-confirm { background:#c7f36b; color:#101722; font-weight:700; }
+
+/* Keep the game selector compact beside the header navigation. */
+.topbar { align-items: center; }
+.topbar .pg-game-picker { min-height: 44px; gap: .5rem; padding: 0 .65rem; }
+.topbar .pg-game-picker strong { font-size: 1.15rem; }
+.topbar .pg-game-picker svg { width: 36px; height: 36px; }
+@media (max-width: 600px) { .topbar { column-gap: .75rem; } }
