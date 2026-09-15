@@ -32,7 +32,7 @@ explicit stiffness and damping even for redundant point unions.
 Inputs do not change revisions; reset, load and dispose clear links, pause keeps
 them. GPU glue input uses a separate bounded storage buffer; body stride is unchanged.
 
-Dragging uses a spring capped at 40 force units, so neighbors push back even
+Dragging uses a spring capped at 50 force units, so neighbors push back even
 when the pointer is far away. Mouse-target updates never increment the body
 revision. Direct edits increment it; completed GPU readbacks preserve edited
 components while merging motion into unchanged components. No state borrow
