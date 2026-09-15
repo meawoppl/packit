@@ -383,13 +383,13 @@ mod tests {
         for expected in [
             format!(r#"<meta property="og:url" content="{TEST_URL}/play/2?s={code}">"#),
             format!(
-                r#"<meta property="og:image" content="{TEST_URL}/api/preview.png?n=2&amp;s={code}">"#
+                r#"<meta property="og:image" content="{TEST_URL}/api/preview.png?v=2-4000000000000000&amp;n=2&amp;s={code}">"#
             ),
             format!(
-                r#"<meta name="twitter:image" content="{TEST_URL}/api/preview.png?n=2&amp;s={code}">"#
+                r#"<meta name="twitter:image" content="{TEST_URL}/api/preview.png?v=2-4000000000000000&amp;n=2&amp;s={code}">"#
             ),
             r#"<meta name="twitter:card" content="summary_large_image">"#.to_string(),
-            r#"<meta property="og:title" content="2 squares in a 2.0000 box">"#.to_string(),
+            r#"<meta property="og:title" content="2 squares in a 2.0000 box · 100.00% of best known">"#.to_string(),
         ] {
             assert!(tags.contains(&expected), "missing {expected} in {tags}");
         }
@@ -833,7 +833,9 @@ mod tests {
         .unwrap();
         let tags = assert_page_with_tags(&html);
         assert!(tags.contains(r#"name="twitter:card" content="summary_large_image""#));
-        assert!(tags.contains(&format!("{TEST_URL}/api/preview.png?n=2&amp;s={code}")));
+        assert!(tags.contains(&format!(
+            "{TEST_URL}/api/preview.png?v=2-4000000000000000&amp;n=2&amp;s={code}"
+        )));
         let (status, headers, png) = fetch_uri(&format!("/api/preview.png?n=2&s={code}")).await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(headers[header::CONTENT_TYPE], "image/png");
@@ -1127,7 +1129,7 @@ mod tests {
         for tag in [
             format!(r#"<meta property="og:url" content="{TEST_URL}{page}">"#),
             format!(
-                r#"<meta property="og:image" content="{TEST_URL}/api/preview.png?n=100&amp;s={code}">"#
+                r#"<meta property="og:image" content="{TEST_URL}/api/preview.png?v=2-4024000000000000&amp;n=100&amp;s={code}">"#
             ),
         ] {
             assert!(html.contains(&tag), "missing {tag}");
