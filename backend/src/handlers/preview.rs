@@ -7,7 +7,7 @@ use axum::http::{header, StatusCode};
 use axum::response::{Html, IntoResponse, Response};
 use serde::Deserialize;
 use shared::{board, geometry, Arrangement, MAX_N, VALIDATION_TOL};
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use tiny_skia::{Color, FillRule, Paint, PathBuilder, Pixmap, Rect, Stroke, Transform};
 
 /// Trunk's built page, the same file memory-serve embeds, so the hashed
@@ -102,8 +102,8 @@ fn play_page(
     )
 }
 
-/// PNG of a board's packing. The URL carries the whole validated payload, so
-/// the image never changes and may be cached forever.
+/// PNG of a board's packing. Metadata URLs include both the rendering version
+/// and the reference side bits, so updated references get a fresh cached image.
 pub async fn preview_png(query: Option<Query<PreviewQuery>>) -> Response {
     let png = query
         .ok_or_else(|| "n and s are required".to_string())
@@ -140,10 +140,23 @@ fn meta_tags_for(
     let pieces = shape.plural();
     let (title, description, url, image) = match (n, packing) {
         (Some(n), Some((a, code))) => (
-            format!("{n} {pieces} in a {:.4} box", a.side),
+            format!(
+                "{n} {pieces} in a {:.4} box{}",
+                a.side,
+                comparison(a)
+                    .map(|c| format!(
+                        " · {} of best known{}",
+                        c.percent,
+                        if c.record { " · NEW RECORD" } else { "" }
+                    ))
+                    .unwrap_or_default()
+            ),
             describe(a),
             format!("{public_url}{path}?s={code}"),
-            Some(format!("{public_url}/api/preview.png?n={n}&s={code}")),
+            Some(format!(
+                "{public_url}/api/preview.png?v=2-{:016x}&n={n}&s={code}",
+                reference(a).unwrap_or(0.0).to_bits()
+            )),
         ),
         (Some(n), None) => (
             format!("Pack {n} unit {pieces}"),
@@ -196,10 +209,14 @@ fn describe(a: &Arrangement) -> String {
     } else {
         "An unverified"
     };
-    let best = crate::handlers::records::for_shape(a.shape)
-        .iter()
-        .find(|r| r.n == a.n && a.container.is_square())
-        .map(|r| format!(" Best known: {:.6}.", r.side))
+    let best = comparison(a)
+        .map(|c| {
+            format!(
+                " {} of best-known side.{}",
+                c.percent,
+                if c.record { " NEW RECORD." } else { "" }
+            )
+        })
         .unwrap_or_default();
     format!(
         "{kind} packing of {} unit {} in a {} of side {:.6}.{best} Open it to keep packing.",
@@ -208,6 +225,143 @@ fn describe(a: &Arrangement) -> String {
         a.container,
         a.side
     )
+}
+
+struct Comparison {
+    percent: String,
+    record: bool,
+}
+
+fn compare(side: f64, best: f64, valid: bool) -> Comparison {
+    let ratio = side / best * 100.0;
+    let mut percent = format!("{ratio:.2}%");
+    // Do not round an actual improvement (or regression) into an apparent tie.
+    if percent == "100.00%" && side != best {
+        percent = format!("{}100.00%", if side < best { "<" } else { ">" });
+    }
+    Comparison {
+        percent,
+        record: valid && side < best,
+    }
+}
+
+fn reference(a: &Arrangement) -> Option<f64> {
+    if !a.container.is_square() {
+        return None;
+    }
+    crate::handlers::records::for_shape(a.shape)
+        .iter()
+        .find(|r| r.n == a.n)
+        .map(|r| r.side)
+}
+
+fn comparison(a: &Arrangement) -> Option<Comparison> {
+    Some(compare(
+        a.side,
+        reference(a)?,
+        geometry::validate(a, VALIDATION_TOL).is_ok(),
+    ))
+}
+
+static FONT: LazyLock<fontdue::Font> = LazyLock::new(|| {
+    fontdue::Font::from_bytes(
+        include_bytes!("../../assets/Lato-Bold.ttf") as &[u8],
+        fontdue::FontSettings::default(),
+    )
+    .expect("bundled Lato font")
+});
+
+fn text(pixmap: &mut Pixmap, value: &str, x: f32, baseline: i32, size: f32, color: [u8; 3]) {
+    let mut pen = x;
+    for ch in value.chars() {
+        let (metrics, bitmap) = FONT.rasterize(ch, size);
+        let left = pen.round() as i32 + metrics.xmin;
+        let top = baseline - metrics.height as i32 - metrics.ymin;
+        for row in 0..metrics.height {
+            for col in 0..metrics.width {
+                let (px, py) = (left + col as i32, top + row as i32);
+                if px < 0 || py < 0 || px >= WIDTH as i32 || py >= HEIGHT as i32 {
+                    continue;
+                }
+                let alpha = bitmap[row * metrics.width + col] as u32;
+                let pixel = &mut pixmap.pixels_mut()[py as usize * WIDTH as usize + px as usize];
+                let blend = |fg: u8, bg: u8| {
+                    ((u32::from(fg) * alpha + u32::from(bg) * (255 - alpha) + 127) / 255) as u8
+                };
+                *pixel = tiny_skia::PremultipliedColorU8::from_rgba(
+                    blend(color[0], pixel.red()),
+                    blend(color[1], pixel.green()),
+                    blend(color[2], pixel.blue()),
+                    255,
+                )
+                .unwrap();
+            }
+        }
+        pen += metrics.advance_width;
+    }
+}
+
+fn draw_caption(pixmap: &mut Pixmap, a: &Arrangement) {
+    // Cover any out-of-box pieces from unverified imports behind the caption.
+    let mut paint = Paint::default();
+    paint.set_color_rgba8(0x10, 0x17, 0x22, 255);
+    pixmap.fill_rect(
+        Rect::from_xywh(0.0, 0.0, 590.0, HEIGHT as f32).unwrap(),
+        &paint,
+        Transform::identity(),
+        None,
+    );
+    let white = [0xee, 0xf2, 0xf7];
+    let muted = [0xa0, 0xad, 0xbe];
+    let green = [0xc7, 0xf3, 0x6b];
+    text(pixmap, "POTATOS", 48.0, 80, 30.0, green);
+    text(
+        pixmap,
+        &format!("{} {}", a.n, a.shape.plural()),
+        48.0,
+        151,
+        32.0,
+        white,
+    );
+    text(
+        pixmap,
+        &format!("in a {}", a.container),
+        48.0,
+        192,
+        26.0,
+        muted,
+    );
+    if let Some(c) = comparison(a) {
+        text(pixmap, &c.percent, 48.0, 313, 64.0, white);
+        text(pixmap, "OF BEST KNOWN SIDE", 48.0, 354, 22.0, muted);
+        if c.record {
+            text(pixmap, "NEW RECORD", 48.0, 420, 34.0, green);
+        }
+    } else {
+        text(pixmap, "NO KNOWN REFERENCE", 48.0, 300, 27.0, muted);
+    }
+    text(
+        pixmap,
+        &format!("Side {:.6}", a.side),
+        48.0,
+        500,
+        25.0,
+        white,
+    );
+    let verified = geometry::validate(a, VALIDATION_TOL).is_ok();
+    text(
+        pixmap,
+        if verified {
+            "Verified packing"
+        } else {
+            "Unverified board"
+        },
+        48.0,
+        543,
+        22.0,
+        muted,
+    );
+    text(pixmap, "potatos.txcl.io", 48.0, 590, 21.0, muted);
 }
 
 fn escape(s: &str) -> String {
@@ -236,7 +390,7 @@ pub fn render(a: &Arrangement) -> Result<Vec<u8>, String> {
         0.0,
         0.0,
         -scale,
-        (WIDTH as f32 - side * scale) / 2.0,
+        885.0 - side * scale / 2.0,
         (HEIGHT as f32 + side * scale) / 2.0,
     );
     let mut paint = Paint::default();
@@ -302,12 +456,54 @@ pub fn render(a: &Arrangement) -> Result<Vec<u8>, String> {
         ..Stroke::default()
     };
     pixmap.stroke_path(&container, &paint, &wall, view, None);
+    draw_caption(&mut pixmap, a);
     pixmap.encode_png().map_err(|e| e.to_string())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn comparison_labels_improvements_ties_and_unverified_boards() {
+        assert_eq!(compare(2.2, 2.0, true).percent, "110.00%");
+        assert!(!compare(2.0, 2.0, true).record);
+        assert!(compare(1.9, 2.0, true).record);
+        assert!(!compare(1.9, 2.0, false).record);
+        assert_eq!(compare(1.999999, 2.0, true).percent, "<100.00%");
+        assert_eq!(compare(2.000001, 2.0, true).percent, ">100.00%");
+    }
+
+    #[test]
+    fn reference_requires_matching_category_and_validity_for_badge() {
+        let mut a = Arrangement {
+            n: 1,
+            side: 1.0,
+            squares: vec![shared::Placement {
+                cx: 0.5,
+                cy: 0.5,
+                theta: 0.0,
+            }],
+            shape: shared::Shape::Square,
+            container: shared::Shape::Square,
+        };
+        let c = comparison(&a).unwrap();
+        assert_eq!(c.percent, "100.00%");
+        assert!(!c.record);
+        a.side = 0.9;
+        assert!(!comparison(&a).unwrap().record);
+        let tags = meta_tags_for(
+            "https://potatos.txcl.io",
+            a.shape,
+            a.container,
+            Some(1),
+            Some((&a, "test")),
+        );
+        assert!(tags.contains("90.00%"));
+        assert!(!tags.contains("NEW RECORD"));
+        a.container = shared::Shape::Triangle;
+        assert!(comparison(&a).is_none());
+    }
 
     #[test]
     fn escape_covers_html_metacharacters() {
