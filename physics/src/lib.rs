@@ -347,7 +347,7 @@ impl Physics {
         let i = s.mouse.index.filter(|_| s.mouse.down)?;
         let b = s.bodies.get(i)?;
         let (dx, dy) = (s.mouse.x - b.x, s.mouse.y - b.y);
-        let gain = 100.0 * (0.4 / dx.hypot(dy).max(0.0001)).min(1.0);
+        let gain = 100.0 * (0.5 / dx.hypot(dy).max(0.0001)).min(1.0);
         Some((i, [dx * gain - b.vx * 14.0, dy * gain - b.vy * 14.0]))
     }
     pub fn band_velocity(&self) -> f32 {

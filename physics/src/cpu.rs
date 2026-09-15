@@ -107,7 +107,7 @@ impl State {
                 .filter(|m| m.down && m.index == Some(i))
             {
                 let (dx, dy) = (mouse.x - b.x, mouse.y - b.y);
-                let gain = 100.0 * (0.4 / dx.hypot(dy).max(0.0001)).min(1.0);
+                let gain = 100.0 * (0.5 / dx.hypot(dy).max(0.0001)).min(1.0);
                 fx += dx * gain - b.vx * 14.0;
                 fy += dy * gain - b.vy * 14.0;
             }
