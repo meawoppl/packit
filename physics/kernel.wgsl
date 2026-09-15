@@ -153,7 +153,7 @@ fn step(@builtin(global_invocation_id) id:vec3<u32>) {
  for(var g=0u;g<u32(params.glue.x);g++){let f=glue_force(glues[g],i);force+=f.xy;contact+=f.xy;torque+=f.z;}
  if(i==u32(params.mouse.z) && params.mouse.w>0.0){
   let delta=params.mouse.xy-me.p.xy;
-  let gain=100.0*min(1.0,0.4/max(0.0001,length(delta)));
+  let gain=100.0*min(1.0,0.5/max(0.0001,length(delta)));
   force+=delta*gain-me.v.xy*14.0;
  }
  if(i==u32(params.rotation.y) && params.rotation.z>0.0){

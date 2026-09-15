@@ -118,7 +118,7 @@ impl State {
             {
                 let dx = mouse.x - b.x;
                 let dy = mouse.y - b.y;
-                let gain = 100.0 * (0.4 / dx.hypot(dy).max(0.0001)).min(1.0);
+                let gain = 100.0 * (0.5 / dx.hypot(dy).max(0.0001)).min(1.0);
                 f[0] += dx * gain - b.vx * 14.0;
                 f[1] += dy * gain - b.vy * 14.0;
             }

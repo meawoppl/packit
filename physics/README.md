@@ -5,6 +5,8 @@ on the Rust CPU fallback and can asynchronously initialize WebGPU through
 `wgpu`. `kernel.wgsl` computes oriented-square SAT contacts, damping,
 attraction, and a bounded mouse spring. The CPU implementation uses the same
 model. Both use 120 Hz substeps, capped at six per frame, for up to 100 squares.
+The drag spring caps its pull at 50 force units, with unchanged close-range
+stiffness and velocity damping, for a faster long pull without a sharper snap.
 Contacts are stiff penalty springs, intentionally not exact constraints.
 Off-center collisions and wall corners impart torque using unit-square inverse
 inertia 6. Face contacts distribute pressure and damping over their contact
