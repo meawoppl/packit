@@ -120,6 +120,21 @@ pub fn picker(props: &Props) -> Html {
         .parse::<u32>()
         .ok()
         .filter(|n| (1..=MAX_N).contains(n));
+    let step = |increase: bool| {
+        let count = count.clone();
+        let fallback = props.n;
+        Callback::from(move |_| {
+            let current = count.parse::<u32>().unwrap_or(fallback).clamp(1, MAX_N);
+            count.set(
+                if increase {
+                    (current + 1).min(MAX_N)
+                } else {
+                    current.saturating_sub(1).max(1)
+                }
+                .to_string(),
+            );
+        })
+    };
     let apply = {
         let open = open.clone();
         let s = *piece;
@@ -142,8 +157,12 @@ pub fn picker(props: &Props) -> Html {
                 <form onsubmit={apply}>
                     <h2 id="game-picker-title">{"Choose your packing"}</h2>
                     <label for="game-count">{"Number of pieces"}</label>
-                    <input id="game-count" ref={input} type="number" min="1" max={MAX_N.to_string()} required=true value={(*count).clone()}
+                    <div class="pg-count-stepper">
+                    <button type="button" aria-label="Increase number of pieces" disabled={n == Some(MAX_N)} onclick={step(true)}>{"+"}</button>
+                    <input id="game-count" ref={input} type="number" inputmode="numeric" step="1" min="1" max={MAX_N.to_string()} required=true value={(*count).clone()}
                         oninput={let count=count.clone();Callback::from(move |e:InputEvent|count.set(e.target_unchecked_into::<HtmlInputElement>().value()))}/>
+                    <button type="button" aria-label="Decrease number of pieces" disabled={n == Some(1)} onclick={step(false)}>{"−"}</button>
+                    </div>
                     <fieldset><legend>{"Enclosed shape"}</legend><div class="pg-shape-options">
                         {for Shape::ALL.into_iter().map(|s|{let piece=piece.clone();html!{<button type="button" aria-pressed={(*piece==s).to_string()} onclick={Callback::from(move |_|piece.set(s))}><svg viewBox="0 0 64 64" aria-hidden="true"><polygon points={points(s,26.0)}/></svg>{s.name()}</button>}})}
                     </div></fieldset>
