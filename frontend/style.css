@@ -926,3 +926,9 @@ main:has(.packing-game) {
 .leaderboard-shapes button, .leaderboard-filters select { min-width:44px; min-height:44px; border:1px solid #52647a; border-radius:8px; color:#e2e8ef; background:#273348; cursor:pointer; }
 .leaderboard-shapes button[aria-pressed="true"] { border-color:#c7f36b; background:#35472d; }
 .leaderboard-shapes svg { display:block; width:32px; height:32px; fill:none; stroke:currentColor; stroke-width:2; }
+
+/* Editable count with large touch targets, in + number - order. */
+.pg-count-stepper { display: grid; grid-template-columns: 52px minmax(0, 1fr) 52px; gap: .75rem; align-items: center; }
+.pg-count-stepper button { min-height: 48px; font-size: 1.5rem; touch-action: manipulation; }
+.pg-count-stepper input { width: 100%; min-width: 0; box-sizing: border-box; min-height: 48px; text-align: center; font-size: 1.5rem; appearance: textfield; -moz-appearance: textfield; }
+.pg-count-stepper input::-webkit-inner-spin-button, .pg-count-stepper input::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
