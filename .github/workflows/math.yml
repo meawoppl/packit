@@ -13,7 +13,7 @@ jobs:
     name: GitHub Math Lint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Check GitHub math rendering hazards
         uses: CosmicFrontierLabs/github-math-lint@e10771b2289108830ee9687fa292c9e8c0bbbf4e # v1
         with:
