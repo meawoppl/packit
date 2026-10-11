@@ -63,7 +63,7 @@ pub struct Finish<C> {
 pub fn router(state: Arc<AppState>) -> Router {
     let ceremonies = Router::new()
         .route("/api/auth/register/start", post(register_start))
-        .route("/api/auth/usernames/:name", get(availability))
+        .route("/api/auth/usernames/{name}", get(availability))
         .route("/api/auth/register/finish", post(register_finish))
         .route("/api/auth/login/start", post(login_start))
         .route("/api/auth/login/finish", post(login_finish))
