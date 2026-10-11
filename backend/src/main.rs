@@ -18,7 +18,7 @@ use axum::{
     Router,
 };
 use clap::Parser;
-use memory_serve::{load_assets, CacheControl, MemoryServe};
+use memory_serve::CacheControl;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tower_cookies::CookieManagerLayer;
@@ -74,7 +74,7 @@ pub fn build_app(state: Arc<AppState>) -> Router {
     // Pre-compressed (brotli/gzip), content-negotiated frontend assets with
     // ETag/304 and an SPA fallback to index.html. Assets are embedded at build
     // time in release builds and read from disk in debug builds.
-    let frontend = MemoryServe::new(load_assets!("../frontend/dist"))
+    let frontend = memory_serve::load!()
         .index_file(Some("/index.html"))
         .fallback(Some("/index.html"))
         .fallback_status(StatusCode::OK)
@@ -104,16 +104,16 @@ pub fn build_app(state: Arc<AppState>) -> Router {
         .with_state(state.clone());
 
     let public = Router::new()
-        .route("/s/:token", get(handlers::boards::resolve))
+        .route("/s/{token}", get(handlers::boards::resolve))
         .route("/api/health", get(handlers::health::health))
         .route("/api/records", get(handlers::records::records))
         .route("/api/scores", get(handlers::scores::list))
-        .route("/api/scores/:id", get(handlers::scores::detail))
+        .route("/api/scores/{id}", get(handlers::scores::detail))
         .route("/api/preview.png", get(handlers::preview::preview_png))
-        .route("/play/:n", get(handlers::preview::play))
-        .route("/play/:shape/:n", get(handlers::preview::polygon_play))
+        .route("/play/{n}", get(handlers::preview::play))
+        .route("/play/{shape}/{n}", get(handlers::preview::polygon_play))
         .route(
-            "/play/:shape/:container/:n",
+            "/play/{shape}/{container}/{n}",
             get(handlers::preview::container_play),
         )
         .with_state(state.clone())

@@ -2,7 +2,7 @@
 //! Twitter metadata, and `/api/preview.png` draws the board's packing.
 
 use crate::AppState;
-use axum::extract::{Path, Query, State};
+use axum::extract::{rejection::QueryRejection, Path, Query, State};
 use axum::http::{header, StatusCode};
 use axum::response::{Html, IntoResponse, Response};
 use serde::Deserialize;
@@ -41,24 +41,24 @@ pub struct PreviewQuery {
 pub async fn play(
     State(state): State<Arc<AppState>>,
     Path(n): Path<String>,
-    query: Option<Query<PlayQuery>>,
+    query: Result<Query<PlayQuery>, QueryRejection>,
 ) -> impl IntoResponse {
     play_page(
         state,
         n,
         shared::Shape::Square,
         shared::Shape::Square,
-        query,
+        query.ok(),
     )
 }
 
 pub async fn polygon_play(
     State(state): State<Arc<AppState>>,
     Path((shape, n)): Path<(String, String)>,
-    query: Option<Query<PlayQuery>>,
+    query: Result<Query<PlayQuery>, QueryRejection>,
 ) -> Response {
     match shape.parse() {
-        Ok(shape) => play_page(state, n, shape, shared::Shape::Square, query).into_response(),
+        Ok(shape) => play_page(state, n, shape, shared::Shape::Square, query.ok()).into_response(),
         Err(_) => StatusCode::NOT_FOUND.into_response(),
     }
 }
@@ -66,10 +66,12 @@ pub async fn polygon_play(
 pub async fn container_play(
     State(state): State<Arc<AppState>>,
     Path((shape, container, n)): Path<(String, String, String)>,
-    query: Option<Query<PlayQuery>>,
+    query: Result<Query<PlayQuery>, QueryRejection>,
 ) -> Response {
     match (shape.parse(), container.parse()) {
-        (Ok(shape), Ok(container)) => play_page(state, n, shape, container, query).into_response(),
+        (Ok(shape), Ok(container)) => {
+            play_page(state, n, shape, container, query.ok()).into_response()
+        }
         _ => StatusCode::NOT_FOUND.into_response(),
     }
 }
@@ -104,8 +106,9 @@ fn play_page(
 
 /// PNG of a board's packing. Metadata URLs include both the rendering version
 /// and the reference side bits, so updated references get a fresh cached image.
-pub async fn preview_png(query: Option<Query<PreviewQuery>>) -> Response {
+pub async fn preview_png(query: Result<Query<PreviewQuery>, QueryRejection>) -> Response {
     let png = query
+        .ok()
         .ok_or_else(|| "n and s are required".to_string())
         .and_then(|Query(q)| board::decode(&q.s, q.n))
         .and_then(|b| render(&b.arrangement));
